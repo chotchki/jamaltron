@@ -2,14 +2,13 @@
 
 A Factorio 2.1 mod adding Jamal from Matt Dinniman's *Dungeon Crawler Carl* as a spidertron variant. In the books Jamal is a hammerhead shark who ends up with a set of mechanical spider legs bolted to him, which makes him an almost unfair fit for a spidertron re-skin. He also never stops apologizing, and here that is a feature.
 
-**Status: Phase A. It loads, there is nothing to play.** What exists is 14 prototypes - the `jamaltron` spider-vehicle, its 8 legs, remnants, a dying explosion, plus the item, recipe and technology - deepcopied off the stock spidertron family and wired tech to recipe to item to entity. It passes the headless smoke test base-only, again with Space Age and through 60 ticks, and it zips into a portal-shaped `jamaltron_0.1.0.zip` that loads the same way. (15 prototypes with Space Age on, because the DLC's `recycler` auto-generates a recycling recipe from the item. That one is wanted.)
+**Status: Phase A is done and archived, Phases B and C are in progress. It walks, there is nothing to play yet.** What exists is 14 prototypes - the `jamaltron` spider-vehicle, its 8 legs, remnants, a dying explosion, plus the item, recipe and technology - deepcopied off the stock spidertron family and wired tech to recipe to item to entity. It passes the headless smoke test base-only, again with Space Age and through 60 ticks, and it zips into a portal-shaped `jamaltron_0.1.0.zip` that loads the same way. (15 prototypes with Space Age on, because the DLC's `recycler` auto-generates a recycling recipe from the item. That one is wanted.)
 
 What it does NOT have is anything that makes it Jamal. He wears the stock spidertron's sprites, says nothing and cannot jump, so right now he is a spidertron with a different name and a fish in the recipe. Everything under [The plan](#the-plan) except the clone itself is still ahead. [PLAN.md](PLAN.md) is the live task list and [SPEC.md](SPEC.md) holds the what and why.
 
-Phase A is not closed, and the open boxes are worth knowing before you run it:
+Phase A closed on 2026-09-19 and is swept into [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md). He has been launched, placed and driven in a real client: all 8 legs mount and animate, and the Factoriopedia page renders HIS entry rather than the stock spidertron's (which is a real trap - `factoriopedia_simulation` hides the entity name inside a Lua string, so a sloppy copy shows you a spidertron and nothing greps it out).
 
-- **A.3, typing and lint.** Both linters are clean on the mod today (`no problems found` from lua-language-server, zero warnings from luacheck), but the box stays open until the whole gate is wired - and the type definitions it leans on are generated rather than committed (see [below](#the-type-definitions-are-not-in-git))
-- **A.4 and A.7, does he actually walk.** Nothing visual has been checked by anyone. Headless Factorio never draws a frame, so "it loads and ticks" is the ceiling on what `--create` and `--benchmark` can prove; somebody has to launch the GUI client and look at him. The rest of the open work lives in [PLAN.md](PLAN.md)
+Worth knowing anyway, because it cannot be seen: at this stage jamaltron's legs and the stock spidertron's are VISUALLY IDENTICAL, so looking at him proves nothing about whether the clone rewrote its leg references. Only the loaded prototype dump answers that (it does - all 8 are `jamaltron-leg-1..8`). Open work lives in [PLAN.md](PLAN.md).
 
 ## The plan
 
@@ -54,6 +53,10 @@ Factorio loads that symlink in place, so the cycle is edit, smoke test, relaunch
 | `uv run --directory tools pytest` | the Python side: Blender render driver, sprite packer, line generator. `--directory`, NEVER `--project` - the latter fails with `ModuleNotFoundError: No module named 'render'` because it does not chdir, so pytest never reads `tools/pyproject.toml`. [tools/README.md](tools/README.md) owns the rest of the Python and Blender detail |
 
 Typed Lua is the closest thing to a test the data stage offers - nothing else notices a renamed prototype still pointing at a base-game leg. Sprites come out of Blender headless (`Blender -b`) driven by a script, never the GUI, so any sheet can be re-rendered from scratch.
+
+### The plan hooks are optional
+
+`.claude/settings.json` wires four hooks to [claude-plan-bridge](https://github.com/chotchki/claude-plan-bridge), which keeps PLAN.md and an agent's task list in sync and reconciles hand-edits between turns. It is on crates.io (`cargo install claude-plan-bridge`). If you clone this and do not install it the hooks simply fail, harmlessly and noisily - delete the file or install the binary.
 
 ### The type definitions are not in git
 
