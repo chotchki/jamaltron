@@ -15,6 +15,9 @@ local C = {
   name = "jamaltron",
   -- Stock spidertron mounts 8 legs; the Phase C sprite work assumes 8 mount points.
   leg_count = 8,
+  -- See entity.lua: measured largest mount ring that keeps all 8 legs on the
+  -- shark's silhouette at every rotation. C.13.
+  mount_shrink = 0.45,
   remnants = "jamaltron-remnants",
   explosion = "jamaltron-explosion",
 }

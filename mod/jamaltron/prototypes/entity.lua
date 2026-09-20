@@ -63,6 +63,18 @@ for i = 1, C.leg_count do
   leg.localised_name = {"entity-name." .. C.name .. "-leg"}
   legs[i] = leg
   body.spider_engine.legs[i].leg = leg.name
+  -- HARNESS, NOT CHASSIS. Stock mounts the legs to the corners of a machine
+  -- (widest pair at +-25 px = +-0.781 tiles). Jamal's legs are strapped to him,
+  -- so they emerge from a band around his girth and splay out to the ground.
+  --
+  -- 0.45 is MEASURED, not chosen: at the tuned shark (config 137972136a75, 4.07 x
+  -- 2.47 tiles) it is the LARGEST ring where all 8 mounts land on his silhouette
+  -- at all 16 sampled rotations. 0.50 leaves one mount off at one rotation.
+  -- ground_position is deliberately NOT scaled - that is where the feet LAND, and
+  -- shrinking it too would give him a mincing little stance instead of the
+  -- splayed-from-a-harness silhouette. Narrow mounts, stock-width footprint.
+  local mount = body.spider_engine.legs[i].mount_position
+  mount[1], mount[2] = mount[1] * C.mount_shrink, mount[2] * C.mount_shrink
 end
 
 -- Cheap insurance on the cross-reference that breaks silently: a vehicle pointing at
