@@ -767,3 +767,18 @@ def test_artconfig_stays_importable_inside_blender():
                 assert a.name.split(".")[0] in allowed, a.name
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
             assert node.module.split(".")[0] in allowed, node.module
+
+def test_girth_widens_only_the_width_report():
+    """girth must reach the DERIVED width, or every report site prints a wrong number.
+
+    The bug this pins: shark_width_tiles was model_bu[1] * scale, so a girthed shark
+    reported its un-girthed width in the summary line, the compare footer and the sheet
+    footer at once - three wrong numbers from one missing multiply.
+    """
+    import render.artconfig as ac
+    base = ac.resolve({"model.scale": 0.75, "model.girth": 1.0})
+    wide = ac.resolve({"model.scale": 0.75, "model.girth": 1.6})
+    b, w = ac.derived(base), ac.derived(wide)
+    assert w["shark_width_tiles"] == pytest.approx(b["shark_width_tiles"] * 1.6)
+    assert w["shark_length_tiles"] == pytest.approx(b["shark_length_tiles"])
+    assert w["shark_height_tiles"] == pytest.approx(b["shark_height_tiles"])

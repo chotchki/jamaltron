@@ -252,9 +252,16 @@ def build_rig(scene, cfg):
         ob.matrix_parent_inverse = mathutils.Matrix.Identity(4)
 
     s = cfg["model.scale"]
+    # girth widens the WIDTH axis only, leaving length and height alone. The model's
+    # length is +x and its width is y (C.2 measured it: the -x cross-section is the
+    # vertical caudal fin, the +x end is the cephalofoil), so girth multiplies y.
+    # Canon, not a fudge: the profile has him "17 feet long, described as overweight
+    # and oversized". A uniform scale makes an overweight shark LONGER, which is the
+    # one thing the books do not say about him.
+    g = cfg["model.girth"]
     adjust.location = tuple(cfg["model.offset"])
     adjust.rotation_euler = (0.0, 0.0, math.radians(cfg["model.base_yaw"]))
-    adjust.scale = (s, s, s)
+    adjust.scale = (s, s * g, s)
 
     roll, pitch, yaw = cfg["model.rotation"]
     # Pitch is NOSE-UP positive. The nose is +x and a positive rotation about +y takes

@@ -69,6 +69,7 @@ SCHEMA: dict[str, tuple] = {
     "model.object":               (str,    "HAMMERHEAD_RIG", ("body", "shadow")),
     "model.pivot":                (("vec", 3, float), [-1.0746, 0.0, 0.3872], ("body", "shadow")),
     "model.scale":                (float,             0.75, ("body", "shadow")),
+    "model.girth":                (float,             1.0,  ("body", "shadow")),
     "model.offset":               (("vec", 3, float), [0.0, 0.0, 0.85], ("body", "shadow")),
     "model.rotation":             (("vec", 3, float), [0.0, 0.0, 0.0], ("body", "shadow")),
     "model.base_yaw":             (float,             90.0, ("body", "shadow")),
@@ -316,7 +317,10 @@ def derived(cfg: dict) -> dict:
         "shadow_px_per_tile": shadow_res / cfg["camera.shadow_canvas_tiles"],
         "sprite_px_per_tile": ppt_nominal,
         "shark_length_tiles": model_bu[0] * s,
-        "shark_width_tiles": model_bu[1] * s,
+        # girth is a WIDTH-only multiplier, so it belongs here and nowhere else - every
+        # report site reads this derived value, and before this it printed the un-girthed
+        # width at every girth, which is a tool confidently reporting a number that is wrong.
+        "shark_width_tiles": model_bu[1] * s * cfg["model.girth"],
         "shark_height_tiles": model_bu[2] * s,
         # Sun as the shadow's ground run, the form factorio_camera states it in.
         "light_run_east": run * math.sin(az),

@@ -1,0 +1,283 @@
+# CI for jamaltron: the two gates that can actually run on a free ubuntu runner.
+#
+# WHAT IS NOT HERE, and why - all three are unavailable in CI by construction:
+#   * FACTORIO. Not installed, and installing it would buy nothing for sprites.
+#     MEASURED 2026-09-19 against 2.1.17: `--dump-data` and `--create` are sprite-BLIND
+#     on both the mac full build and headless - exit 0 with a PNG missing entirely AND
+#     with a declared-vs-actual size mismatch. The headless linux build ships ZERO PNGs,
+#     so it can never check sprites at all. The one mode that rasterizes,
+#     `--dump-icon-sprites`, is mac-only behind a MODAL DIALOG that hangs the process.
+#     PLAN F.1 wants headless Factorio for the jump/break/repair SCRIPT harness, which is
+#     a different job with different needs (a game download, a mod symlink, a log parse).
+#     It is not this file's business and it does not call the linter.
+#   * BLENDER, and the bought hammerhead model. The model is gitignored because the
+#     RenderHub licence forbids redistributing it, so a runner can never have it. Nothing
+#     under tools/render/ that needs `bpy` is reachable here; the harness's pure-arithmetic
+#     half (spritesheet layout, camera projection, config resolution, mount self-check) is
+#     unit-tested and that half is what the `tests` job runs.
+#   * shellcheck / luacheck / lua-language-server. tools/lint.sh is the Lua gate and is not
+#     wired up yet - a separate change, not C.11.
+#
+# So: python tests, and tools/lint_sprites.py. That is the whole surface, and the sprite
+# linter is the ONLY sprite validation that exists anywhere - see its module docstring.
+name: CI
+
+on:
+  # push-on-main + pull_request, deliberately NOT push-on-every-branch: that pairing
+  # runs a PR branch twice for one signal. A branch with no PR gets no CI, which is the
+  # trade we want while this is a one-person repo.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # THE MODE SPLIT LIVES HERE. This is the one tree that holds sheets WE generated, and
+  # therefore the only tree that may be linted with --strict. Both the classifier and the
+  # mode switch below read this variable - neither of them names the path itself, and
+  # neither of them takes a mode as input. See the `Sprite gate` step for the argument.
+  STRICT_TREE: mod/jamaltron/graphics
+  MOD_ROOT: mod/jamaltron
+
+jobs:
+  tests:
+    name: python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # uv is pinned to the version that produced tools/uv.lock. `version:` left empty
+      # resolves to `latest`, which is an unpinned toolchain in a file whose whole job is
+      # pinning. cache key is the lockfile alone (the action's default glob also keys on
+      # pyproject.toml, which drifts without changing the resolved set).
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.8"
+          working-directory: tools
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          # tools/.python-version pins 3.11 to match the CPython Blender 4.4.3 bundles.
+          # uv downloads that interpreter; cache it or every run pays for it again.
+          cache-python: true
+
+      # Drift gate first: if pyproject.toml and uv.lock disagree, say so plainly instead
+      # of letting the next command silently re-resolve and test a different dependency
+      # set than the one that is committed.
+      - name: uv.lock is current
+        working-directory: tools
+        run: uv lock --check
+
+      # The documented invocation (tools/README.md). --directory chdirs, which is load
+      # bearing: `uv run --project tools pytest` takes the repo root as rootdir, never
+      # reads tools/pyproject.toml, ignores its `pythonpath = ["."]`, and dies with
+      # ModuleNotFoundError: No module named 'render'.
+      - name: pytest
+        run: uv run --directory tools pytest
+
+  sprites:
+    name: sprite gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No uv, no venv, no Pillow. lint_sprites.py is stdlib-only on purpose and reads
+      # PNG dimensions out of the 24-byte IHDR, so the runner's own python3 is the whole
+      # toolchain. `python3 tools/lint_sprites.py` from the repo root also puts tools/ on
+      # sys.path[0], which is how `from render.spritesheet import ...` resolves.
+      - name: python3 version
+        run: python3 -VV
+
+      # Classify what is COMMITTED, from the git index rather than a find: a gitignored
+      # render-out/ PNG must not trip the gate, and a committed sprite must always trip it.
+      # A "manifest" is C.7's pack.py output - {"sprites": [...]} or a bare list of sprite
+      # entries - recognised by CONTENT, because the filename is C.7's to choose and this
+      # gate must not go quiet just because pack.py named its output something else.
+      - name: Classify committed sprite declarations
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+
+          strict_tree = pathlib.PurePosixPath(os.environ["STRICT_TREE"])
+          out = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          tracked = [p for p in subprocess.run(
+              ["git", "ls-files", "-z"], check=True, capture_output=True, text=True
+          ).stdout.split("\0") if p]
+
+          def declares_sprites(path):
+              try:
+                  blob = json.loads(pathlib.Path(path).read_bytes())
+              except (OSError, ValueError):
+                  return False
+              if isinstance(blob, dict):
+                  return isinstance(blob.get("sprites"), list)
+              return isinstance(blob, list) and any(
+                  isinstance(e, dict) and ("filename" in e or "filenames" in e)
+                  for e in blob)
+
+          ours, stray, sheets = [], [], []
+          for path in tracked:
+              inside = strict_tree in pathlib.PurePosixPath(path).parents
+              low = path.lower()
+              if low.endswith(".png"):
+                  if inside:
+                      sheets.append(path)
+              elif low.endswith(".json") and declares_sprites(path):
+                  (ours if inside else stray).append(path)
+
+          for name, rows in (("ours", ours), ("stray", stray), ("sheets", sheets)):
+              (out / f"sprite-{name}.txt").write_text(
+                  "".join(f"{row}\n" for row in sorted(rows)))
+          print(f"tracked={len(tracked)} sheets_in_strict_tree={len(sheets)} "
+                f"manifests_in_strict_tree={len(ours)} manifests_elsewhere={len(stray)}")
+          PY
+
+      # Two structural tripwires. Both exist because the alternative failure is a green
+      # job that checks nothing, which is worse than no job at all (the rule tools/lint.sh
+      # applies to its own two gates).
+      - name: Structural tripwires
+        run: |
+          set -euo pipefail
+          mapfile -t stray  < "$RUNNER_TEMP/sprite-stray.txt"
+          mapfile -t sheets < "$RUNNER_TEMP/sprite-sheets.txt"
+          mapfile -t ours   < "$RUNNER_TEMP/sprite-ours.txt"
+
+          # (1) A manifest outside the strict tree would be linted in DEFAULT mode, and
+          # default mode on our own exact sheets is the useless half of the split. There is
+          # also nowhere else for one to legitimately live: the only other kind of
+          # declaration is base-derived, and base-derived needs --factorio-data, which no
+          # runner has. So a manifest anywhere else is a mistake, not a lane.
+          if [ "${#stray[@]}" -gt 0 ]; then
+            printf 'sprite gate: FAILED - sprite manifest outside %s:\n' "$STRICT_TREE"
+            printf '    %s\n' "${stray[@]}"
+            printf 'Our manifests ship beside the sheets they describe, under %s/,\n' "$STRICT_TREE"
+            printf 'because that path is what selects --strict. Move it, or it is linted\n'
+            printf 'in the tolerant mode and stops catching ragged sheets.\n'
+            exit 1
+          fi
+
+          # (2) THE GATE MUST START BITING THE MOMENT C.4 LANDS SHEETS. Sheets committed
+          # with no manifest describing them are sheets nothing checks, and the linter
+          # cannot invent the declaration - C.7's pack.py emits the Lua table and the
+          # manifest from one dict so the two cannot drift. Until then this is the case
+          # that keeps the job honest instead of decorative.
+          if [ "${#sheets[@]}" -gt 0 ] && [ "${#ours[@]}" -eq 0 ]; then
+            printf 'sprite gate: FAILED - %d sheet(s) under %s and no manifest:\n' \
+              "${#sheets[@]}" "$STRICT_TREE"
+            printf '    %s\n' "${sheets[@]}"
+            printf 'Nothing validates these. Emit C.7 pack.py JSON manifest next to them\n'
+            printf '(same dict it writes the Lua sprite table from) and this gate picks it\n'
+            printf 'up with no change here.\n'
+            exit 1
+          fi
+          echo "sprite gate: tripwires clear"
+
+      # THE MODE SPLIT, and it is the whole content of PLAN C.11.
+      #
+      # --strict is NEVER typed at a command line and never passed in. It is derived from
+      # the target's path, in one `case`, so the two ways to get this wrong are both
+      # unreachable from here:
+      #
+      #   * --strict on BASE-DERIVED art => permanently red CI, for TWO separate reasons,
+      #     both re-confirmed 2026-09-20 against the installed 2.1.17 data dir:
+      #       - `unused-frames`, a check --strict ADDS, fires 7 times on stock's own
+      #         spidertron leg sheets (spidertron-legs-knee.png holds 24 frames, the
+      #         declaration uses 8). Shipping more art than you index is a SMELL in art
+      #         you generated and NORMAL in art you share, which is why it cannot be a
+      #         default. Default mode on that same file: 25 declarations, 0 warnings.
+      #       - `ragged-sheet` goes from WARN to fatal. MEASURED: 11 of the 4424 sprite
+      #         declarations Factorio ships are PADDED rather than torn to an exact
+      #         multiple of the frame size (pump-north.png carries 9 spare pixel rows).
+      #     The engine loads all of it happily. None of it is a defect and we do not get
+      #     to call it one.
+      #   * DEFAULT mode on OUR art => a useless gate. Our sheets come out of a renderer
+      #     that lays frames on an exact grid, so a ragged sheet means the render and the
+      #     declaration disagree about the frame size, and unused trailing frames mean the
+      #     declaration is ignoring rotations we paid Cycles to draw. Both are WARN by
+      #     default (correct, when you are pointed at somebody else's art) and both are
+      #     failures for us. --strict is what promotes them.
+      #
+      # The base-derived branch is a BACKSTOP, not a lane: the tripwire step above already
+      # fails the job on a manifest outside the strict tree, so nothing reaches it today.
+      # It exists so that widening the target list can never silently promote base-derived
+      # art into --strict - it refuses, loudly, naming the reason, instead of skipping.
+      # It could not run here anyway: resolving `__base__/...` needs --factorio-data
+      # pointed at a real install, and an unmapped mod is an `unknown-mod` ERROR. That
+      # lane is a local calibration run, not CI:
+      #
+      #   python3 tools/lint_sprites.py \
+      #     --factorio-data /Applications/factorio.app/Contents/data \
+      #     /Applications/factorio.app/Contents/data/base/prototypes/entity/spidertron-animations.lua
+      #
+      # Exit status from the linter: 0 clean, 1 findings, 2 bad usage. Zero declarations
+      # found is a FAILURE inside the linter too, so a manifest that exists but describes
+      # nothing cannot pass.
+      - name: Sprite gate
+        run: |
+          set -euo pipefail
+          mapfile -t targets < "$RUNNER_TEMP/sprite-ours.txt"
+
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "sprite gate: SKIPPED - no sprite of ours exists yet."
+            echo "  $STRICT_TREE holds no sheets and no manifest (he runs on stock art"
+            echo "  until PLAN C.4). The tripwire step above fails this job the moment a"
+            echo "  sheet lands without a manifest, so this skip cannot become permanent."
+            {
+              echo '### sprite gate: checked 0 declarations'
+              echo
+              echo "No sheet of ours exists yet (\`$STRICT_TREE\` is empty but for its"
+              echo 'licence carve-out), so there is nothing to lint. This is PLAN C.4/C.7'
+              echo 'work; the tripwire step turns this into a failure as soon as a sheet'
+              echo 'is committed without a manifest.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Mode is a function of the path. Nothing else decides it.
+          lint_target() {
+            local target="$1"
+            local -a flags
+            case "$target" in
+              "$STRICT_TREE"/*)
+                # OURS. Generated on an exact grid, so every warning is a real defect.
+                flags=(--strict)
+                ;;
+              *)
+                echo "sprite gate: REFUSING $target - not under $STRICT_TREE." >&2
+                echo "  Base-derived declarations lint in DEFAULT mode: --strict slanders" >&2
+                echo "  them (7 unused-frames on stock's own leg sheets, and 11 of Wube's" >&2
+                echo "  4424 declarations are padded), and they need --factorio-data, which" >&2
+                echo "  no runner has. Run that one locally." >&2
+                return 2
+                ;;
+            esac
+            # Echo the array itself rather than a retyped copy of it, so what the log
+            # claims ran cannot drift from what ran.
+            local -a cmd=(python3 tools/lint_sprites.py "${flags[@]}"
+                          --mod-root "jamaltron=$MOD_ROOT" "$target")
+            printf '+ %s\n' "${cmd[*]}"
+            "${cmd[@]}"
+          }
+
+          rc=0
+          for target in "${targets[@]}"; do
+            lint_target "$target" || rc=1
+          done
+
+          {
+            if [ "$rc" -eq 0 ]; then
+              echo "### sprite gate: PASSED, ${#targets[@]} manifest(s), --strict"
+            else
+              echo "### sprite gate: FAILED, ${#targets[@]} manifest(s), --strict"
+            fi
+            echo
+            printf '* `%s`\n' "${targets[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"

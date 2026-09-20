@@ -40,7 +40,7 @@ Base game 2.1 is required, Space Age is optional (`"? space-age"`). Jumping will
 
 ## Dev loop
 
-Factorio loads that symlink in place, so the cycle is edit, smoke test, relaunch.
+Factorio loads that symlink in place, so the cycle is edit, smoke test, relaunch. [CONTRIBUTING.md](CONTRIBUTING.md) covers what you can change without owning the 3D model (most of the repo) and the two places where the licensing split bites.
 
 | command | what it does |
 | --- | --- |

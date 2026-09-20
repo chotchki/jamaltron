@@ -53,6 +53,17 @@ pivot = [-1.0746, 0.0, 0.3872]
 # default 0.75
 scale = 0.75
 
+# WIDTH-ONLY multiplier on top of `scale`, applied to the model's y axis. 1.0 is the
+# model as sculpted; 1.3 is noticeably heavier without adding a single tile of length.
+# This is the "overweight" knob and it is CANON, not a cheat: the profile has him
+# "17 feet long, described as overweight and oversized", so a uniform scale-up makes
+# him LONGER, which is the one thing the books never say. It is also the only knob that
+# improves leg coverage without making him enormous - the legs mount at +-0.78 tiles
+# transverse, and his half-width is 0.984 * scale * girth, so girth buys coverage at
+# roughly four times the length cost of scale.
+# default 1.0
+girth = 1.0
+
 # (east, north, up) in TILES, applied after scale. Up is the one that matters, and 0.85 is
 # MEASURED, not the obvious number. The spidertron prototype declares height = 1.5, but
 # that is the leg/aim height and NOT where the torso is drawn: the shipped torso sprite's
