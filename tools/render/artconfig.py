@@ -22,7 +22,11 @@ THREE THINGS THIS BUYS BEYOND "a settings file":
  2. PER-PASS HASHES. Each knob declares which render passes it affects. Changing
     `compare.background` does not invalidate 64 cached body frames; changing
     `model.scale` invalidates everything. That is what makes re-running after a
-    one-knob change cheap.
+    one-knob change cheap. The declarations are not the whole key, because they
+    cannot be: `render.resolution_px` lets a body knob move the shadow pass's
+    resolution, so each pass also hashes the derived numbers it renders with
+    (PASS_DERIVED). A cache key that misses a dependency serves stale pixels, which
+    is the one failure mode a caching harness must not have.
  3. PROVENANCE. `config_hash()` over the fully resolved config is stamped into every
     PNG and written as a sidecar, so a sheet is always traceable back to its knobs.
 
@@ -33,6 +37,7 @@ there is exactly one place the derived 45-degree camera lives.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import math
@@ -40,15 +45,10 @@ import os
 import pathlib
 import sys
 
-# sys.path, and a TRAP that tools/README.md's two-line idiom does not cover. Python (and
-# Blender) put THIS file's directory on sys.path[0], and this directory contains
-# render/inspect.py -- which SHADOWS the standard library's `inspect`, so importing
-# dataclasses (which imports inspect) pulls in a module that does `import bpy` and dies.
-# Drop the render dir from the path entirely and put tools/ on instead; every import here
-# goes through the `render.` package, so nothing needs it.
-_HERE = pathlib.Path(__file__).resolve().parent
-sys.path[:] = [p for p in sys.path if pathlib.Path(p or ".").resolve() != _HERE]
-sys.path.insert(0, str(_HERE.parent))
+# sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
+# directory on sys.path[0], never tools/, and `package = false` means there is no installed
+# `render` to fall back on.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from render import factorio_camera as fc  # noqa: E402
 
@@ -131,6 +131,23 @@ class ConfigError(ValueError):
     ignored knob wastes a morning."""
 
 
+def suggest(key: str) -> str:
+    """`"; did you mean model.scale?"` for a misspelled knob, or "" when nothing is close.
+
+    Two lookups, because knobs get misspelled two ways. A right leaf in the wrong section
+    (`render.scale`) is an exact leaf match. A misspelled leaf (`model.scal`) is not, and
+    that is the typo you actually make at 9am -- it needs edit distance. Matching only the
+    first case is the hint firing on the case you would have spotted anyway.
+
+    Cutoff 0.7, measured against the real knob list: 0.6 is loose enough that the shared
+    "model." prefix alone carries `model.zzz` over the line and the hint confidently names
+    a knob you never meant. A wrong suggestion costs more than none.
+    """
+    leaf = key.split(".")[-1]
+    exact = sorted(k for k in SCHEMA if k.split(".")[-1] == leaf and k != key)
+    near = exact or difflib.get_close_matches(key, sorted(SCHEMA), n=1, cutoff=0.7)
+    return f"; did you mean {near[0]}?" if near else ""
+
 # ---------------------------------------------------------------------------- flatten
 
 
@@ -211,9 +228,7 @@ def resolve(raw: dict | None = None, overrides: dict | None = None, *,
         flat = flatten(source) if any(isinstance(v, dict) for v in source.values()) else dict(source)
         for key, value in flat.items():
             if key not in SCHEMA:
-                near = sorted(k for k in SCHEMA if k.split(".")[-1] == key.split(".")[-1])
-                hint = f"; did you mean {near[0]}?" if near else ""
-                raise ConfigError(f"unknown knob {key!r} in {name}{hint}")
+                raise ConfigError(f"unknown knob {key!r} in {name}{suggest(key)}")
             cfg[key] = _coerce(key, SCHEMA[key], value)
 
     env = os.environ if env is None else env
@@ -246,7 +261,7 @@ def parse_set(assignments) -> dict:
         key, _, value = item.partition("=")
         key = key.strip()
         if key not in SCHEMA:
-            raise ConfigError(f"unknown knob {key!r} in --set")
+            raise ConfigError(f"unknown knob {key!r} in --set{suggest(key)}")
         try:
             parsed = tomllib.loads(f"v = {value.strip()}")["v"]
         except Exception as exc:
@@ -261,18 +276,25 @@ def parse_set(assignments) -> dict:
 def derived(cfg: dict) -> dict:
     """Numbers computed from knobs. Never authored, always reported.
 
-    Kept separate from the config proper so it never enters a hash -- a derived
-    value changing is always a knob changing, and hashing both would be redundant
-    and would let a formula change silently invalidate every cache entry.
+    TWO RESOLUTIONS, AND THE DIFFERENCE IS THE WHOLE BUG THIS FUNCTION USED TO HAVE.
+    `*_render_px` is what Blender is told to render. `*_resolution_px` is what LANDS ON
+    DISK after art.py's Lanczos downsample, and it is what the PNG text chunk, the sidecar,
+    the visible footer and the compare sheet's resampling all mean. They differ by exactly
+    `render.supersample`. Conflating them stamped `384 px, 64 px/tile` on a 192 px file,
+    and a provenance stamp that misreports the pixels it is stamping is worse than none.
+
+    `render.resolution_px` pins the FINAL px-per-tile off the body canvas; the shadow
+    canvas rides that same scale so the two passes can still be overlaid. supersample then
+    multiplies the render size on top, whether or not resolution_px is set -- one meaning
+    for the knob everywhere.
     """
     ppt_nominal = fc.px_per_tile(cfg["camera.sprite_scale"])
     ss = max(1, cfg["render.supersample"])
     forced = cfg["render.resolution_px"]
+    ppt_final = forced / cfg["camera.canvas_tiles"] if forced > 0 else ppt_nominal
 
     def res_for(canvas_tiles):
-        if forced > 0:
-            return int(round(forced * canvas_tiles / cfg["camera.canvas_tiles"])) * 1
-        return int(round(canvas_tiles * ppt_nominal)) * ss
+        return max(1, int(round(canvas_tiles * ppt_final)))
 
     body_res = res_for(cfg["camera.canvas_tiles"])
     shadow_res = res_for(cfg["camera.shadow_canvas_tiles"])
@@ -283,8 +305,13 @@ def derived(cfg: dict) -> dict:
     az = math.radians(cfg["sun.azimuth"])
     run = math.cos(el) / max(math.sin(el), 1e-9)
     return {
+        # On disk, and therefore what every stamp means.
         "body_resolution_px": body_res,
         "shadow_resolution_px": shadow_res,
+        # What Blender is asked for. Equal to the above unless supersample > 1.
+        "body_render_px": body_res * ss,
+        "shadow_render_px": shadow_res * ss,
+        "supersample": ss,
         "body_px_per_tile": body_res / cfg["camera.canvas_tiles"],
         "shadow_px_per_tile": shadow_res / cfg["camera.shadow_canvas_tiles"],
         "sprite_px_per_tile": ppt_nominal,
@@ -344,6 +371,24 @@ def config_hash(cfg: dict, length: int = 12) -> str:
     return hashlib.sha256(canonical(cfg).encode()).hexdigest()[:length]
 
 
+#: Derived numbers a pass's PIXELS depend on, on top of the knobs it declares.
+#:
+#: The schema cannot express this on its own, and the gap was serving stale pixels.
+#: `render.resolution_px` makes the SHADOW pass's resolution a function of
+#: `camera.canvas_tiles`, which is declared body-only: at resolution_px = 384, moving
+#: canvas_tiles 6.0 -> 4.5 takes the shadow pass from 704 px / 64.00 px-per-tile to
+#: 939 px / 85.36, and the old pass hash did not move, so cached shadow frames at the
+#: wrong pixel scale were served and composited under the shark. Hash what the pass
+#: actually renders with instead of trusting a static dependency list to be complete.
+#: A formula change here does invalidate caches, and that is correct -- if the numbers
+#: move, the pixels moved.
+PASS_DERIVED = {
+    "body": ("body_render_px", "body_resolution_px"),
+    "shadow": ("shadow_render_px", "shadow_resolution_px"),
+    "compare": ("sprite_px_per_tile", "body_px_per_tile", "shadow_px_per_tile"),
+}
+
+
 def pass_keys(pass_name: str) -> list[str]:
     if pass_name not in PASSES:
         raise ConfigError(f"unknown pass {pass_name!r}, expected one of {PASSES}")
@@ -351,12 +396,16 @@ def pass_keys(pass_name: str) -> list[str]:
 
 
 def pass_hash(cfg: dict, pass_name: str, length: int = 12) -> str:
-    """Hash of only the knobs that CHANGE this pass's pixels.
+    """Hash of everything that CHANGES this pass's pixels: its knobs AND its geometry.
 
-    This is the cache key. `compare.background` must not throw away 64 Cycles
-    frames, and `model.scale` must throw away all of them.
+    This is the cache key. `compare.background` must not throw away 64 Cycles frames,
+    `model.scale` must throw away all of them, and anything that changes the pass's own
+    resolution must throw away all of them too even when the knob that moved it belongs
+    to another pass -- see PASS_DERIVED.
     """
     subset = {k: cfg[k] for k in pass_keys(pass_name)}
+    d = derived(cfg)
+    subset.update(("derived." + k, d[k]) for k in PASS_DERIVED[pass_name])
     return hashlib.sha256(canonical(subset).encode()).hexdigest()[:length]
 
 

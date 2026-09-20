@@ -4,14 +4,22 @@ Dumps one JSON report plus a human summary so C.3-C.7 can be planned against rea
 numbers instead of impressions. Nothing here writes into the repo.
 
 Usage, from the repo root (`Blender` is /Applications/Blender.app/Contents/MacOS/Blender):
-    Blender -b FILE.blend --python tools/render/inspect.py -- --out report.json
-    Blender -b --factory-startup --python tools/render/inspect.py -- --import FILE.fbx --out report.json
+    Blender -b FILE.blend --python tools/render/model_inspect.py -- --out report.json
+    Blender -b --factory-startup --python tools/render/model_inspect.py -- --import FILE.fbx --out report.json
 
 Point --out somewhere OUTSIDE the repo. The model lives under the gitignored assets/source/
 and the licence turns on it staying there; a report is derived from it, so treat it the same.
 
 The --import form starts from an empty scene and imports fbx/dae/obj/gltf, which is
 how the .blend / .fbx / .dae comparison in C.2 is done: same script, three inputs.
+
+NAMED model_inspect, and the prefix is load-bearing. `render/inspect.py` SHADOWS the
+standard library's `inspect` for every sibling in this directory, because Python and
+Blender both put the running script's own directory on sys.path[0]. `dataclasses` imports
+`inspect`, so the shadow turned `from dataclasses import dataclass` in a sibling module
+into `import bpy` and killed spritesheet.py and blender_check.py outside Blender. Do not
+rename this back, and do not give any file under render/ a stdlib module's name --
+test_art_harness.py fails the whole suite if you do.
 
 What it measures, and why each number matters downstream:
   * bbox dimensions + origin placement -> Factorio renders at fixed camera rotations,
@@ -1157,7 +1165,7 @@ def main():
             json.dump(rep, fh, indent=2, default=str)
         with open(os.path.splitext(args["out"])[0] + ".txt", "w") as fh:
             fh.write(text + "\n")
-        print(f"[inspect] wrote {args['out']} and {os.path.splitext(args['out'])[0] + '.txt'}")
+        print(f"[model_inspect] wrote {args['out']} and {os.path.splitext(args['out'])[0] + '.txt'}")
 
 
 main()

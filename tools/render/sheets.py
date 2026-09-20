@@ -4,7 +4,7 @@ The compare sheet is the highest-value thing in the harness. "Does he sit right 
 legs" is otherwise a question you answer by building the mod, launching Factorio,
 spawning the thing and driving it in a circle. Here it is one PNG:
 
-    row STOCK      the shipped spidertron torso at eight rotations
+    row STOCK      the shipped spidertron: base plate, then rotating torso, eight rotations
     row JAMALTRON  our render at the SAME eight rotations, shadow composited under it
     row OVERLAY    ours over a ghost of stock, so size and footprint are directly readable
 
@@ -12,17 +12,28 @@ and on every cell, the eight LEG MOUNT POINTS the entity prototype declares plus
 out to each leg's ground position. A mount that falls off the shark's silhouette is a leg
 growing out of thin air, and that is the question C.4 has to answer.
 
-THE SHEET CHECKS ITS OWN ASSUMPTION. `mount_position` is declared with `util.by_pixel`,
-which converts sprite pixels to tiles, so we read it as a SCREEN-space offset from the
-entity origin rather than a world position at body height -- the two differ by a factor of
-0.7071 on the vertical and the wrong one puts the markers a third of a torso off. The
-STOCK row settles it by eye: draw the markers on Wube's own art, and if the interpretation
-is right they land on the torso's shoulders where its legs visibly attach. If they do not,
-the constant below is wrong, not the shark.
+THE STOCK ROW IS TWO LAYERS AND THE UNDER ONE IS THE POINT. spidertron-animations.lua
+declares `base_animation` (spidertron-body-bottom.png, 126x106, direction_count = 1)
+beneath the rotating `animation` (spidertron-body.png, 132x138, direction_count = 64). The
+plate does NOT turn, and it is what the legs attach to: all eight mounts land on opaque
+plate pixels, each within 0.71 px of a fully opaque one -- which is the half-pixel sampling
+floor, not a miss. On the ROTATING torso, 230 of the 512 mount samples (8 mounts x 64
+frames) land on TRANSPARENT pixels, because the torso is narrower than the leg spread.
+Omit the plate and the sheet asks the shark to cover ground the stock torso does not cover
+either, which would silently oversize him -- and sizing is exactly what this sheet decides.
+
+THE SHEET CHECKS ITS OWN ASSUMPTION, AND --compare PRINTS THE RESULT. `mount_position` is
+declared with `util.by_pixel`, which converts sprite pixels to tiles, so we read it as a
+SCREEN-space offset from the entity origin rather than a world position at body height --
+the two differ by a factor of 0.7071 on the vertical and the wrong one puts the markers a
+third of a torso off. `mount_selfcheck()` settles it against the layer the claim is about:
+it samples the base plate's own alpha at all eight marker positions. 8 of 8 on opaque
+plate means the by_pixel reading is right. Fewer means the reading here is wrong, not the
+shark -- and the number goes in the footer and the sidecar, so a sheet always carries it.
 
 Split deliberately: everything above the Pillow import is layout arithmetic with no
-image library in it, so tools/tests/test_sheets.py exercises the part most likely to be
-off by half a pixel without rendering anything.
+image library in it, so tools/tests/test_art_harness.py exercises the part most likely to
+be off by half a pixel without rendering anything.
 """
 
 from __future__ import annotations
@@ -30,15 +41,10 @@ from __future__ import annotations
 import pathlib
 import sys
 
-# sys.path, and a TRAP that tools/README.md's two-line idiom does not cover. Python (and
-# Blender) put THIS file's directory on sys.path[0], and this directory contains
-# render/inspect.py -- which SHADOWS the standard library's `inspect`, so importing
-# dataclasses (which imports inspect) pulls in a module that does `import bpy` and dies.
-# Drop the render dir from the path entirely and put tools/ on instead; every import here
-# goes through the `render.` package, so nothing needs it.
-_HERE = pathlib.Path(__file__).resolve().parent
-sys.path[:] = [p for p in sys.path if pathlib.Path(p or ".").resolve() != _HERE]
-sys.path.insert(0, str(_HERE.parent))
+# sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
+# directory on sys.path[0], never tools/, and `package = false` means there is no installed
+# `render` to fall back on.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from dataclasses import dataclass  # noqa: E402
 
@@ -53,6 +59,11 @@ STOCK_BODY = dict(path=STOCK_TORSO + "spidertron-body.png", width=132, height=13
                   line_length=8, direction_count=64, scale=0.5, shift=(0 / 32, -19 / 32))
 STOCK_SHADOW = dict(path=STOCK_TORSO + "spidertron-body-shadow.png", width=192, height=94,
                     line_length=8, direction_count=64, scale=0.5, shift=(26 / 32, 0.5 / 32))
+#: `base_animation`, the NON-ROTATING under-plate drawn beneath the torso, and the layer
+#: the eight leg mounts actually land on. One frame, so direction_count = 1 and every
+#: rotation of the compare sheet shows the same plate -- see the module docstring.
+STOCK_BASE = dict(path=STOCK_TORSO + "spidertron-body-bottom.png", width=126, height=106,
+                  line_length=1, direction_count=1, scale=0.5, shift=(0 / 32, 0 / 32))
 
 #: base/prototypes/entity/entities.lua, create_spidertron, scale = leg_scale = 1.
 #: mount is a screen offset in tiles; ground is a world position in tiles (east, south).
@@ -98,10 +109,13 @@ def cell_anchor(cell_px: int, origin_y: float = 0.5):
     """Where the entity origin sits inside a compare cell, in pixels.
 
     Horizontally centred; vertically anchored at `origin_y` of the cell. The bias is not
-    decoration -- the shark is lifted 1.5 tiles by `model.offset`, so on screen he sits
-    about a tile ABOVE the entity position and a cell centred on the origin cuts his nose
-    off. Factorio does exactly this to its own frames: the stock torso is 138 px tall with
-    the entity at pixel 106, i.e. 77% of the way down.
+    decoration -- `model.offset` lifts the shark 0.85 tiles of world height, which the
+    45-degree camera turns into 0.85 * 0.7071 = 0.60 tiles up-screen, so he sits well
+    above the entity position and a cell centred on the origin crops him at the top.
+    Measured on the shipped knobs: over the eight preview rotations the rendered body
+    reaches 2.26 tiles above the origin and only 0.91 below. Factorio biases its own
+    frames the same way -- the stock torso is 138 px tall with the entity at pixel 106,
+    i.e. 77% of the way down.
     """
     return (fc.origin_pixel(cell_px), (cell_px - 1) * origin_y)
 
@@ -174,6 +188,22 @@ class GridLayout:
         return (self.left, self.height - self.bottom + 6)
 
 
+#: Baseline-to-baseline pixels between footer lines, matching draw_footer()'s 12 px font.
+FOOTER_LEADING = 13
+
+
+def footer_height(n_lines: int, leading: int = FOOTER_LEADING, pad: int = 6) -> int:
+    """Bottom strip tall enough to actually SHOW `n_lines` of footer.
+
+    GridLayout's default 34 fits exactly two, and the compare sheet has been drawing three
+    -- the leg-mount footprint line, the one number on the sheet that answers "how big is
+    he", rendered two pixels tall off the bottom edge. Size the strip from the lines.
+    """
+    if n_lines < 0:
+        raise ValueError(f"n_lines must be >= 0, got {n_lines}")
+    return pad + n_lines * leading + pad
+
+
 def contact_grid(n: int, max_cols: int = 8) -> tuple[int, int]:
     """Rows and columns for a plain contact sheet of `n` frames.
 
@@ -213,6 +243,10 @@ def load_sheet_frame(spec: dict, index: int, cell_px: int, px_per_tile: float,
     compare sheet are at ONE scale. Without that the comparison is meaningless.
     """
     src = Image.open(spec["path"]).convert("RGBA")
+    # A direction_count = 1 layer (base_animation) has exactly one frame; asking for frame
+    # 24 of it would crop 24 rows past the bottom of a 106 px file and return transparency.
+    if spec.get("direction_count", 1) <= 1:
+        index = 0
     frame = src.crop(frame_box(index, spec["width"], spec["height"], spec["line_length"]))
     native_ppt = fc.px_per_tile(spec["scale"])
     origin = origin_in_frame(spec["width"], spec["height"], spec["shift"], native_ppt)
@@ -223,6 +257,125 @@ def load_sheet_frame(spec: dict, index: int, cell_px: int, px_per_tile: float,
         origin = (origin[0] * k, origin[1] * k)
     box, _ = centred_crop(origin, cell_px, origin_y)
     return frame.crop(box)
+
+
+def mount_selfcheck(spec: dict | None = None, alpha_threshold: int = 8,
+                    search_px: int = 6) -> dict:
+    """Do the mount markers land on the stock layer the legs attach to? Measured, not eyed.
+
+    `spec` defaults to STOCK_BASE -- `base_animation`, the non-rotating under-plate. That
+    is deliberately NOT the rotating torso: 230 of that layer's 512 mount samples are
+    transparent, so checking against it would report a failure that is a fact about Wube's
+    art rather than a bug in this module (see the module docstring).
+
+    Reports each marker's alpha plus the distance to the nearest fully opaque pixel,
+    because a marker lands on a .5/.5 subpixel position by the (n-1)/2 origin convention
+    and can therefore never get closer than 0.71 px to a pixel centre. Calling that a miss
+    would be reading the sampling grid as an error.
+
+    `ran` is False when Factorio is not installed here. This is a diagnostic that travels
+    with the sheet, never a gate -- a missing game must not stop you looking at the shark.
+    """
+    import math
+    spec = spec or STOCK_BASE
+    out = {"ran": False, "layer": pathlib.Path(spec["path"]).name,
+           "alpha_threshold": alpha_threshold, "total": len(LEG_MOUNTS),
+           "on_layer": 0, "worst_gap_px": None, "ok": False, "samples": [], "why": ""}
+    if Image is None:
+        out["why"] = "Pillow not importable on this side of the Blender boundary"
+        return out
+    if not pathlib.Path(spec["path"]).exists():
+        out["why"] = "Factorio art not found at " + spec["path"]
+        return out
+
+    frame = load_sheet_frame_raw(spec)
+    alpha = frame.getchannel("A").load()
+    native_ppt = fc.px_per_tile(spec["scale"])
+    ox, oy = origin_in_frame(spec["width"], spec["height"], spec["shift"], native_ppt)
+    for i, ((mx, my), _) in enumerate(LEG_MOUNTS):
+        px, py = ox + mx * native_ppt, oy + my * native_ppt
+        ix, iy = int(round(px)), int(round(py))
+        inside = 0 <= ix < frame.width and 0 <= iy < frame.height
+        a = alpha[ix, iy] if inside else 0
+        gap = None
+        for yy in range(max(0, iy - search_px), min(frame.height, iy + search_px + 1)):
+            for xx in range(max(0, ix - search_px), min(frame.width, ix + search_px + 1)):
+                if alpha[xx, yy] >= 255:
+                    d = math.hypot(xx - px, yy - py)
+                    gap = d if gap is None else min(gap, d)
+        out["samples"].append({"index": i, "px": (round(px, 2), round(py, 2)),
+                               "alpha": a, "inside_frame": inside,
+                               "gap_px": None if gap is None else round(gap, 3)})
+        if a >= alpha_threshold:
+            out["on_layer"] += 1
+    gaps = [s["gap_px"] for s in out["samples"] if s["gap_px"] is not None]
+    out["ran"] = True
+    out["worst_gap_px"] = max(gaps) if len(gaps) == out["total"] else None
+    out["ok"] = out["on_layer"] == out["total"]
+    return out
+
+
+def load_sheet_frame_raw(spec: dict, index: int = 0):
+    """One frame of a stock sheet at its NATIVE scale, uncropped and unresampled."""
+    src = Image.open(spec["path"]).convert("RGBA")
+    if spec.get("direction_count", 1) <= 1:
+        index = 0
+    return src.crop(frame_box(index, spec["width"], spec["height"], spec["line_length"]))
+
+
+def selfcheck_line(res: dict) -> str:
+    """The self-check as one line, for stdout and for the sheet's own footer."""
+    if not res["ran"]:
+        return "mount self-check SKIPPED: %s" % res["why"]
+    gap = "n/a" if res["worst_gap_px"] is None else "%.2f px" % res["worst_gap_px"]
+    return ("mount self-check %s: %d/%d markers on opaque %s (alpha>=%d), worst gap to a "
+            "fully opaque pixel %s (0.71 px is the subpixel floor)"
+            % ("PASS" if res["ok"] else "FAIL", res["on_layer"], res["total"],
+               res["layer"], res["alpha_threshold"], gap))
+
+
+def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
+                   alpha_threshold: int = 8) -> int:
+    """How many of the eight leg mounts land on opaque pixels of OUR shark.
+
+    mount_selfcheck() pointed at the other row. Stock answers "do the mounts land on
+    something" with base_animation, a plate that never turns; we ship no plate, so either
+    the shark's own silhouette covers them or C.4 draws one -- and THAT is the sizing
+    decision this sheet exists to make. Until this function the only count on the sheet
+    was stock's 8/8, which reads as reassurance for a row nobody is deciding about.
+
+    `frame` is one body render already cropped to a cell, so the cell anchor IS the entity
+    origin. Eight point samples, no antialiasing allowance: a mount one pixel off the fin
+    is a leg hanging in the air either way, and a marker that needs a tolerance to count
+    as covered is one you should be looking at, not rounding up.
+    """
+    alpha = frame.getchannel("A").load()
+    ax, ay = cell_anchor(frame.width, origin_y)
+    on = 0
+    for (mx, my), _ in mount_markers(px_per_tile):
+        ix, iy = int(round(ax + mx)), int(round(ay + my))
+        if 0 <= ix < frame.width and 0 <= iy < frame.height:
+            on += alpha[ix, iy] >= alpha_threshold
+    return on
+
+
+def coverage_line(samples, total: int = len(LEG_MOUNTS)) -> str:
+    """The shark's own mount coverage as one line, for stdout, the footer and the sidecar.
+
+    `samples` is [(label, count), ...], one per rendered rotation. Reports the WORST
+    rotation as well as the total, because a leg that floats at one heading floats in the
+    game -- an average would hide exactly the frame you need to see.
+    """
+    if not samples:
+        return "shark mount coverage: no frames"
+    got = sum(c for _, c in samples)
+    want = total * len(samples)
+    worst = min(samples, key=lambda s: s[1])
+    best = max(samples, key=lambda s: s[1])
+    return ("shark covers %d/%d mount samples over %d rotations (worst %d/%d at %s, "
+            "best %d/%d at %s); stock leans on a non-rotating plate for the rest"
+            % (got, want, len(samples), worst[1], total, worst[0],
+               best[1], total, best[0]))
 
 
 def load_render_frame(path, cell_px: int, render_ppt: float, px_per_tile: float,

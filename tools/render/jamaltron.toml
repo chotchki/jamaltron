@@ -45,7 +45,11 @@ pivot = [-1.0746, 0.0, 0.3872]
 # shark. For reference the stock spidertron torso is a near-circular 2.06 x 2.06 tiles and
 # the leg mounts sit at +-0.78 tiles transverse: half-width 1.9682/2 * scale must reach
 # 0.78 for the body to cover the outer mounts, which wants scale 0.79 and a 4-tile shark.
-# THAT TRADEOFF IS C.4's CALL. Look at --compare, not at this number.
+# Note how Wube dodges this: the mounts do NOT land on the rotating torso (230 of its 512
+# mount samples are over transparent pixels) but on base_animation, a 1.97 x 1.66 tile
+# under-plate that never turns. We ship no plate, so either the shark covers the mounts
+# himself or C.4 draws one. THAT TRADEOFF IS C.4's CALL. Look at --compare, not at this
+# number -- the STOCK row draws the plate, so the sheet shows you both options at once.
 # default 0.75
 scale = 0.75
 
@@ -114,10 +118,14 @@ pitch = 45.0
 # default 0.5
 sprite_scale = 0.5
 
-# Square render canvas for the BODY pass, in tiles. Must comfortably hold the shark at
-# `scale`: a 3.77-tile shark pointing north projects 3.77 * 0.7071 = 2.67 tiles tall plus
-# the 1.5-tile height offset lifting it 1.06 tiles up-screen, so 6 tiles has ~1 tile of
-# slack. Too small clips the nose; too large is wasted pixels and slower frames.
+# Square render canvas for the BODY pass, in tiles. Must hold the shark at `scale` AND the
+# up-screen lift from `model.offset`: a 3.77-tile shark pointing north projects
+# 3.77 * 0.7071 = 2.67 tiles tall, and the 0.85-tile height offset lifts him another
+# 0.85 * 0.7071 = 0.60 tiles. MEASURED on the shipped knobs, union of the eight preview
+# rotations: he fills 3.78 x 3.17 tiles of the 6, reaching 2.26 tiles above the entity
+# origin and 0.91 below -- 0.73 tiles of headroom at the top, 1.11 at each side. The TOP is
+# the tight edge, because the lift only pushes one way, and it runs out around scale 1.1.
+# Too small clips the nose; too large is wasted pixels and slower frames.
 # default 6.0
 canvas_tiles = 6.0
 
@@ -195,17 +203,20 @@ preview_samples = 16
 # default 32
 shadow_samples = 32
 
-# Render at N x resolution and downsample with Lanczos. 1 uses Blender's own filter. 2 is
-# the knob to reach for if the silhouette edges look ragged in the final sheet -- it costs
-# 4x the pixels, so leave it at 1 while iterating.
+# Render at N x resolution and Lanczos-downsample to the final size. 1 uses Blender's own
+# filter. 2 is the knob to reach for if the silhouette edges look ragged in the final sheet
+# -- it costs 4x the pixels, so leave it at 1 while iterating. It multiplies the RENDER
+# size only: the frame on disk, and every provenance stamp on it, is the final size.
 # default 1
 supersample = 1
 
-# Hard override of the body canvas resolution in px, and it OVERRIDES supersample rather
-# than multiplying with it. 0 = derive it (canvas_tiles * 64 * supersample), which keeps
-# one tile at exactly 64 source px and the packer's shift math exact. The shadow canvas
-# scales with whatever you set here, so both passes stay at one px-per-tile and the
-# compare sheet can still overlay them. Set it only for deliberately-wrong-scale proofs.
+# Hard override of the FINAL body resolution in px. 0 = derive it (canvas_tiles * 64),
+# which keeps one tile at exactly 64 source px and the packer's shift math exact. The shadow
+# canvas rides whatever you set here, so both passes stay at one px-per-tile and --compare
+# can still overlay them: 384 here means a 384 px body and a 704 px shadow. `supersample`
+# still applies on top -- 384 with supersample 2 renders 768 and downsamples to 384 -- so
+# the stamped resolution is always the size of the file beside it. Changing this changes
+# BOTH passes' cache keys, including the shadow's. Deliberately-wrong-scale proofs only.
 # default 0
 resolution_px = 0
 
@@ -260,16 +271,18 @@ counterclockwise = false
 rotations = 8
 
 # Size of one compare cell in TILES, square. Sets how much context sits around the shark.
-# 4.6 holds a 3.77-tile shark pointing east AND the 1.5 tiles of height offset lifting him
-# up-screen; raise it if the nose starts getting clipped after you scale him up.
+# 4.6 holds a 3.77-tile shark pointing east AND the 0.60 tiles of up-screen lift that
+# `model.offset`'s 0.85 tiles of world height comes to; raise it if the nose starts getting
+# clipped after you scale him up.
 # default 4.6
 cell_tiles = 4.6
 
 # Where the entity origin (the point on the GROUND the legs stand around) sits inside a
-# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 1.5
-# tiles, which on a 45-degree camera is about a tile up-screen, so a cell centred on the
-# origin cuts his nose off. Factorio biases its own frames the same way -- the stock torso
-# is 138 px tall with the entity at pixel 106, 77% of the way down.
+# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 0.85
+# tiles of world height, which a 45-degree camera turns into 0.60 tiles up-screen, and the
+# render measures 2.26 tiles above the origin against 0.91 below -- so a cell centred on
+# the origin cuts his nose off. Factorio biases its own frames the same way -- the stock
+# torso is 138 px tall with the entity at pixel 106, 77% of the way down.
 # default 0.78
 origin_y = 0.78
 

@@ -30,16 +30,12 @@ is a DELIBERATE act -- that directory carries the RenderHub carve-out licence an
 tool will not put anything there for you.
 """
 
-# sys.path, and a TRAP that tools/README.md's two-line idiom does not cover. Python (and
-# Blender) put THIS file's directory on sys.path[0], and this directory contains
-# render/inspect.py -- which SHADOWS the standard library's `inspect`, so importing
-# dataclasses (which imports inspect) pulls in a module that does `import bpy` and dies.
-# Drop the render dir from the path entirely and put tools/ on instead; every import here
-# goes through the `render.` package, so nothing needs it.
+# sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
+# directory on sys.path[0], never tools/, and `package = false` means there is no installed
+# `render` to fall back on. Cannot be factored into a helper: importing the helper is the
+# thing that needs the path fixed.
 import pathlib, sys  # noqa: E401
-_HERE = pathlib.Path(__file__).resolve().parent
-sys.path[:] = [p for p in sys.path if pathlib.Path(p or ".").resolve() != _HERE]
-sys.path.insert(0, str(_HERE.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import argparse  # noqa: E402
 import concurrent.futures  # noqa: E402
@@ -122,6 +118,7 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
 
     if not todo:
         print(f"  {which:<7} {len(frames)} frames CACHED  {outdir.relative_to(REPO)}")
+        warn_if_clipped(cfg, outdir, frames, which)
         return outdir, {"seconds": 0.0, "rendered": 0, "cached": len(frames)}
 
     blend = blend_path(cfg)
@@ -145,27 +142,76 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     wall = time.time() - t0
 
     d = ac.derived(cfg)
-    ss = max(1, cfg["render.supersample"])
+    ss = d["supersample"]
+    final = d["shadow_resolution_px"] if which == "shadow" else d["body_resolution_px"]
     if ss > 1:
-        downsample(outdir, todo, ss)
+        downsample(outdir, todo, final)
     engine = (results[0][0] or {}).get("engine", "?")
+    size = f"{final}px" if ss == 1 else f"{final}px (rendered {final * ss}, x{ss} SS)"
     print(f"  {which:<7} {len(todo)} frames in {wall:6.2f}s  "
-          f"({wall / len(todo):.2f}s/frame, {engine}, {samples} samples, "
-          f"{d['shadow_resolution_px'] if which == 'shadow' else d['body_resolution_px']}px, "
+          f"({wall / len(todo):.2f}s/frame, {engine}, {samples} samples, {size}, "
           f"{len(groups)} job{'s' if len(groups) > 1 else ''})  "
           f"{outdir.relative_to(REPO)}")
+    warn_if_clipped(cfg, outdir, frames, which)
     return outdir, {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
                     "engine": engine, "jobs": len(groups)}
 
 
-def downsample(outdir, frames, factor):
-    """Supersampled frames -> final size, Lanczos. Done here and not in Blender because
-    Blender has no Pillow and the uv side does."""
+#: Knob to turn when a pass runs out of canvas, per pass.
+CANVAS_KNOB = {"body": "camera.canvas_tiles", "shadow": "camera.shadow_canvas_tiles"}
+
+
+#: Alpha a pixel needs before it counts as part of the sprite. Same 8 sheets.py samples
+#: mounts at, and NOT 1: a Cycles shadow-catcher scatters alpha 1..7 sampling noise over
+#: the entire plane, so a threshold of 1 reports every shadow frame as clipped and the
+#: warning is worthless inside one run. MEASURED on a 704 px shadow frame: bbox at alpha>=1
+#: is the whole canvas, at alpha>=8 it is (271,318)-(513,386).
+SPRITE_ALPHA_FLOOR = 8
+
+
+def warn_if_clipped(cfg, outdir, frames, which, floor: int = SPRITE_ALPHA_FLOOR):
+    """Shout when the render ran out of canvas. Measured off the alpha, every run.
+
+    A clipped frame does not look broken, it looks like a shark with a flat dorsal fin,
+    and you will spend twenty minutes on the LIGHTING before you notice the canvas. The
+    shipped 6-tile body canvas holds scale 0.75 with 0.73 tiles to spare and is ALREADY
+    cutting the nose at scale 1.1 -- which is the first thing anyone does with this tool.
+
+    Runs on cached frames too: the second run at a too-big scale is the one where you have
+    forgotten, and a warning that only fires on a cache miss is a warning you never see.
+    """
+    from PIL import Image
+    clipped = []
+    for i in frames:
+        p = outdir / f"frame_{i:03d}.png"
+        if not p.exists():
+            continue
+        img = Image.open(p)
+        if img.mode not in ("RGBA", "LA"):
+            continue
+        bb = img.getchannel("A").point(lambda v: 255 if v >= floor else 0).getbbox()
+        if bb and (bb[0] <= 0 or bb[1] <= 0 or bb[2] >= img.width or bb[3] >= img.height):
+            clipped.append(i)
+    if clipped:
+        knob = CANVAS_KNOB.get(which, "camera.canvas_tiles")
+        shown = ",".join(str(i) for i in clipped[:8]) + ("..." if len(clipped) > 8 else "")
+        print("WARN %s pass: %d/%d frames TOUCH THE CANVAS EDGE (frames %s). The sprite is "
+              "cut, not small -- raise %s (now %.2f) and re-render."
+              % (which, len(clipped), len(frames), shown, knob, cfg[knob]))
+    return clipped
+
+
+def downsample(outdir, frames, target_px):
+    """Supersampled frames -> the STAMPED size, Lanczos. Done here and not in Blender
+    because Blender has no Pillow and the uv side does.
+
+    Resizes to the derived target rather than width // factor, so the file on disk and the
+    resolution in its own sidecar cannot disagree by a rounding."""
     from PIL import Image
     for i in frames:
         p = outdir / f"frame_{i:03d}.png"
         img = Image.open(p)
-        img.resize((img.width // factor, img.height // factor), Image.LANCZOS).save(p)
+        img.resize((target_px, target_px), Image.LANCZOS).save(p)
 
 
 # ----------------------------------------------------------------------------- sheets
@@ -185,7 +231,9 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
     ppt = d["body_px_per_tile"] if which != "shadow" else d["shadow_px_per_tile"]
     cell = int(round(cfg["compare.cell_tiles"] * d["sprite_px_per_tile"]))
     cols, rows = sheets.contact_grid(len(frames))
-    lay = sheets.GridLayout(cols=cols, rows=rows, cell=cell, left=10, top=22, bottom=34)
+    foot = footer_lines(cfg, label, passes)
+    lay = sheets.GridLayout(cols=cols, rows=rows, cell=cell, left=10, top=22,
+                            bottom=sheets.footer_height(len(foot)))
     canvas = Image.new("RGBA", (lay.width, lay.height), (26, 28, 30, 255))
     draw = ImageDraw.Draw(canvas)
     font = sheets._font(12)
@@ -204,7 +252,7 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
         canvas.alpha_composite(bg, (x, y))
         draw.text((x + 3, y - 15), f"{i:02d} {ac.compass(i, cfg['rotations.count'])}",
                   font=font, fill=(190, 196, 202, 255))
-    sheets.draw_footer(canvas, lay, footer_lines(cfg, label, passes))
+    sheets.draw_footer(canvas, lay, foot)
     path, side = sheet_paths(cfg, which if which != "body" else label)
     canvas.convert("RGB").save(path)
     finish(cfg, path, side, {"sheet": label, "frames": frames})
@@ -212,7 +260,15 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
 
 
 def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
-    """Stock / jamaltron / overlay, at matched rotations, with the leg mounts on top."""
+    """Stock / jamaltron / overlay, at matched rotations, with the leg mounts on top.
+
+    The STOCK row is base_animation (the non-rotating under-plate the legs attach to) and
+    then the rotating torso over it, in Factorio's own draw order. That plate is the layer
+    the mount markers land on, so leaving it out understates stock's footprint and makes
+    the shark look like he has more to cover than he does -- and this sheet is where the
+    shark's size gets decided. sheets.mount_selfcheck() proves the markers against it,
+    every run, and the verdict goes to stdout, into the footer and into the sidecar.
+    """
     from PIL import Image, ImageDraw
     d = ac.derived(cfg)
     ppt = d["sprite_px_per_tile"]
@@ -222,12 +278,34 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     if cfg["compare.show_stock"]:
         rows.append("STOCK")
     rows += ["JAMALTRON", "OVERLAY"]
-    lay = sheets.GridLayout(cols=len(frames), rows=len(rows), cell=cell)
+
+    hw, north, south = sheets.mount_extents(ppt)
+    check = sheets.mount_selfcheck()
+    check_line = sheets.selfcheck_line(check)
+    print("  " + check_line)
+    # Measured off the cells as they are drawn, but the footer's HEIGHT has to be known
+    # before the canvas exists. So the line is reserved here and filled in below; drop the
+    # placeholder and the grid is laid out one line short and the text renders off-canvas.
+    coverage = []
+    foot = footer_lines(cfg, "compare", passes) + [
+        "leg mounts span %+.0f..%+.0f px transverse, %+.0f..%+.0f px along screen "
+        "(+-%.2f x %.2f..%.2f tiles); shark %.2f x %.2f tiles at scale %.3f"
+        % (-hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
+           d["shark_length_tiles"], d["shark_width_tiles"], cfg["model.scale"]),
+        check_line,
+        "",   # placeholder: the shark's own coverage, measured below
+    ]
+
+    lay = sheets.GridLayout(cols=len(frames), rows=len(rows), cell=cell,
+                            bottom=sheets.footer_height(len(foot)))
     canvas = Image.new("RGBA", (lay.width, lay.height), (26, 28, 30, 255))
     draw = ImageDraw.Draw(canvas)
     font, small = sheets._font(13), sheets._font(11)
 
     stock_ok = os.path.exists(sheets.STOCK_BODY["path"])
+    # One frame, no rotation: crop the plate once and reuse it under every column.
+    stock_base = (sheets.load_sheet_frame(sheets.STOCK_BASE, 0, cell, ppt, oy)
+                  if stock_ok and os.path.exists(sheets.STOCK_BASE["path"]) else None)
     for col, i in enumerate(frames):
         x, _ = lay.cell_origin(col, 0)
         draw.text((x + 3, 6), f"{i:02d}  {ac.compass(i, cfg['rotations.count'])}",
@@ -235,6 +313,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
 
         jam_body = sheets.load_render_frame(bodydir / f"frame_{i:03d}.png", cell,
                                             d["body_px_per_tile"], ppt, oy)
+        coverage.append(("%02d %s" % (i, ac.compass(i, cfg["rotations.count"])),
+                         sheets.mount_coverage(jam_body, ppt, oy)))
         jam_shadow = None
         if shadowdir is not None:
             sp = shadowdir / f"frame_{i:03d}.png"
@@ -255,6 +335,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
             if name == "STOCK":
                 if stock_shadow is not None:
                     bg.alpha_composite(stock_shadow)
+                if stock_base is not None:
+                    bg.alpha_composite(stock_base)
                 if stock_body is not None:
                     bg.alpha_composite(stock_body)
             elif name == "JAMALTRON":
@@ -263,7 +345,12 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
                 bg.alpha_composite(jam_body)
             else:
                 if stock_body is not None:
-                    ghost = stock_body.copy()
+                    # Ghost the FULL stock footprint, plate included -- the overlay is
+                    # read as "where does stock end", and the plate is where it ends.
+                    ghost = Image.new("RGBA", stock_body.size, (0, 0, 0, 0))
+                    if stock_base is not None:
+                        ghost.alpha_composite(stock_base)
+                    ghost.alpha_composite(stock_body)
                     ghost.putalpha(ghost.getchannel("A").point(
                         lambda v: int(v * cfg["compare.stock_alpha"])))
                     bg.alpha_composite(ghost)
@@ -277,20 +364,21 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     for r, name in enumerate(rows):
         _, y = lay.cell_origin(0, r)
         draw.text((6, y + 4), name, font=font, fill=(206, 212, 218, 255))
-        note = {"STOCK": "shipped\nspidertron",
+        note = {"STOCK": "stock plate\n+ torso",
                 "JAMALTRON": "ours +\nshadow",
                 "OVERLAY": "ours over\nstock ghost"}[name]
         draw.text((6, y + 22), note, font=small, fill=(130, 136, 142, 255))
 
-    hw, north, south = sheets.mount_extents(ppt)
-    sheets.draw_footer(canvas, lay, footer_lines(cfg, "compare", passes) + [
-        "leg mounts span %+.0f..%+.0f px transverse, %+.0f..%+.0f px along screen "
-        "(+-%.2f x %.2f..%.2f tiles); shark %.2f x %.2f tiles at scale %.3f"
-        % (-hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
-           d["shark_length_tiles"], d["shark_width_tiles"], cfg["model.scale"])])
+    cover_line = sheets.coverage_line(coverage)
+    print("  " + cover_line)
+    foot[-1] = cover_line
+    sheets.draw_footer(canvas, lay, foot)
     path, side = sheet_paths(cfg, "compare")
     canvas.convert("RGB").save(path)
-    finish(cfg, path, side, {"sheet": "compare", "frames": frames, "rows": rows})
+    finish(cfg, path, side, {"sheet": "compare", "frames": frames, "rows": rows,
+                             "mount_selfcheck": check,
+                             "mount_coverage": {"per_frame": coverage,
+                                                "line": cover_line}})
     return path
 
 
@@ -355,7 +443,13 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    cfg = ac.load(args.config, ac.parse_set(args.sets))
+    # A typo'd knob is a user error, not a crash. A traceback buries the one line that
+    # says which knob and what to type instead, and this tool is driven by typing knobs.
+    try:
+        cfg = ac.load(args.config, ac.parse_set(args.sets))
+    except ac.ConfigError as exc:
+        sys.stderr.write("art.py: %s\n" % exc)
+        return 2
     if args.blend:
         cfg["model.blend"] = args.blend
     d = ac.derived(cfg)

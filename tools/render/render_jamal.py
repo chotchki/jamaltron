@@ -26,18 +26,12 @@ Next accepts the attribute and renders the plane fully opaque. See the numbers i
 tools/README.md and the config comments.
 """
 
-# sys.path, verbatim per tools/README.md -- Blender puts THIS file's directory on
-# sys.path[0], never tools/, and there is no installed `render` package to fall back on.
-# sys.path, and a TRAP that tools/README.md's two-line idiom does not cover. Python (and
-# Blender) put THIS file's directory on sys.path[0], and this directory contains
-# render/inspect.py -- which SHADOWS the standard library's `inspect`, so importing
-# dataclasses (which imports inspect) pulls in a module that does `import bpy` and dies.
-# Drop the render dir from the path entirely and put tools/ on instead; every import here
-# goes through the `render.` package, so nothing needs it.
+# sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
+# directory on sys.path[0], never tools/, and `package = false` means there is no installed
+# `render` to fall back on. Cannot be factored into a helper: importing the helper is the
+# thing that needs the path fixed.
 import pathlib, sys  # noqa: E401
-_HERE = pathlib.Path(__file__).resolve().parent
-sys.path[:] = [p for p in sys.path if pathlib.Path(p or ".").resolve() != _HERE]
-sys.path.insert(0, str(_HERE.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import json
 import math
@@ -347,7 +341,11 @@ def main():
     scene.frame_set(cfg["model.frame"])
 
     canvas = cfg["camera.shadow_canvas_tiles"] if shadow else cfg["camera.canvas_tiles"]
-    res = d["shadow_resolution_px"] if shadow else d["body_resolution_px"]
+    # The RENDER size, which is the stamped size times render.supersample. art.py Lanczos
+    # -downsamples these frames to *_resolution_px afterwards, because Blender has no
+    # Pillow; render at the stamped size instead and supersampling silently does nothing.
+    res = d["shadow_render_px"] if shadow else d["body_render_px"]
+    final = d["shadow_resolution_px"] if shadow else d["body_resolution_px"]
     engine = cfg["render.shadow_engine"] if shadow else cfg["render.engine"]
     samples = cfg["render.shadow_samples"] if shadow else blob.get("samples", cfg["render.samples"])
 
@@ -381,8 +379,10 @@ def main():
 
     frames = args["frames"] or list(range(cfg["rotations.count"]))
     os.makedirs(args["out"], exist_ok=True)
-    print("RENDER pass=%s engine=%s samples=%d res=%dpx canvas=%.2f tiles (%.3f px/tile) "
-          "frames=%s" % (which, engine, samples, res, canvas, res / canvas, frames))
+    print("RENDER pass=%s engine=%s samples=%d res=%dpx -> %dpx after x%d downsample "
+          "canvas=%.2f tiles (%.3f px/tile final) frames=%s"
+          % (which, engine, samples, res, final, d["supersample"], canvas,
+             final / canvas, frames))
 
     times = []
     for i in frames:
@@ -397,7 +397,8 @@ def main():
         print("FRAME %03d %.3fs %s" % (i, dt, path))
 
     print("JAMALTRON_RESULT " + json.dumps({
-        "pass": which, "engine": engine, "samples": samples, "resolution_px": res,
+        "pass": which, "engine": engine, "samples": samples, "render_px": res,
+        "resolution_px": final, "supersample": d["supersample"],
         "canvas_tiles": canvas, "frames": frames, "seconds": round(sum(times), 3),
         "seconds_per_frame": round(sum(times) / max(len(times), 1), 4),
         "blender": bpy.app.version_string,
