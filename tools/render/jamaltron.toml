@@ -20,6 +20,10 @@
 # that produced it, plus a sidecar JSON of the fully resolved knobs.
 
 [model]
+# TUNED BY HAND in render/tune.py on 2026-09-20 -> config 137972136a75.
+# pivot sits well FORWARD of the dorsal peak (-0.53), near the cephalofoil, so he swings
+# from the head with the tail trailing rather than spinning about his middle. girth 1.55 is
+# the "overweight" canon doing real work. offset 0.5 sits him lower than the measured 0.85.
 # The bought hammerhead. GITIGNORED and it stays that way -- the RenderHub Extended Use
 # License turns on renders shipping and source not. Relative paths resolve from the repo
 # root; $JAMALTRON_BLEND or --blend overrides, which is how you point at a copy that
@@ -38,7 +42,7 @@ object = "HAMMERHEAD_RIG"
 # centre; the harness translates the model by -pivot so frame-to-frame rotation is a spin.
 # Visual tell if it is wrong: the shark orbits the sprite's centre across the 64 frames.
 # default [-1.0746, 0.0, 0.3872]
-pivot = [-1.0746, 0.0, 0.3872]
+pivot = [-0.14, 0.0, 0.3872]
 
 # Multiplier on Blender units. The model is metric, 1 BU = 1 m = 1 Factorio tile, and the
 # rest-pose box is 5.0272 x 1.9682 x 1.8771 BU, so scale 0.75 gives a 3.77 x 1.48 tile
@@ -51,7 +55,7 @@ pivot = [-1.0746, 0.0, 0.3872]
 # himself or C.4 draws one. THAT TRADEOFF IS C.4's CALL. Look at --compare, not at this
 # number -- the STOCK row draws the plate, so the sheet shows you both options at once.
 # default 0.75
-scale = 0.75
+scale = 0.81
 
 # WIDTH-ONLY multiplier on top of `scale`, applied to the model's y axis. 1.0 is the
 # model as sculpted; 1.3 is noticeably heavier without adding a single tile of length.
@@ -62,7 +66,7 @@ scale = 0.75
 # transverse, and his half-width is 0.984 * scale * girth, so girth buys coverage at
 # roughly four times the length cost of scale.
 # default 1.0
-girth = 1.0
+girth = 1.55
 
 # (east, north, up) in TILES, applied after scale. Up is the one that matters, and 0.85 is
 # MEASURED, not the obvious number. The spidertron prototype declares height = 1.5, but
@@ -73,7 +77,7 @@ girth = 1.0
 # immediately, and which is how this number got fixed in the first place.
 # Raise it and he floats; lower it and the legs grow out of his back.
 # default [0.0, 0.0, 0.85]
-offset = [0.0, 0.0, 0.85]
+offset = [0.0, 0.0, 0.5]
 
 # Extra (roll about east, PITCH about north, yaw) in degrees, on top of base_yaw. Pitch is
 # the nose-up/nose-down knob -- a few degrees of nose-up reads as "swimming" rather than
