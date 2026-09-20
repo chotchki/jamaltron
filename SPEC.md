@@ -131,4 +131,19 @@ Decisions (locked 2026-09-19):
     somewhere private; nothing in `assets/source/` either, since that directory exists to be gitignored, not to
     be a document safe.
   - NOT LEGAL ADVICE. This is a careful read of the controlling text, not counsel.
+- THE BODY DOES NOT ANIMATE while walking (locked 2026-09-20). `frame_count = 1`, 64 directions, exactly like
+  Wube's own spidertron torso - all of that entity's sense of motion comes from its LEGS, and nobody has ever
+  called the spidertron lifeless. Three reasons, in order of weight:
+  - CHARACTER. He is strapped into a harness. A shark being CARRIED is not swimming; he is held rigid while
+    somebody else's legs do the work. A swim cycle would read as him propelling himself, which is exactly what
+    he cannot do and the entire reason the legs exist. He is cargo with opinions.
+  - COST. The body sheet is ~25 MiB raw and the shadow the same. An 8-frame cycle multiplies BOTH by 8: roughly
+    400 MiB raw for one entity, ~100 MiB after Factorio's compression. That is a mod-portal complaint about load
+    times in exchange for motion nobody asked for.
+  - PRECEDENT. Stock ships it this way and it works.
+  The animation budget goes where stillness would be WRONG instead: C.5's flop loop, which is both the one
+  moment his body must move and the comedic centrepiece. Possibly the jump arc.
+  UNRESOLVED, and worth checking before anyone promises it: whether `spider-vehicle` supports separate idle and
+  moving animations. If it does, a subtle parked-only tail sway is cheap. If it does not, this choice is binary
+  and it is already made.
 - Annoyance is a per-player setting (quiet / normal / unbearable) so multiplayer friends can opt out of Jamal.
