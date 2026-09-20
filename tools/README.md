@@ -17,6 +17,9 @@ exact venv.
 | `uv run --directory tools pytest` | same, from the repo root |
 | `uv lock --check` | non-zero if `pyproject.toml` and `uv.lock` have drifted |
 | `Blender -b --python tools/render/blender_check.py` | prove the Blender entry point still works |
+| `uv run --directory tools python render/factorio_camera.py` | print the camera and sun constants |
+| `uv run --directory tools python render/factorio_camera.py --verify` | re-derive both constants off the installed game's own sprites |
+| `Blender -b MODEL.blend --python tools/render/inspect.py -- --out report.json` | dump mesh, rig, clips and materials from a model |
 
 `Blender` is `/Applications/Blender.app/Contents/MacOS/Blender` on this machine.
 `blender_check.py` prints the Blender and bundled-Python versions plus the usable
@@ -87,10 +90,18 @@ pyproject.toml      deps + pytest config
 .python-version     3.11, matches Blender's bundled CPython
 uv.lock             committed
 render/
-  spritesheet.py    sheet layout math. stdlib ONLY, imported from both sides
-  blender_check.py  entry point, proves headless Blender works
+  spritesheet.py       sheet layout math. stdlib ONLY, imported from both sides
+  factorio_camera.py   the projection, the rotation order and the sun, with the provenance
+                       of every constant. stdlib at import time (Pillow is imported inside
+                       --verify), so both sides can use it. Runs three ways: print, --verify,
+                       or as a Blender script
+  inspect.py           entry point, headless model triage (C.2): dimensions, origin, axes,
+                       rig, animation clips, materials, texture sizes, hazards
+  blender_check.py     entry point, proves headless Blender works
 tests/
-  test_spritesheet.py   layout math, incl. two cases checked against shipped Factorio assets
-  test_env.py           python version, Pillow present, spritesheet.py still stdlib-only
+  test_spritesheet.py       layout math, incl. two cases checked against shipped Factorio assets
+  test_factorio_camera.py   projection against 8 muzzle positions the GAME computes, the sun,
+                            and the guard that keeps the module importable inside Blender
+  test_env.py               python version, Pillow present, spritesheet.py still stdlib-only
 smoke.sh, build.sh  shell, not part of the uv project (PLAN A.2)
 ```

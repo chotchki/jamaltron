@@ -43,3 +43,9 @@ factorio-current.log
 # local. Regenerate by re-running the Phase B pipeline against the gitignored extracts.
 character/profiles/*_quote_bank.md
 character/profiles/book8_lines.md
+
+# C.10 art-iteration harness output (tools/render/art.py). Frames, contact sheets and
+# compare PNGs land here and STAY here. Promoting a sheet into mod/jamaltron/graphics/
+# is a deliberate act - that directory carries the RenderHub carve-out licence, and
+# git history is permanent, so nothing gets there by accident or by a wildcard.
+render-out/

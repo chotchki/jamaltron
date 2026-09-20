@@ -1,0 +1,316 @@
+# Jamaltron art-iteration knobs (PLAN C.10).
+#
+# ONE-LINE DIFFS ONLY. Everything that changes what a rendered frame looks like is in
+# this file. If you find yourself opening a .py to change how the shark looks, that is
+# a bug in the harness -- file it, do not work around it.
+#
+# Every key here exists in render/artconfig.py's SCHEMA and a key that does NOT exist
+# there is a hard error, not a no-op. `default N` in a comment is the schema's value,
+# not necessarily the value on the line below it -- that is the whole point of writing
+# both down.
+#
+# Run it:
+#   uv run --directory tools python render/art.py --preview      # 8 rotations, seconds
+#   uv run --directory tools python render/art.py --compare      # THE image to look at
+#   uv run --directory tools python render/art.py --full         # the real 64
+#   uv run --directory tools python render/art.py --shadow       # shadow-only pass
+#   ... --set model.scale=0.85 --set model.offset='[0,0,1.4]'    # try before you commit
+#
+# Outputs land in render-out/ (gitignored). Every one carries the hash of the config
+# that produced it, plus a sidecar JSON of the fully resolved knobs.
+
+[model]
+# The bought hammerhead. GITIGNORED and it stays that way -- the RenderHub Extended Use
+# License turns on renders shipping and source not. Relative paths resolve from the repo
+# root; $JAMALTRON_BLEND or --blend overrides, which is how you point at a copy that
+# lives outside the repo (the C.2 triage unpack, say).
+# default "assets/source/FILES/HAMMERHEAD.blend"
+blend = "assets/source/FILES/HAMMERHEAD.blend"
+
+# The object that gets rotated. C.2: one mesh HAMMERHEAD parented to armature
+# HAMMERHEAD_RIG, so rotating the rig takes the mesh with it.
+# default "HAMMERHEAD_RIG"
+object = "HAMMERHEAD_RIG"
+
+# THE RE-PIVOT, and it is not optional. C.2 measured the model's origin sitting 1.0746 BU
+# toward the nose and 0.387 BU below body centre, so rotating about it SWEEPS the tail
+# through a 3.59 BU circle instead of spinning in place. This is the rest-pose geometric
+# centre; the harness translates the model by -pivot so frame-to-frame rotation is a spin.
+# Visual tell if it is wrong: the shark orbits the sprite's centre across the 64 frames.
+# default [-1.0746, 0.0, 0.3872]
+pivot = [-1.0746, 0.0, 0.3872]
+
+# Multiplier on Blender units. The model is metric, 1 BU = 1 m = 1 Factorio tile, and the
+# rest-pose box is 5.0272 x 1.9682 x 1.8771 BU, so scale 0.75 gives a 3.77 x 1.48 tile
+# shark. For reference the stock spidertron torso is a near-circular 2.06 x 2.06 tiles and
+# the leg mounts sit at +-0.78 tiles transverse: half-width 1.9682/2 * scale must reach
+# 0.78 for the body to cover the outer mounts, which wants scale 0.79 and a 4-tile shark.
+# THAT TRADEOFF IS C.4's CALL. Look at --compare, not at this number.
+# default 0.75
+scale = 0.75
+
+# (east, north, up) in TILES, applied after scale. Up is the one that matters, and 0.85 is
+# MEASURED, not the obvious number. The spidertron prototype declares height = 1.5, but
+# that is the leg/aim height and NOT where the torso is drawn: the shipped torso sprite's
+# own shift is by_pixel(0, -19) = 0.594 tiles up-screen, and a 45-degree camera turns
+# 0.594 tiles of screen into 0.594/0.7071 = 0.84 tiles of world height. Setting 1.5 here
+# floats the shark a third of a body above his own legs -- which --compare shows you
+# immediately, and which is how this number got fixed in the first place.
+# Raise it and he floats; lower it and the legs grow out of his back.
+# default [0.0, 0.0, 0.85]
+offset = [0.0, 0.0, 0.85]
+
+# Extra (roll about east, PITCH about north, yaw) in degrees, on top of base_yaw. Pitch is
+# the nose-up/nose-down knob -- a few degrees of nose-up reads as "swimming" rather than
+# "dead fish on a stick", and the jump arc in C.5 wants much more of it.
+# default [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0]
+
+# The model's nose points +x (C.2) and Factorio's frame 0 faces north (+y), so the rest
+# pose needs a quarter turn before the per-frame rotation is applied. Change this only if
+# the model changes; use `rotation` for art tweaks.
+# default 90.0
+base_yaw = 90.0
+
+# C.2 REQUIRED FIX: five NLA tracks ship unmuted (SWIM_FAST, SWIM_SLOW, SWIM_MEDIUM,
+# BITE_02, BITE_01) and BITE_01 blends COMBINE on top of the rest, so an un-muted render
+# is a shark caught mid-bite mid-swim. Mute them and the torso sheet is a clean body.
+# default true
+mute_nla = true
+
+# Clear every pose bone to rest after muting. Muting alone leaves whatever pose was saved
+# in the file; the rest pose is the straight shark, and it is the pose `pivot` was measured
+# against, so turning this off invalidates the pivot too.
+# default true
+rest_pose = true
+
+# C.2 REQUIRED FIX: every clip carries a stale final keyframe duplicating the loop start
+# (SWIM_FAST spans frames 1..21 for a 20-frame cycle). Harmless for a static torso render,
+# fatal for C.5's flop loop, which would hold one frame twice. Fixed here so both passes
+# see the same corrected actions.
+# default true
+drop_stale_keyframes = true
+
+# Scene frame to sit on. Only matters with rest_pose = false or once C.5 animates.
+# default 1
+frame = 1
+
+# Subdivision modifier render levels. The model ships at 2 (41k faces, 82k tris); 1 is
+# 10k faces and at 132 px the difference is invisible while the cost is not. 0 turns the
+# subdivision off entirely and the silhouette goes faceted.
+# default 1
+subdiv_render_levels = 1
+
+[camera]
+# Camera elevation in degrees. 45 IS NOT A PREFERENCE: core/lualib/math3d.lua ships
+# projection_constant = 1/sqrt(2) and projects (y+z)*k with ONE constant for both ground
+# depth and height, which is only true at the unique elevation where sin == cos. Changing
+# this desyncs the sprite from every other entity in the game; the harness warns loudly.
+# default 45.0
+pitch = 45.0
+
+# Factorio sprite scale the sheet will declare. 0.5 is what every stock sprite uses and it
+# means 64 source px per tile east-west (45.25 px north-south and for height).
+# default 0.5
+sprite_scale = 0.5
+
+# Square render canvas for the BODY pass, in tiles. Must comfortably hold the shark at
+# `scale`: a 3.77-tile shark pointing north projects 3.77 * 0.7071 = 2.67 tiles tall plus
+# the 1.5-tile height offset lifting it 1.06 tiles up-screen, so 6 tiles has ~1 tile of
+# slack. Too small clips the nose; too large is wasted pixels and slower frames.
+# default 6.0
+canvas_tiles = 6.0
+
+# Same, for the SHADOW pass, which needs much more canvas: a 45-degree sun runs the shadow
+# one tile EAST per tile of height, so a shark whose top is 2.2 tiles up throws its shadow
+# 2.2 tiles east of itself. 11 tiles holds a 4-tile shark plus its full smear. Stock does
+# the same thing -- its shadow frame is 192 px wide against a 132 px body.
+# default 11.0
+shadow_canvas_tiles = 11.0
+
+[sun]
+# Compass bearing the shadow RUNS toward, degrees. 90 = due east, i.e. the sun sits due
+# west. Measured five independent ways off the shipped art in factorio_camera.py; the
+# spidertron's own shadow sheet predicts its west edge to 0.6 px at this value.
+# default 90.0
+azimuth = 90.0
+
+# Sun elevation, degrees. 45 again, and for the same reason -- a point at height h drops
+# its shadow exactly h tiles along the azimuth. Lower it and shadows stretch past what
+# neighbouring stock entities do.
+# default 45.0
+elevation = 45.0
+
+# Blender sun strength. MEASURED against this model, not guessed: his albedo is a dark
+# grey-blue, so at 3 he renders near-black and at 30 the cephalofoil blows out. 16 reads
+# as a shark at Factorio's zoom while keeping the dorsal highlight intact.
+# default 16.0
+energy = 16.0
+
+# Sun angular diameter in degrees. 0 is a razor-sharp shadow edge, which looks synthetic;
+# stock shadows have a soft fringe. 1.0 is roughly the real sun. Bigger = blurrier edge
+# and, in Cycles, noisier at the same sample count.
+# default 1.0
+angular_size = 1.0
+
+# World background strength: flat ambient fill, and the cheapest fill light there is --
+# no second lamp, no extra shadow. Under ~0.1 the sun-away flank goes to a black hole;
+# past ~0.5 it flattens the whole body out. 0.25 keeps the form and opens the shadows.
+# default 0.25
+ambient = 0.25
+
+[render]
+# BODY pass engine. MEASURED, not assumed: EEVEE Next and Cycles CPU cost about the same
+# wall time at sprite resolution on this machine, but Cycles spends 4x the CPU to get there
+# and its output is noisy at low samples, while EEVEE's is clean. The model's Cycles-only
+# features (subsurface weight 1.0, a 4096 normal map) are invisible at 132 px anyway --
+# which is exactly why `use_subsurface` defaults off. Flip to "CYCLES" for a final sheet.
+# default "BLENDER_EEVEE_NEXT"
+engine = "BLENDER_EEVEE_NEXT"
+
+# SHADOW pass engine. Do not change it. Only Cycles honours object.is_shadow_catcher;
+# EEVEE Next accepts the attribute and then renders the catcher plane fully opaque, so the
+# shadow pass silently comes back as a grey square.
+# default "CYCLES"
+shadow_engine = "CYCLES"
+
+# Cycles device. A 384 px tile is pure launch overhead for a GPU -- Metal costs a 39 s
+# one-time kernel compile and then MORE per frame than CPU. "GPU" exists for when the
+# canvas grows.
+# default "CPU"
+device = "CPU"
+
+# Samples for a --full sheet. EEVEE reads this as TAA samples (cheap, just antialiasing);
+# Cycles reads it as paths per pixel (expensive, and the knob that trades noise for time).
+# default 64
+samples = 64
+
+# Samples for --preview and --compare. The whole point of preview is the loop time, and at
+# 16 EEVEE is already clean. Raise it only if you are judging noise rather than shape.
+# default 16
+preview_samples = 16
+
+# Samples for the shadow pass. Cycles, and a shadow-catcher alpha is a much easier integral
+# than a lit surface, so 32 is plenty. Under ~16 the soft edge goes blotchy.
+# default 32
+shadow_samples = 32
+
+# Render at N x resolution and downsample with Lanczos. 1 uses Blender's own filter. 2 is
+# the knob to reach for if the silhouette edges look ragged in the final sheet -- it costs
+# 4x the pixels, so leave it at 1 while iterating.
+# default 1
+supersample = 1
+
+# Hard override of the body canvas resolution in px, and it OVERRIDES supersample rather
+# than multiplying with it. 0 = derive it (canvas_tiles * 64 * supersample), which keeps
+# one tile at exactly 64 source px and the packer's shift math exact. The shadow canvas
+# scales with whatever you set here, so both passes stay at one px-per-tile and the
+# compare sheet can still overlay them. Set it only for deliberately-wrong-scale proofs.
+# default 0
+resolution_px = 0
+
+# Colour management. Factorio art is plain sRGB. Blender 4.x defaults to AgX, which crushes
+# highlights and desaturates -- the shark comes out looking washed next to a stock sprite.
+# "Standard" is the only value that matches the game.
+# default "Standard"
+view_transform = "Standard"
+
+# Creative look on top of the view transform. "None" for anything that has to match stock.
+# default "None"
+look = "None"
+
+# The model ships Subsurface Weight 1.0 (C.2). It is a Cycles feature, it costs real time,
+# and at 132 px on a dark-skinned shark it is invisible. Off by default; turn it on only to
+# confirm for yourself that it does nothing at this size.
+# default false
+use_subsurface = false
+
+# The 4096x4096 normal map at strength 0.4. Same argument as subsurface -- at 132 px the
+# detail is far below a pixel -- but unlike subsurface it is nearly free, and it does still
+# shape the broad dorsal/flank shading. Left on.
+# default true
+use_normal_map = true
+
+# Normal map strength, as authored. Raise to exaggerate the surface relief (gill slits,
+# flank creases) if you decide the sprite reads too smooth at Factorio's zoom.
+# default 0.4
+normal_strength = 0.4
+
+[rotations]
+# Directions in the full sheet. Factorio's spidertron torso uses 64 and so must we -- the
+# entity's rotation is quantised to this and 32 reads as visibly steppy while panning.
+# default 64
+count = 64
+
+# Directions in --preview and, by default, --compare. Must DIVIDE count, so preview frames
+# are a subset of the full wheel at identical angles and the cache shares work between the
+# two. 8 gives N, NE, E, SE, S, SW, W, NW.
+# default 8
+preview = 8
+
+# Frame index direction. Factorio counts frame 0 = north then CLOCKWISE unless the
+# prototype sets counterclockwise = true. The stock torso does not, so neither do we.
+# default false
+counterclockwise = false
+
+[compare]
+# Columns in the compare sheet -- how many rotations to put side by side. 8 fits a readable
+# 2048 px wide PNG; 16 needs a lot of scrolling for not much more information.
+# default 8
+rotations = 8
+
+# Size of one compare cell in TILES, square. Sets how much context sits around the shark.
+# 4.6 holds a 3.77-tile shark pointing east AND the 1.5 tiles of height offset lifting him
+# up-screen; raise it if the nose starts getting clipped after you scale him up.
+# default 4.6
+cell_tiles = 4.6
+
+# Where the entity origin (the point on the GROUND the legs stand around) sits inside a
+# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 1.5
+# tiles, which on a 45-degree camera is about a tile up-screen, so a cell centred on the
+# origin cuts his nose off. Factorio biases its own frames the same way -- the stock torso
+# is 138 px tall with the entity at pixel 106, 77% of the way down.
+# default 0.78
+origin_y = 0.78
+
+# Cell background, RGB. Mid-slate on purpose: a transparent checkerboard makes the shadow
+# unjudgeable and pure black hides the shark's own dark underside.
+# default [58, 62, 66]
+background = [58, 62, 66]
+
+# Opacity of the stock spidertron ghost in the OVERLAY row. 0.45 is enough to see where the
+# stock torso ends without fighting the shark for attention.
+# default 0.45
+stock_alpha = 0.45
+
+# Draw the STOCK row at all. Off makes a jamaltron-only contact sheet.
+# default true
+show_stock = true
+
+# Composite the shadow pass under the body in the compare sheet. Needs shadow frames; the
+# harness renders them if they are missing (Cycles, so this is the slow half of --compare).
+# default true
+show_shadow = true
+
+# Draw the eight leg MOUNT POINTS as markers. This is the question C.4 has to answer: stock
+# declares mount_position by_pixel(+-15,-22) (+-23,-10) (+-25,+4) (+-15,+17), i.e. +-0.78
+# tiles transverse, and a mount that falls off the shark's silhouette is a leg growing out
+# of thin air. Leave these on.
+# default true
+show_mounts = true
+
+# Draw each mount's leg as a line down to its declared ground_position, so you can see the
+# stance and not just the attachment points.
+# default true
+show_legs = true
+
+# One-tile grid overlay on each cell, so you can read sizes off the image directly.
+# default true
+grid = true
+
+[output]
+# Render root, relative to the repo root. GITIGNORED. Sheets are promoted into
+# mod/jamaltron/graphics/ deliberately and by hand, never by this tool -- the graphics
+# directory carries its own LICENSE carve-out and things landing there is a decision.
+# default "render-out"
+dir = "render-out"
