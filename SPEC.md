@@ -68,6 +68,23 @@ Decisions (locked 2026-09-19):
   - Anti-repeat keys on a GROUP ID (the first row carrying that exact string), per ENTITY, ACROSS pools - not
     per ID and not per pool. 50 strings live in more than one pool and `legs break` -> `flopping` fire back to
     back sharing 17 of them, which is the mod's centerpiece moment. Locale gets one key per ID, no dedup.
+  - LINE CHAINING SHIPS (chotchki 2026-09-19, B.4 answer #14 - the catalog cited a ruling that did not exist).
+    Nine rows are setup/punchline pairs that only parse with their partner, and GRP anti-repeat actively works
+    AGAINST firing a pair. Semantics, pinned so B.5 and D.5 cannot diverge:
+      * A row may name a follow-up row id in a CHAIN column. One hop only - no chains of chains, because a
+        three-beat gag over a walking vehicle outlives the player's attention.
+      * The follow-up fires after a per-row tick delay. It is ONE utterance in two beats, so it is EXEMPT from
+        anti-repeat, from the GRP suppression window and from the say-cooldown - those gate new utterances, and
+        the punchline is not one.
+      * A row that exists ONLY as a chain target is NOT independently rollable. Mark it so the picker excludes
+        it, or the punchline fires alone and reads as nonsense. This is the failure the whole mechanism exists
+        to prevent.
+      * The follow-up inherits the HEAD's tier. It must never be gated at a verbosity the head already passed,
+        or the setup fires and the punchline is silently dropped.
+      * CANCEL the pending follow-up if the entity dies, is swapped (D.4, including the beached swap), or is
+        mined before it fires. A punchline delivered by a corpse is a bug, not a joke.
+      * Pending chains live in the same per-entity `storage` table as `{N}` and the once_per_save fired-set,
+        which E.6 already requires for multiplayer sync.
   - The two over-60-char lines stay flagged and UNTRIMMED until chotchki measures a real speech bubble at A.7.
   - `attacking` friendly-fire subpool stays gated pending what the API can cheaply detect (D.5/D.7).
 - C.1 LICENSE GATE RESOLVED 2026-09-19 from the authoritative agreement text (chotchki supplied it; the model is
