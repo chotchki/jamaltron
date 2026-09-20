@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "generated_by": "tools/render/pack.py",
+  "generated_at": "2026-09-20T16:04:57",
+  "config_hash": "83d6be794998",
+  "mod": "jamaltron",
+  "mod_roots": {
+    "jamaltron": ".."
+  },
+  "slots": {
+    "animation": [
+      "body",
+      "body_mask"
+    ],
+    "shadow_animation": [
+      "shadow"
+    ],
+    "water_reflection": [
+      "reflection"
+    ]
+  },
+  "clear": [
+    "base_animation",
+    "shadow_base_animation"
+  ],
+  "sprites": [
+    {
+      "id": "body",
+      "filename": "__jamaltron__/graphics/jamaltron-body.png",
+      "width": 360,
+      "height": 289,
+      "line_length": 8,
+      "direction_count": 64,
+      "frame_count": 1,
+      "scale": 0.5,
+      "shift": [
+        0.0,
+        -0.4453125
+      ]
+    },
+    {
+      "id": "body_mask",
+      "filename": "__jamaltron__/graphics/jamaltron-body-mask.png",
+      "width": 166,
+      "height": 121,
+      "line_length": 8,
+      "direction_count": 64,
+      "frame_count": 1,
+      "scale": 0.5,
+      "shift": [
+        0.0,
+        0.1640625
+      ],
+      "apply_runtime_tint": true
+    },
+    {
+      "id": "shadow",
+      "filename": "__jamaltron__/graphics/jamaltron-body-shadow.png",
+      "width": 405,
+      "height": 256,
+      "line_length": 8,
+      "direction_count": 64,
+      "frame_count": 1,
+      "scale": 0.5,
+      "shift": [
+        0.6484375,
+        0.0
+      ],
+      "draw_as_shadow": true
+    },
+    {
+      "id": "reflection",
+      "filename": "__jamaltron__/graphics/jamaltron-body-water-reflection.png",
+      "width": 332,
+      "height": 192,
+      "line_length": 1,
+      "variation_count": 1,
+      "scale": 0.5,
+      "shift": [
+        0.0,
+        -0.09375
+      ]
+    }
+  ]
+}

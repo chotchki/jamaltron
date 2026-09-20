@@ -12,6 +12,7 @@ projection constant.
 
 import hashlib
 import json
+import math
 import pathlib
 import re
 
@@ -199,17 +200,71 @@ def test_config_hash_is_stable_and_order_independent():
     a = ac.resolve({"model": {"scale": 0.8}, "sun": {"energy": 9.0}}, env={})
     b = ac.resolve({"sun": {"energy": 9.0}, "model": {"scale": 0.8}}, env={})
     assert ac.config_hash(a) == ac.config_hash(b)
-    assert ac.config_hash(a) == hashlib.sha256(ac.canonical(a).encode()).hexdigest()[:12]
+    assert ac.config_hash(a) == hashlib.sha256(
+        ac.canonical(ac.hashable(a)).encode()).hexdigest()[:12]
+
+
+#: `model.blend` is hashed by CONTENT, so nudging the path is not a knob change at all --
+#: that is the whole point of hashable(). It gets its own tests below instead.
+_NOT_A_PIXEL: tuple = ("model.blend",)
 
 
 def test_config_hash_moves_when_any_knob_moves():
     base = ac.resolve(env={})
     seen = {ac.config_hash(base)}
-    for key, spec in ac.SCHEMA.items():
+    keys = [k for k in ac.SCHEMA if k not in _NOT_A_PIXEL]
+    for key in keys:
         cfg = dict(base)
-        cfg[key] = _nudge(spec[0], base[key])
+        cfg[key] = _nudge(ac.SCHEMA[key][0], base[key])
         seen.add(ac.config_hash(cfg))
-    assert len(seen) == len(ac.SCHEMA) + 1, "two different configs hash the same"
+    assert len(seen) == len(keys) + 1, "two different configs hash the same"
+
+
+def test_the_config_hash_is_about_the_models_BYTES_not_its_path(tmp_path):
+    """Hashing the path made the provenance stamp a fact about one filesystem.
+
+    Three copies of one .blend gave three config hashes for pixel-identical sheets, and
+    the hash a sheet shipped with could not be reproduced on any other machine -- which is
+    the one thing a provenance hash has to do.
+    """
+    here, there = tmp_path / "a.blend", tmp_path / "deep" / "b.blend"
+    there.parent.mkdir()
+    here.write_bytes(b"SHARK")
+    there.write_bytes(b"SHARK")
+    a = ac.resolve(env={ac.BLEND_ENV: str(here)})
+    b = ac.resolve(env={ac.BLEND_ENV: str(there)})
+    assert a["model.blend"] != b["model.blend"]
+    assert ac.config_hash(a) == ac.config_hash(b)
+    assert all(ac.pass_hash(a, p) == ac.pass_hash(b, p) for p in ac.PASSES)
+
+    there.write_bytes(b"NOT THE SAME SHARK")
+    ac._DIGEST_CACHE.clear()
+    assert ac.config_hash(a) != ac.config_hash(ac.resolve(env={ac.BLEND_ENV: str(there)}))
+
+
+def test_a_missing_model_still_hashes_deterministically(tmp_path):
+    """Packing cached frames on a machine with no model must not crash or drift. It does
+    produce a DIFFERENT hash from the render's, which is correct: nothing here can verify
+    those pixels came from that model, and pack.py refuses on the mismatch."""
+    gone = ac.resolve(env={ac.BLEND_ENV: str(tmp_path / "nope.blend")})
+    assert ac.hashable(gone)["model.blend"] == ac.BLEND_ABSENT
+    assert ac.config_hash(gone) == ac.config_hash(
+        ac.resolve(env={ac.BLEND_ENV: str(tmp_path / "also-nope.blend")}))
+
+
+def test_the_stamp_never_carries_the_model_path(tmp_path):
+    """The .blend lives outside the repo and its path is machine-local -- here it is an
+    absolute scratch directory. The stamp goes into PNG text chunks that ship in a PUBLIC
+    repo, so the path must not be in it, and the digest that replaces it must re-hash."""
+    blend = tmp_path / "private" / "HAMMERHEAD.blend"
+    blend.parent.mkdir()
+    blend.write_bytes(b"SHARK")
+    cfg = ac.resolve(env={ac.BLEND_ENV: str(blend)})
+    blob = ac.stamp(cfg)
+    text = json.dumps(blob)
+    assert str(tmp_path) not in text and "private" not in text
+    assert blob["config"]["model"]["blend"].startswith(ac.BLEND_DIGEST_PREFIX)
+    assert ac.config_hash(ac.resolve(blob["config"], env={})) == blob["config_hash"]
 
 
 def _nudge(kind, value):
@@ -235,8 +290,71 @@ def test_pass_hash_ignores_knobs_that_cannot_change_that_pass():
 def test_pass_hash_moves_when_the_geometry_moves():
     base = ac.resolve(env={})
     bigger = dict(base, **{"model.scale": 0.9})
-    for p in ("body", "shadow"):
+    for p in ("body", "shadow", "mask"):
         assert ac.pass_hash(base, p) != ac.pass_hash(bigger, p)
+
+
+def test_mask_knobs_leave_the_body_and_shadow_caches_alone():
+    """The mask is the cheap pass and the one you fiddle with -- moving a strap must not
+    cost 85 seconds of Cycles or re-render 64 body frames it does not change."""
+    base = ac.resolve(env={})
+    moved = dict(base, **{"mask.strap_fore": 0.3, "mask.grey": 0.4,
+                          "mask.plate_z": 0.9})
+    assert ac.pass_hash(base, "body") == ac.pass_hash(moved, "body")
+    assert ac.pass_hash(base, "shadow") == ac.pass_hash(moved, "shadow")
+    assert ac.pass_hash(base, "mask") != ac.pass_hash(moved, "mask")
+
+
+def test_the_mask_rides_the_body_canvas():
+    """It is the body pass with a different material, so anything that moves the body's
+    pixels under it has to move the mask's too -- otherwise the two layers of `animation`
+    crop against different origins and slide apart in game."""
+    base = ac.resolve(env={})
+    for knob, value in (("camera.canvas_tiles", 7.0), ("camera.sprite_scale", 0.25),
+                        ("render.supersample", 2), ("rotations.count", 32)):
+        moved = dict(base, **{knob: value})
+        assert ac.pass_hash(base, "mask") != ac.pass_hash(moved, "mask"), knob
+    assert ac.derived(base)["body_resolution_px"] == 384
+
+
+def test_the_mask_ignores_the_shark_s_own_surface():
+    """It throws the textures away, so the texture knobs are not its dependencies. This is
+    the only knob group in the schema where body and mask genuinely differ."""
+    base = ac.resolve(env={})
+    textured = dict(base, **{"render.use_normal_map": False, "render.use_subsurface": True,
+                             "render.normal_strength": 0.9})
+    assert ac.pass_hash(base, "mask") == ac.pass_hash(textured, "mask")
+    assert ac.pass_hash(base, "body") != ac.pass_hash(textured, "body")
+
+
+def test_a_misspelled_enum_VALUE_is_as_fatal_as_a_misspelled_key():
+    """`mask.mode = "harnes"` type-checks as a string and renders the wrong thing
+    silently, which is the exact failure the schema exists to stop."""
+    with pytest.raises(ac.ConfigError) as e:
+        ac.resolve({"mask": {"mode": "harnes"}}, env={})
+    assert "mask.mode" in str(e.value) and "harness" in str(e.value)
+    assert ac.resolve({"mask": {"mode": "silhouette"}}, env={})["mask.mode"] == "silhouette"
+
+
+def test_the_silhouette_mask_warns_that_it_eats_the_shark():
+    """Legal, kept as a one-line escape hatch, and a bad idea on this model -- which is
+    exactly what warnings() is for."""
+    text = " ".join(ac.warnings(ac.resolve({"mask": {"mode": "silhouette"}}, env={})))
+    assert "silhouette" in text and "harness" in text
+
+
+def test_straps_in_the_wrong_order_warn():
+    base = ac.resolve({"mask": {"strap_fore": -0.9}}, env={})
+    assert any("inside out" in w for w in ac.warnings(base))
+
+
+def test_a_plate_squeezed_flat_between_its_floor_and_ceiling_warns():
+    """`plate_top_z` is what keeps the tint off his dorsal fin, so it gets tightened -- and
+    tightened past the floor it leaves a harness of two bare straps and no saddle. Legal
+    (it IS the escape hatch), and not something to discover in a 64-frame sheet."""
+    flat = ac.resolve({"mask": {"plate_z": 0.6, "plate_top_z": 0.6}}, env={})
+    assert any("EMPTY" in w for w in ac.warnings(flat))
+    assert not any("EMPTY" in w for w in ac.warnings(ac.resolve(env={})))
 
 
 def test_body_only_knobs_leave_the_shadow_cache_alone():
@@ -294,6 +412,17 @@ def test_every_pass_has_knobs_and_every_knob_is_reachable():
         assert ac.pass_keys(p), f"pass {p} depends on nothing"
     with pytest.raises(ac.ConfigError):
         ac.pass_keys("bogus")
+
+
+def test_an_out_of_repo_output_dir_still_prints(tmp_path):
+    """`output.dir` is documented as absolute-capable, and every progress line ran the
+    render directory through Path.relative_to(REPO), which raises outside the repo. A
+    timing run into /tmp is the ordinary reason to set it."""
+    from render import art
+    assert art.shorten(art.REPO / "render-out" / "body") == "render-out/body"
+    assert art.shorten(tmp_path / "cold") == str(tmp_path / "cold")
+    cfg = ac.resolve({"output": {"dir": str(tmp_path)}}, env={})
+    assert art.out_root(cfg) == tmp_path
 
 
 def test_stamp_round_trips_through_json():
@@ -487,6 +616,41 @@ def test_centred_crop_may_run_off_the_source_edge():
     assert box[0] < 0 and box[1] < 0
 
 
+def test_crop_loss_counts_what_the_cell_threw_away():
+    """A cell smaller than the sprite does not look broken, it looks like a tight framing
+    -- and the compare sheet is where size and pivot get decided, so a silent crop is a
+    decision made against a picture the sheet mutilated."""
+    assert sheets.crop_loss((10, 10, 90, 90), (0, 0, 100, 100)) == (0, 0, 0, 0)
+    assert sheets.crop_loss((10, 10, 90, 90), (20, 0, 80, 60)) == (10, 0, 10, 30)
+    assert sheets.crop_loss(None, (0, 0, 100, 100)) == (0, 0, 0, 0)
+
+
+def test_cell_tiles_needed_is_the_number_the_warning_tells_you_to_type():
+    """Its answer has to actually fit, at the SAME anchor -- a recommendation you paste in
+    and still get a cropped sheet from is worse than no recommendation."""
+    box, origin, ppt = (13, 20, 371, 307), (191.5, 191.5), 64.0
+    for oy in (0.5, 0.6, 0.78):
+        tiles = sheets.cell_tiles_needed(box, origin, ppt, oy)
+        cell = int(math.ceil(tiles * ppt))
+        crop, _ = sheets.centred_crop(origin, cell, oy)
+        assert sheets.crop_loss(box, crop) == (0, 0, 0, 0), oy
+        # ... and it has to be the SMALLEST that fits, near enough: a "just make it huge"
+        # answer is a sheet nobody can read. 5% under the recommendation already crops.
+        tight, _ = sheets.centred_crop(origin, int(cell * 0.95), oy)
+        assert any(sheets.crop_loss(box, tight)), oy
+
+    # The measured union of the shipped 64 body rotations against the shipped cell: 294 px
+    # of cell over a 358 px sprite, which is where the 32-a-side and 50-off-the-bottom
+    # crops came from. The shipped cell is `camera.canvas_tiles` wide now.
+    old_box, _ = sheets.centred_crop(origin, 294, 0.78)
+    assert sheets.crop_loss(box, old_box) == (32, 0, 32, 50)
+    cfg = ac.resolve(env={})
+    now = int(round(cfg["compare.cell_tiles"] * 64.0))
+    fits, _ = sheets.centred_crop(origin, now, cfg["compare.origin_y"])
+    assert sheets.crop_loss(box, fits) == (0, 0, 0, 0)
+    assert cfg["compare.cell_tiles"] == cfg["camera.canvas_tiles"]
+
+
 def test_mount_markers_agree_with_the_prototype():
     m = sheets.mount_markers(64.0)
     assert len(m) == 8
@@ -496,6 +660,34 @@ def test_mount_markers_agree_with_the_prototype():
     # foreshortened by the 45 degree camera.
     assert ground[0] == pytest.approx(2.25 * 64)
     assert ground[1] == pytest.approx(-2.5 * 64 * fc.K)
+
+
+def test_the_drawn_mount_ring_is_the_one_the_prototype_ships():
+    """C.13 moved the mounts inboard. The compare sheet reading its ratio out of
+    shared.lua rather than carrying its own copy is what stops the harness marking a ring
+    this mod stopped declaring -- and this test is what stops the two drifting apart."""
+    import re
+    text = sheets.MOUNT_SHRINK_LUA.read_text()
+    declared = float(re.search(r"^\s*mount_shrink\s*=\s*([0-9.]+)", text, re.M).group(1))
+    assert sheets.mount_shrink() == declared
+    assert 0 < declared <= 1.0
+    stock = sheets.mount_markers(64.0)
+    ours = sheets.mount_markers(64.0, declared)
+    for (m, ground), (ms, ground_s) in zip(stock, ours):
+        assert ms[0] == pytest.approx(m[0] * declared)
+        assert ms[1] == pytest.approx(m[1] * declared)
+        # ground_position is NOT scaled in entity.lua, so it must not be scaled here
+        assert ground == ground_s
+
+
+def test_a_missing_prototype_falls_back_instead_of_exploding(monkeypatch, tmp_path):
+    """sheets.py is imported by tests that never build a mod tree, and a missing ratio must
+    degrade to stock's ring rather than stop you looking at the shark."""
+    monkeypatch.setattr(sheets, "MOUNT_SHRINK_LUA", tmp_path / "gone.lua")
+    assert sheets.mount_shrink() == 1.0
+    (tmp_path / "there.lua").write_text("local C = {\n  mount_shrink = 0.5,\n}\n")
+    monkeypatch.setattr(sheets, "MOUNT_SHRINK_LUA", tmp_path / "there.lua")
+    assert sheets.mount_shrink() == 0.5
 
 
 def test_mount_extents_are_the_footprint_c4_has_to_cover():
@@ -605,9 +797,9 @@ def _write_frame(d, index, size, box):
 
 
 def test_a_render_that_runs_out_of_canvas_is_reported(tmp_path, capsys):
-    """The shipped 6-tile body canvas already cuts the nose at model.scale 1.1, which is
-    the first thing anyone reaches for. A clipped frame reads as a shark with a flat
-    dorsal fin, not as an error, so the harness has to say so itself.
+    """MEASURED: the shipped 6-tile body canvas cuts the broadside frames at model.scale
+    0.87, against a shipped 0.81 -- one nudge of the scale slider. A clipped frame reads
+    as a shark with a flat dorsal fin, not as an error, so the harness has to say so.
     """
     from render import art
     cfg = ac.resolve(env={})

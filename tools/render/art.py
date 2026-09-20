@@ -5,6 +5,7 @@
     uv run --directory tools python render/art.py --compare     # THE image to look at
     uv run --directory tools python render/art.py --full        # the real 64
     uv run --directory tools python render/art.py --shadow      # shadow-only pass
+    uv run --directory tools python render/art.py --mask        # the runtime-tint harness
     uv run --directory tools python render/art.py --show        # print resolved knobs
 
     ... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'   # try before you commit
@@ -40,6 +41,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import argparse  # noqa: E402
 import concurrent.futures  # noqa: E402
 import json  # noqa: E402
+import math  # noqa: E402
 import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
@@ -62,6 +64,20 @@ def out_root(cfg) -> pathlib.Path:
     return p if p.is_absolute() else REPO / p
 
 
+def shorten(path: pathlib.Path) -> str:
+    """A path for a human, repo-relative WHERE THAT IS POSSIBLE.
+
+    `output.dir` takes an absolute path -- out_root() says so -- and every render then
+    printed it through Path.relative_to(REPO), which RAISES on a path outside the repo.
+    A progress line is not a place to throw from: rendering into /tmp is exactly what you
+    do when you want a timing run that does not touch the shipped cache.
+    """
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
 def pass_dir(cfg, which: str, samples: int) -> pathlib.Path:
     """Cache directory for one pass. Named by the hash of the knobs that change its
     pixels, plus the sample count -- preview and full differ ONLY in samples, and a
@@ -70,8 +86,10 @@ def pass_dir(cfg, which: str, samples: int) -> pathlib.Path:
 
 
 def blend_path(cfg) -> pathlib.Path:
-    p = pathlib.Path(os.path.expanduser(cfg["model.blend"]))
-    return p if p.is_absolute() else REPO / p
+    """Where the model is. artconfig owns the resolution because it DIGESTS this file --
+    two resolvers and the hash would describe a different file from the one Blender
+    opened. Kept as a name here because tune.py and the render loop both call it."""
+    return ac.blend_path(cfg)
 
 
 def chunk(items, n):
@@ -117,7 +135,7 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     payload.write_text(json.dumps(blob, indent=2, sort_keys=True))
 
     if not todo:
-        print(f"  {which:<7} {len(frames)} frames CACHED  {outdir.relative_to(REPO)}")
+        print(f"  {which:<7} {len(frames)} frames CACHED  {shorten(outdir)}")
         warn_if_clipped(cfg, outdir, frames, which)
         return outdir, {"seconds": 0.0, "rendered": 0, "cached": len(frames)}
 
@@ -151,7 +169,7 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     print(f"  {which:<7} {len(todo)} frames in {wall:6.2f}s  "
           f"({wall / len(todo):.2f}s/frame, {engine}, {samples} samples, {size}, "
           f"{len(groups)} job{'s' if len(groups) > 1 else ''})  "
-          f"{outdir.relative_to(REPO)}")
+          f"{shorten(outdir)}")
     warn_if_clipped(cfg, outdir, frames, which)
     return outdir, {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
                     "engine": engine, "jobs": len(groups)}
@@ -174,8 +192,9 @@ def warn_if_clipped(cfg, outdir, frames, which, floor: int = SPRITE_ALPHA_FLOOR)
 
     A clipped frame does not look broken, it looks like a shark with a flat dorsal fin,
     and you will spend twenty minutes on the LIGHTING before you notice the canvas. The
-    shipped 6-tile body canvas holds scale 0.75 with 0.73 tiles to spare and is ALREADY
-    cutting the nose at scale 1.1 -- which is the first thing anyone does with this tool.
+    shipped 6-tile body canvas holds the shipped scale 0.81 with 0.20 tiles to spare at
+    the SIDES (frames 16 and 48, the broadside pair) and starts cutting at 0.87 -- one
+    nudge of the scale slider away, which is why this runs on every pass.
 
     Runs on cached frames too: the second run at a too-big scale is the one where you have
     forgotten, and a warning that only fires on a cache miss is a warning you never see.
@@ -199,6 +218,33 @@ def warn_if_clipped(cfg, outdir, frames, which, floor: int = SPRITE_ALPHA_FLOOR)
               "cut, not small -- raise %s (now %.2f) and re-render."
               % (which, len(clipped), len(frames), shown, knob, cfg[knob]))
     return clipped
+
+
+def cell_fit_line(cfg, cuts, needs) -> str:
+    """One line saying whether the compare CELL held every frame, and what it cost.
+
+    The render canvas has had a warning since C.10; the cell it gets composited into had
+    none, and a cell that is too small crops the sprite silently -- it reads as a tight
+    crop, not as a bug. That is the worst possible failure for THIS image, because the
+    compare sheet is where scale, pivot and offset get decided: every one of those
+    judgements is made against a picture the sheet cropped. So the verdict goes on stdout
+    AND in the footer, whether or not it is bad news, the way the mount self-check does.
+    """
+    have, oy = cfg["compare.cell_tiles"], cfg["compare.origin_y"]
+    # Rounded UP to the printed precision: 0.01 tiles is 0.64 px, and a recommendation
+    # you paste in that still crops by half a pixel is worse than no recommendation.
+    want = math.ceil((max(needs) if needs else 0.0) * 100) / 100
+    bad = [(label, cut) for label, cut in cuts if any(cut)]
+    if not bad:
+        return ("compare cell %.2f tiles at origin_y %.2f holds every frame "
+                "(tightest needs %.2f)" % (have, oy, want))
+    worst = [max(cut[k] for _, cut in bad) for k in range(4)]
+    return ("compare cell %.2f tiles at origin_y %.2f CROPS %d/%d frames -- worst "
+            "L/T/R/B %d/%d/%d/%d px (%s). Raise compare.cell_tiles to %.2f, or move "
+            "compare.origin_y: the sprite is CUT, and this is the sheet you size him on"
+            % (have, oy, len(bad), len(cuts), worst[0], worst[1], worst[2], worst[3],
+               ", ".join(label for label, _ in bad[:4])
+               + ("..." if len(bad) > 4 else ""), want))
 
 
 def downsample(outdir, frames, target_px):
@@ -231,27 +277,40 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
     ppt = d["body_px_per_tile"] if which != "shadow" else d["shadow_px_per_tile"]
     cell = int(round(cfg["compare.cell_tiles"] * d["sprite_px_per_tile"]))
     cols, rows = sheets.contact_grid(len(frames))
-    foot = footer_lines(cfg, label, passes)
+    # Reserved, filled once the cells have been measured -- drop the placeholder and the
+    # grid is laid out one line short and the text renders off-canvas.
+    foot = footer_lines(cfg, label, passes) + [""]
     lay = sheets.GridLayout(cols=cols, rows=rows, cell=cell, left=10, top=22,
                             bottom=sheets.footer_height(len(foot)))
     canvas = Image.new("RGBA", (lay.width, lay.height), (26, 28, 30, 255))
     draw = ImageDraw.Draw(canvas)
     font = sheets._font(12)
+    cuts, needs = [], []
     for n, i in enumerate(frames):
         col, row = n % cols, n // cols
         x, y = lay.cell_origin(col, row)
         bg = sheets.cell_background(cell, cfg["compare.background"],
                                     d["sprite_px_per_tile"], cfg["compare.grid"],
                                     cfg["compare.origin_y"])
-        frame = sheets.load_render_frame(bodydir / f"frame_{i:03d}.png", cell, ppt,
-                                         d["sprite_px_per_tile"], cfg["compare.origin_y"])
+        frame, cut, need = sheets.render_frame_cell(
+            bodydir / f"frame_{i:03d}.png", cell, ppt, d["sprite_px_per_tile"],
+            cfg["compare.origin_y"], SPRITE_ALPHA_FLOOR)
+        cuts.append(("%02d" % i, cut))
+        needs.append(need)
         bg.alpha_composite(frame)
         if cfg["compare.show_mounts"]:
             sheets.draw_mounts(bg, d["sprite_px_per_tile"], cfg["compare.show_legs"],
-                               cfg["compare.origin_y"])
+                               cfg["compare.origin_y"], shrink=sheets.mount_shrink())
         canvas.alpha_composite(bg, (x, y))
         draw.text((x + 3, y - 15), f"{i:02d} {ac.compass(i, cfg['rotations.count'])}",
                   font=font, fill=(190, 196, 202, 255))
+    # The SHADOW pass renders on an 11-tile canvas because a 45-degree sun runs the shadow
+    # a tile east per tile of height, so a body-sized contact cell is a deliberate window
+    # onto it, not a defect -- it goes in the footer without the shout. Body and mask ride
+    # the compare cell exactly, and a crop there is the bug this check exists for.
+    foot[-1] = cell_fit_line(cfg, cuts, needs)
+    if which != "shadow" and any(any(cut) for _, cut in cuts):
+        print("  WARN " + foot[-1])
     sheets.draw_footer(canvas, lay, foot)
     path, side = sheet_paths(cfg, which if which != "body" else label)
     canvas.convert("RGB").save(path)
@@ -268,6 +327,12 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     the shark look like he has more to cover than he does -- and this sheet is where the
     shark's size gets decided. sheets.mount_selfcheck() proves the markers against it,
     every run, and the verdict goes to stdout, into the footer and into the sidecar.
+
+    TWO MOUNT RINGS, and mixing them up is the whole reason this note exists. The
+    self-check is about STOCK art, so it uses stock's own declared positions. Everything
+    drawn on the JAMALTRON row -- the markers, the legs, the coverage count -- uses the
+    ratio entity.lua actually ships (C.13, read out of shared.lua), because a sheet that
+    marks a ring this mod no longer declares is answering a question nobody is asking.
     """
     from PIL import Image, ImageDraw
     d = ac.derived(cfg)
@@ -279,21 +344,24 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
         rows.append("STOCK")
     rows += ["JAMALTRON", "OVERLAY"]
 
-    hw, north, south = sheets.mount_extents(ppt)
+    shrink = sheets.mount_shrink()
+    hw, north, south = sheets.mount_extents(ppt, shrink)
     check = sheets.mount_selfcheck()
     check_line = sheets.selfcheck_line(check)
     print("  " + check_line)
     # Measured off the cells as they are drawn, but the footer's HEIGHT has to be known
     # before the canvas exists. So the line is reserved here and filled in below; drop the
     # placeholder and the grid is laid out one line short and the text renders off-canvas.
-    coverage = []
+    coverage, cuts, needs = [], [], []
     foot = footer_lines(cfg, "compare", passes) + [
-        "leg mounts span %+.0f..%+.0f px transverse, %+.0f..%+.0f px along screen "
-        "(+-%.2f x %.2f..%.2f tiles); shark %.2f x %.2f tiles at scale %.3f"
-        % (-hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
+        "leg mounts at %.2f of stock (C.13) span %+.0f..%+.0f px transverse, "
+        "%+.0f..%+.0f px along screen (+-%.2f x %.2f..%.2f tiles); "
+        "shark %.2f x %.2f tiles at scale %.3f"
+        % (shrink, -hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
            d["shark_length_tiles"], d["shark_width_tiles"], cfg["model.scale"]),
         check_line,
         "",   # placeholder: the shark's own coverage, measured below
+        "",   # placeholder: whether the cell held him, measured below
     ]
 
     lay = sheets.GridLayout(cols=len(frames), rows=len(rows), cell=cell,
@@ -311,10 +379,13 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
         draw.text((x + 3, 6), f"{i:02d}  {ac.compass(i, cfg['rotations.count'])}",
                   font=font, fill=(206, 212, 218, 255))
 
-        jam_body = sheets.load_render_frame(bodydir / f"frame_{i:03d}.png", cell,
-                                            d["body_px_per_tile"], ppt, oy)
-        coverage.append(("%02d %s" % (i, ac.compass(i, cfg["rotations.count"])),
-                         sheets.mount_coverage(jam_body, ppt, oy)))
+        label = "%02d %s" % (i, ac.compass(i, cfg["rotations.count"]))
+        jam_body, cut, need = sheets.render_frame_cell(
+            bodydir / f"frame_{i:03d}.png", cell, d["body_px_per_tile"], ppt, oy,
+            SPRITE_ALPHA_FLOOR)
+        cuts.append((label, cut))
+        needs.append(need)
+        coverage.append((label, sheets.mount_coverage(jam_body, ppt, oy, shrink=shrink)))
         jam_shadow = None
         if shadowdir is not None:
             sp = shadowdir / f"frame_{i:03d}.png"
@@ -358,7 +429,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
                     bg.alpha_composite(jam_shadow)
                 bg.alpha_composite(jam_body)
             if cfg["compare.show_mounts"]:
-                sheets.draw_mounts(bg, ppt, cfg["compare.show_legs"], oy)
+                sheets.draw_mounts(bg, ppt, cfg["compare.show_legs"], oy,
+                                   shrink=1.0 if name == "STOCK" else shrink)
             canvas.alpha_composite(bg, lay.cell_origin(col, r))
 
     for r, name in enumerate(rows):
@@ -371,14 +443,24 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
 
     cover_line = sheets.coverage_line(coverage)
     print("  " + cover_line)
-    foot[-1] = cover_line
+    foot[-2] = cover_line
+    fit_line = cell_fit_line(cfg, cuts, needs)
+    print(("  WARN " if any(any(cut) for _, cut in cuts) else "  ") + fit_line)
+    foot[-1] = fit_line
     sheets.draw_footer(canvas, lay, foot)
     path, side = sheet_paths(cfg, "compare")
     canvas.convert("RGB").save(path)
     finish(cfg, path, side, {"sheet": "compare", "frames": frames, "rows": rows,
                              "mount_selfcheck": check,
+                             "mount_shrink": shrink,
                              "mount_coverage": {"per_frame": coverage,
-                                                "line": cover_line}})
+                                                "line": cover_line},
+                             "cell_fit": {"cell_tiles": cfg["compare.cell_tiles"],
+                                          "origin_y": cfg["compare.origin_y"],
+                                          "tiles_needed": max(needs) if needs else 0.0,
+                                          "cut_px": {label: list(cut)
+                                                     for label, cut in cuts if any(cut)},
+                                          "line": fit_line}})
     return path
 
 
@@ -421,6 +503,9 @@ def build_parser():
                    help="all rotations.count frames of the body pass + a contact sheet")
     m.add_argument("--shadow", action="store_true",
                    help="the shadow-catcher pass (Cycles only) + a contact sheet")
+    m.add_argument("--mask", action="store_true",
+                   help="the runtime-tint pass (the harness, C.4b) + a contact sheet; "
+                        "add --full for all rotations.count of them")
     m.add_argument("--compare", action="store_true",
                    help="jamaltron beside the stock spidertron at matched rotations, "
                         "with shadow and leg mounts. The one to look at")
@@ -457,7 +542,8 @@ def main(argv=None):
     for w in ac.warnings(cfg):
         print("WARN " + w)
 
-    if args.show or not (args.preview or args.full or args.shadow or args.compare):
+    if args.show or not (args.preview or args.full or args.shadow or args.compare
+                         or args.mask):
         print(json.dumps(ac.stamp(cfg), indent=2, sort_keys=True))
         if not args.show:
             print("\nnothing to do: pass --preview, --compare, --full or --shadow "
@@ -495,6 +581,17 @@ def main(argv=None):
                                  jobs=args.jobs, force=args.force, verbose=args.verbose)
         made.append(contact_sheet(cfg, "body", frames, bodydir, "full",
                                   [("body", cfg["render.engine"], cfg["render.samples"])]))
+
+    if args.mask:
+        # Same samples rule as the body pass, because it IS the body pass with a different
+        # material: --mask alone previews, --mask --full is the sheet.
+        frames = explicit or ac.frame_indices(cfg, None if args.full
+                                              else cfg["rotations.preview"])
+        samples = cfg["render.samples"] if args.full else cfg["render.preview_samples"]
+        maskdir, _ = render_pass(cfg, "mask", frames, samples, jobs=args.jobs,
+                                 force=args.force, verbose=args.verbose)
+        made.append(contact_sheet(cfg, "mask", frames, maskdir, "mask",
+                                  [("mask", cfg["render.engine"], samples)]))
 
     if args.shadow:
         frames = explicit or ac.frame_indices(cfg, cfg["rotations.preview"]

@@ -63,7 +63,11 @@ def test_apply_values_does_not_mutate_the_base():
 
 def test_toml_export_round_trips_to_the_same_hash():
     """The promise the copy-TOML button makes: paste, run art.py, get this hash."""
-    cfg = ac.load()
+    # env={} on both sides so the two configs differ only in the knobs the block carries.
+    # It used to be load bearing for a second reason -- $JAMALTRON_BLEND is a knob and the
+    # hash was taken over its PATH -- but model.blend hashes by CONTENT now, so pointing
+    # the two sides at two copies of one .blend would no longer break this.
+    cfg = ac.load(env={})
     tuned = tune.apply_values(cfg, {"pivot_x": -0.3, "offset_z": 0.72, "girth": 1.45,
                                     "scale": 0.88, "pitch": 6.5})
     text = tune.toml_block(tuned, ac.config_hash(tuned))

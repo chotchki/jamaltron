@@ -20,7 +20,15 @@
 # that produced it, plus a sidecar JSON of the fully resolved knobs.
 
 [model]
-# TUNED BY HAND in render/tune.py on 2026-09-20 -> config 137972136a75.
+# TUNED BY HAND in render/tune.py on 2026-09-20 -> config 137972136a75, which was
+# 335119bf9c46 by the time C.4 shipped sheets and is 83d6be794998 now.
+# THE SHARK KNOBS BELOW HAVE NOT MOVED SINCE THE TUNE. Both older hashes were taken over
+# the model's PATH, so they were facts about one laptop -- three copies of one .blend gave
+# three hashes for identical pixels. The hash is over the model's CONTENT now (see
+# artconfig.hashable), so 83d6be794998 is what these knobs come out as on any machine
+# holding the same file. The part of the jump that is a real knob change is the [mask]
+# plate and the [compare] cell, both of which moved in the same pass; pivot, scale, girth
+# and offset are untouched.
 # pivot sits well FORWARD of the dorsal peak (-0.53), near the cephalofoil, so he swings
 # from the head with the tail trailing rather than spinning about his middle. girth 1.55 is
 # the "overweight" canon doing real work. offset 0.5 sits him lower than the measured 0.85.
@@ -134,13 +142,18 @@ pitch = 45.0
 sprite_scale = 0.5
 
 # Square render canvas for the BODY pass, in tiles. Must hold the shark at `scale` AND the
-# up-screen lift from `model.offset`: a 3.77-tile shark pointing north projects
-# 3.77 * 0.7071 = 2.67 tiles tall, and the 0.85-tile height offset lifts him another
-# 0.85 * 0.7071 = 0.60 tiles. MEASURED on the shipped knobs, union of the eight preview
-# rotations: he fills 3.78 x 3.17 tiles of the 6, reaching 2.26 tiles above the entity
-# origin and 0.91 below -- 0.73 tiles of headroom at the top, 1.11 at each side. The TOP is
-# the tight edge, because the lift only pushes one way, and it runs out around scale 1.1.
-# Too small clips the nose; too large is wasted pixels and slower frames.
+# up-screen lift from `model.offset`: a 4.07-tile shark pointing north projects
+# 4.07 * 0.7071 = 2.88 tiles tall, and the 0.5-tile height offset lifts him another
+# 0.5 * 0.7071 = 0.35 tiles. MEASURED on the shipped knobs, union of all 64 rotations'
+# alpha at >= 8/255: he fills 5.59 x 4.48 tiles of the 6, reaching 2.68 tiles above the
+# entity origin and 1.81 below -- 0.31 tiles of headroom at the top, 0.20 at each side.
+# The SIDE is the tight edge, not the top: broadside he is 4.07 tiles of pure length while
+# the 45-degree camera flattens his height by 0.71, so width wins. It runs out at scale
+# 0.87 -- MEASURED by rendering frames 16 and 48, which are the widest two: 0.86 is clean,
+# 0.87 trips the warning. The shipped 0.81 is 7% off the edge, not the comfortable margin
+# the pre-C.13 numbers here used to claim. Too small clips the nose; too large is wasted pixels and
+# slower frames. art.py re-measures this on every render, cached frames included, and
+# shouts (`WARN body pass: ... TOUCH THE CANVAS EDGE`) rather than trusting this comment.
 # default 6.0
 canvas_tiles = 6.0
 
@@ -285,21 +298,32 @@ counterclockwise = false
 # default 8
 rotations = 8
 
-# Size of one compare cell in TILES, square. Sets how much context sits around the shark.
-# 4.6 holds a 3.77-tile shark pointing east AND the 0.60 tiles of up-screen lift that
-# `model.offset`'s 0.85 tiles of world height comes to; raise it if the nose starts getting
-# clipped after you scale him up.
-# default 4.6
-cell_tiles = 4.6
+# Size of one compare cell in TILES, square. Sets how much context sits around the shark,
+# and getting it wrong is not cosmetic: a cell smaller than the sprite CROPS the sprite,
+# and this sheet is where scale, pivot and offset get decided. 4.6 was measured against a
+# shark that was re-tuned afterwards and never re-measured -- against the shipped knobs it
+# was a 294 px cell over a 358 px union, cutting 32 px off each side at E/W and 50 px off
+# the bottom at every rotation, tail flat-sliced at 16 and 48, head at 32.
+# 6.0 is `camera.canvas_tiles`: the cell IS the render canvas, so it cannot crop anything
+# the render did not already crop, and the render pass has warned about its own canvas
+# since C.10. --compare now measures every cell against the frame it came from and puts
+# the verdict on stdout and in the footer whichever way it goes, so the next knob change
+# shouts instead of quietly slicing him.
+# default 6.0
+cell_tiles = 6.0
 
 # Where the entity origin (the point on the GROUND the legs stand around) sits inside a
-# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 0.85
-# tiles of world height, which a 45-degree camera turns into 0.60 tiles up-screen, and the
-# render measures 2.26 tiles above the origin against 0.91 below -- so a cell centred on
-# the origin cuts his nose off. Factorio biases its own frames the same way -- the stock
-# torso is 138 px tall with the entity at pixel 106, 77% of the way down.
-# default 0.78
-origin_y = 0.78
+# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 0.5
+# tiles of world height, which a 45-degree camera turns into 0.35 tiles up-screen, so he
+# sits high in his own canvas and a cell centred on the origin wastes its bottom half.
+# MEASURED over all 64 rotations he reaches 2.68 tiles above the origin against 1.81
+# below, and 0.60 is that split (2.68 / 4.48) -- the cell is spent where he actually is.
+# 0.78 was STOCK's bias (the spidertron torso is 138 px tall with the entity at pixel 106,
+# 77% down) rather than a measurement of ours, and paired with a 4.6-tile cell it is what
+# put 50 px of tail off the bottom of every frame. Move it and --compare tells you what
+# the cell can still hold.
+# default 0.60
+origin_y = 0.60
 
 # Cell background, RGB. Mid-slate on purpose: a transparent checkerboard makes the shadow
 # unjudgeable and pure black hides the shark's own dark underside.
@@ -335,6 +359,134 @@ show_legs = true
 # One-tile grid overlay on each cell, so you can read sizes off the image directly.
 # default true
 grid = true
+
+[mask]
+# THE RUNTIME-TINT MASK (C.4b). Stock ships spidertron-body-mask.png -- 130x100, 64
+# directions, apply_runtime_tint -- and WITHOUT a mask layer the entity colour picker does
+# nothing at all, which also makes D.4's careful preservation of `color` across the beached
+# swap dead code. So the question is not whether to ship one, it is WHAT to tint.
+#
+# Stock's answer does not transfer. Its mask is a shaded greyscale copy of the ENTIRE
+# torso at alpha 224, so the player's colour becomes the machine. Do that to a hammerhead
+# and he stops being a shark and starts being a 4-tile lozenge in team colours.
+#
+# So: tint the HARNESS, the same reasoning C.13 settled the mounts with. He is strapped
+# into his legs, the straps are the man-made part of him, and a man-made part is the only
+# thing on this model that has any business being whatever colour the player likes. The
+# mask pass renders one flat grey shader whose ALPHA is a band function of the model's own
+# local coordinates, so the tinted region is a saddle and two girth straps rather than a
+# whole fish. It is also additive content: the model has no harness, and this layer draws
+# one.
+#
+# HONEST LIMIT, because the config file is where it belongs: this paints the harness ON
+# his skin. There is no geometry, so it has no raised silhouette and no self-shadow -- it
+# reads as webbing, not as a buckled strap. Second limit, learned the hard way: the band is
+# a function of coordinates and NOTHING ELSE, so it cannot tell his back from his dorsal
+# fin. It is kept off the fin by a z ceiling (`plate_top_z`), measured against this model,
+# and moving the model or the straps means re-checking it -- render the mask pass and look
+# at it over the body. F.2's in-game eyeball is the real check for both.
+#
+# "harness" is the shipped mode. "silhouette" is stock's approach, kept so disagreeing is
+# a one-line diff rather than a rewrite; the harness warns you about it if you pick it.
+# default "harness"
+mode = "harness"
+
+# Forward strap centre, in MODEL-LOCAL BU along the length axis (+x is the nose). The
+# rest-pose mesh spans x -3.588 (caudal fin) to +1.439 (cephalofoil) and the tuned pivot
+# sits at -0.14, so the eight leg mounts -- +-0.352 tiles of screen offset, i.e. +-0.43 BU
+# at scale 0.81 -- cluster in x -0.57..+0.29. The straps bracket that cluster: the load
+# goes into the straps, not into the middle of a plate.
+# default 0.2
+strap_fore = 0.20
+
+# Aft strap centre, same units. Sits behind the pectoral fin roots (FIN_LEFT/FIN_RIGHT
+# head at x -0.075) so the strap does not cut across a fin.
+# default -0.62
+strap_aft = -0.62
+
+# Strap width in BU, measured along the length axis. 0.16 BU is 0.13 tiles is about 8 px
+# in the packed sheet -- thin enough to read as a strap, thick enough to survive Factorio's
+# own sprite compression.
+# default 0.16
+strap_width = 0.16
+
+# Local z the dorsal PLATE starts at: the saddle's lower edge, i.e. how far down his
+# flanks the harness wraps. Between the straps his BODY runs from about z -0.3 (belly) to
+# 0.75 (the crest, where the fin takes over), so this is the useful range: -0.3 wraps the
+# plate all the way under him and duplicates what the straps already do, 0.6 leaves a thin
+# ribbon along his spine. 0.24 sits just above the mid-flank -- from the side it reads as
+# a saddle pad between the two straps, from above it meets both of them.
+# default 0.24
+plate_z = 0.24
+
+# Local z the plate STOPS at, and this is the knob that keeps the player's colour off his
+# dorsal fin. Without a ceiling the plate is "everything between the straps ABOVE plate_z"
+# and the tallest thing between the straps is the fin, which rises to z 1.44: the first
+# shipped mask tinted it base to tip, so the entity colour picker painted a shark fin and
+# the block above claiming this tints the HARNESS was simply not true of the pixels. Worse,
+# the documented escape hatch ran backwards -- raising plate_z removed the saddle and kept
+# the fin, because at plate_z 0.62 there was no saddle, only fin.
+# MEASURED by sweeping the cap and looking at the mask over the body (dir 16, the pure
+# side view): the back between the straps carries body up to about z 0.75, and past ~0.8
+# the plate starts climbing the blade. 0.70 covers the whole back and stops clear of it;
+# below ~0.5 it leaves a bare strip of back between the saddle and the fin. The fin then
+# rises through a hole in the saddle, which is what a harness on a shark would do.
+# Set this at or below plate_z and the plate is empty -- two bare straps, the harness
+# warns you -- which IS the escape hatch the old comment was reaching for.
+# default 0.70
+plate_top_z = 0.70
+
+# Soft edge on every band, in BU. 0 gives a hard stair-stepped edge at 64 px/tile; 0.04 BU
+# is roughly two pixels of ramp, which is what the body pass's own antialiasing looks like.
+# default 0.04
+edge = 0.04
+
+# Base grey of the mask surface, LINEAR -- so it is not the number that lands in the PNG.
+# Factorio MULTIPLIES the sprite by the entity colour, so this sets how bright the tinted
+# harness reads against him. MEASURED on the shipped lighting, mean over the band's own
+# opaque pixels on frame 16 (due east): 0.10 -> 123, 0.12 -> 133, 0.14 -> 142, 0.20 -> 166,
+# 0.62 -> 227 (clipped, a white decal). The shark's own body renders at a mean of 97 on the
+# same frame and stock's torso mask sits at 102, so 0.12 puts the harness about a third
+# brighter than the hide it is strapped to:
+# visible as webbing at a neutral colour, and saturated enough that the colour picker
+# obviously did something.
+# default 0.12
+grey = 0.12
+
+[reflection]
+# THE WATER REFLECTION, and it is built by pack.py out of the body frames -- no Blender
+# pass, because there is nothing to render. MEASURED off what stock actually ships:
+# spidertron-body-water-reflection.png is a 448x448 single frame, variation_count 1,
+# rotate/orientation_to_variation both false, shift 0, and every pixel of it is PURE RED
+# (255,0,0) with the shape carried entirely in the alpha. It is a soft blurred ellipse
+# 194x133 px -- 1.7x the torso sprite's own footprint -- centred on the entity origin. The
+# 448 canvas is just Wube not cropping a 5.6 KiB palette PNG; it is not a number to match.
+#
+# So ours is the same thing derived honestly: the MEAN alpha of all 64 body rotations
+# (rotationally symmetric by construction, dense where he always is and faint at the
+# extremities he only sometimes reaches), blurred, gained, recentred on the origin, RGB
+# forced to pure red, cropped to its own alpha box.
+
+# Blur radius in TILES. This is the whole look: under ~0.1 the blob keeps a shark
+# silhouette, which no reflection in moving water has; past ~0.4 it is a featureless
+# smudge wider than he is. 0.16 is 10 px at the shipped 64 px/tile.
+# default 0.16
+blur_tiles = 0.16
+
+# Multiplier on the mean alpha before it clips at 255. The mean of 64 rotations peaks well
+# under 255 -- only the ground he covers at EVERY heading is opaque -- so gain is what sets
+# how much of the blob is a solid core and how much is falloff. Picked by putting ours
+# beside stock's at matched scale: 1.7 leaves a small core in a wide halo, 3.6 is nearly
+# all core, 2.6 matches stock's own core-to-halo ratio. Raising it also WIDENS the sheet,
+# because the alpha box is measured at a fixed floor and gain lifts the far tails over it.
+# default 2.6
+gain = 2.6
+
+# Slide the blob so its alpha centroid lands on the entity origin, which is what makes the
+# emitted shift ~0 and therefore directly comparable to stock's. Off leaves it where the
+# render put it -- up-screen by model.offset's lift -- and the shift comes out non-zero.
+# default true
+recentre = true
 
 [output]
 # Render root, relative to the repo root. GITIGNORED. Sheets are promoted into

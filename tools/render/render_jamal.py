@@ -24,6 +24,14 @@ ENGINE, measured rather than assumed: the body pass defaults to EEVEE Next and t
 shadow pass is Cycles and has no choice. Only Cycles honours `is_shadow_catcher`; EEVEE
 Next accepts the attribute and renders the plane fully opaque. See the numbers in
 tools/README.md and the config comments.
+
+THREE PASSES, and the third one is the odd one. `body` and `shadow` differ in engine and
+canvas; `mask` differs in MATERIAL. It throws the shark's textures away, puts one flat grey
+shader on every mesh, and drives that shader's ALPHA from a band function of the model's
+own local coordinates -- so what lands on disk is the harness and nothing else, at the same
+camera and the same canvas as the body pass. That is the layer Factorio tints with the
+player's colour (C.4b); see the [mask] block in jamaltron.toml for why it is the harness
+and not the whole fish.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
@@ -158,6 +166,157 @@ def dead_image_check():
         findings.append({"image": img.name, "path": img.filepath,
                          "users": img.users, "wired_into": wired})
     return findings
+
+
+# --------------------------------------------------------------------------- mask pass
+
+
+def _band(nt, source, centre: float, width: float, edge: float, x: int, y: int):
+    """A soft window on one scalar socket: 1 inside `centre +- width/2`, 0 outside.
+
+    Three nodes, built as |v - centre| run through a smoothstep, because the symmetric
+    form needs one Map Range where two one-sided ramps need two plus a multiply. `edge` is
+    the ramp width in the SOURCE's units (BU here), so a config comment can state it in
+    pixels and be right.
+    """
+    sub = nt.nodes.new("ShaderNodeMath")
+    sub.operation = "SUBTRACT"
+    sub.location = (x, y)
+    sub.inputs[1].default_value = centre
+    nt.links.new(source, sub.inputs[0])
+
+    absolute = nt.nodes.new("ShaderNodeMath")
+    absolute.operation = "ABSOLUTE"
+    absolute.location = (x + 170, y)
+    nt.links.new(sub.outputs[0], absolute.inputs[0])
+
+    ramp = nt.nodes.new("ShaderNodeMapRange")
+    ramp.data_type = "FLOAT"
+    ramp.interpolation_type = "SMOOTHSTEP"
+    ramp.clamp = True
+    ramp.location = (x + 340, y)
+    nt.links.new(absolute.outputs[0], ramp.inputs[0])
+    ramp.inputs[1].default_value = width / 2.0            # From Min: still fully inside
+    ramp.inputs[2].default_value = width / 2.0 + edge     # From Max: fully outside
+    ramp.inputs[3].default_value = 1.0                    # To Min
+    ramp.inputs[4].default_value = 0.0                    # To Max
+    return ramp.outputs[0]
+
+
+def _lid(nt, source, off: float, on: float, x: int, y: int):
+    """A one-sided smooth step on one coordinate: 0 at `off`, 1 at `on`.
+
+    Direction is carried by which of the two is larger, so the same node builds the
+    plate's floor (0 below, 1 above) and its ceiling (1 below, 0 above) with no second
+    code path and no sign convention to get backwards.
+    """
+    ramp = nt.nodes.new("ShaderNodeMapRange")
+    ramp.data_type, ramp.interpolation_type, ramp.clamp = "FLOAT", "SMOOTHSTEP", True
+    ramp.location = (x, y)
+    nt.links.new(source, ramp.inputs[0])
+    ramp.inputs[1].default_value = off
+    ramp.inputs[2].default_value = on
+    ramp.inputs[3].default_value = 0.0
+    ramp.inputs[4].default_value = 1.0
+    return ramp.outputs[0]
+
+
+def _math(nt, operation: str, a, b, x: int, y: int):
+    node = nt.nodes.new("ShaderNodeMath")
+    node.operation = operation
+    node.location = (x, y)
+    nt.links.new(a, node.inputs[0])
+    nt.links.new(b, node.inputs[1])
+    return node.outputs[0]
+
+
+def build_mask_material(cfg):
+    """One flat grey shader whose alpha is the harness. Returns (material, note).
+
+    OBJECT coordinates, not world: the band has to stay put on his body while the rig spins
+    under the camera, and Texture Coordinate -> Object is the mesh's own rest space, which
+    is the space C.2 measured the bounding box in and the space `model.pivot` is stated in.
+    World coordinates would sweep the straps around him once per sheet.
+
+    DITHERED, not BLENDED, and backfaces culled. Alpha-blended EEVEE geometry writes no
+    depth, so the strap on his far flank draws THROUGH his back -- a mask with a ghost strap
+    on it, which is the kind of defect that survives all the way to a screenshot. Hashed
+    alpha writes depth per accepted sample, so the sorting is right and the 2 px ramp
+    resolves against the TAA samples the body pass already pays for.
+    """
+    mat = bpy.data.materials.new("jamaltron_mask")
+    mat.use_nodes = True
+    mat.use_backface_culling = True
+    note = "BLENDED/legacy"
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "DITHERED"
+        note = "DITHERED"
+    elif hasattr(mat, "blend_method"):
+        mat.blend_method = "HASHED"
+        note = "HASHED"
+
+    nt = mat.node_tree
+    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    grey = cfg["mask.grey"]
+    bsdf.inputs["Base Color"].default_value = (grey, grey, grey, 1.0)
+    for name, value in (("Metallic", 0.0), ("Roughness", 0.55),
+                        ("Specular IOR Level", 0.2)):
+        if name in bsdf.inputs:
+            bsdf.inputs[name].default_value = value
+    if "Subsurface Weight" in bsdf.inputs:
+        bsdf.inputs["Subsurface Weight"].default_value = 0.0
+
+    if cfg["mask.mode"] == "silhouette":
+        bsdf.inputs["Alpha"].default_value = 1.0
+        return mat, "%s, silhouette (the WHOLE shark tints)" % note
+
+    fore, aft = cfg["mask.strap_fore"], cfg["mask.strap_aft"]
+    width, edge = cfg["mask.strap_width"], cfg["mask.edge"]
+
+    coords = nt.nodes.new("ShaderNodeTexCoord")
+    coords.location = (-1400, 0)
+    split = nt.nodes.new("ShaderNodeSeparateXYZ")
+    split.location = (-1200, 0)
+    nt.links.new(coords.outputs["Object"], split.inputs[0])
+
+    strap_a = _band(nt, split.outputs["X"], fore, width, edge, -1020, 240)
+    strap_b = _band(nt, split.outputs["X"], aft, width, edge, -1020, 40)
+    # The plate spans strap centre to strap centre, so it meets both straps rather than
+    # leaving a two-pixel gap that reads as a printing error.
+    span = _band(nt, split.outputs["X"], (fore + aft) / 2.0, abs(fore - aft), edge,
+                 -1020, -160)
+    # TWO LIDS, AND THE UPPER ONE IS NOT OPTIONAL. With only a floor the plate is
+    # "everything in the span above plate_z", and the tallest thing in the span is the
+    # DORSAL FIN -- x -0.62..0.20 carries body up to z 0.54 and fin all the way to 1.44,
+    # so an unbounded plate tints the fin base to tip and the colour picker paints his
+    # fin. The band has to close: a saddle stops where the back stops.
+    floor_lid = _lid(nt, split.outputs["Z"], cfg["mask.plate_z"],
+                     cfg["mask.plate_z"] + edge, -680, -360)
+    ceil_lid = _lid(nt, split.outputs["Z"], cfg["mask.plate_top_z"],
+                    cfg["mask.plate_top_z"] - edge, -680, -560)
+
+    plate = _math(nt, "MULTIPLY", span, floor_lid, -480, -260)
+    plate = _math(nt, "MULTIPLY", plate, ceil_lid, -380, -300)
+    straps = _math(nt, "MAXIMUM", strap_a, strap_b, -480, 140)
+    total = _math(nt, "MAXIMUM", straps, plate, -300, 0)
+    nt.links.new(total, bsdf.inputs["Alpha"])
+    return mat, ("%s, harness straps x=%+.2f/%+.2f w=%.2f, plate z=%.2f..%.2f, "
+                 "edge %.3f BU"
+                 % (note, fore, aft, width, cfg["mask.plate_z"],
+                    cfg["mask.plate_top_z"], edge))
+
+
+def apply_mask_material(cfg):
+    """Put the mask material on every mesh, replacing whatever was there."""
+    mat, note = build_mask_material(cfg)
+    used = []
+    for ob in bpy.data.objects:
+        if ob.type != "MESH":
+            continue
+        ob.data.materials.clear()
+        ob.data.materials.append(mat)
+        used.append(ob.name)
+    return "%s on %s" % (note, ", ".join(used) or "NOTHING -- no mesh in the scene")
 
 
 # -------------------------------------------------------------------------- scene prep
@@ -331,6 +490,7 @@ def main():
     d = ac.derived(cfg)
     which = args["pass"]
     shadow = which == "shadow"
+    mask = which == "mask"
 
     scene = bpy.context.scene
     print("FIX nla muted:", mute_nla_tracks() if cfg["model.mute_nla"] else "SKIPPED")
@@ -347,6 +507,8 @@ def main():
 
     scene.frame_set(cfg["model.frame"])
 
+    # The mask rides the BODY canvas exactly -- same tiles, same resolution, same camera --
+    # because its frames have to crop against the same origin pixel the body's do.
     canvas = cfg["camera.shadow_canvas_tiles"] if shadow else cfg["camera.canvas_tiles"]
     # The RENDER size, which is the stamped size times render.supersample. art.py Lanczos
     # -downsamples these frames to *_resolution_px afterwards, because Blender has no
@@ -375,6 +537,9 @@ def main():
     print("SUN ", sun_note)
 
     root, subject = build_rig(scene, cfg)
+
+    if mask:
+        print("FIX mask material:", apply_mask_material(cfg))
 
     if shadow:
         fc.add_shadow_catcher(scene, canvas)

@@ -81,6 +81,30 @@ LEG_MOUNTS = [
 #: base/prototypes/entity/entities.lua: body_height = 1.5 * scale * leg_scale.
 STOCK_BODY_HEIGHT_TILES = 1.5
 
+#: Where the SHIPPED mount ratio lives. C.13 moved Jamal's mounts inboard -- he is in a
+#: harness, not a chassis -- so the eight markers stock declares are not the eight this
+#: mod draws, and a compare sheet marking stock's ring answers a question nobody is asking
+#: any more. The prototype is the source of truth and this reads it rather than copying
+#: the number, because two copies of a ratio is one ratio and one future lie.
+MOUNT_SHRINK_LUA = pathlib.Path(__file__).resolve().parents[2] / "mod" / "jamaltron" \
+    / "prototypes" / "shared.lua"
+
+
+def mount_shrink(default: float = 1.0) -> float:
+    """The mod's own `mount_shrink`, or `default` when the prototype is unreadable.
+
+    Never fatal: this module has to keep working with the mod tree missing (it is imported
+    by tests that build their own fixtures) and a missing ratio must degrade to stock's
+    ring rather than stopping you looking at the shark.
+    """
+    import re
+    try:
+        text = MOUNT_SHRINK_LUA.read_text()
+    except OSError:
+        return default
+    found = re.search(r"^\s*mount_shrink\s*=\s*([0-9.]+)", text, re.M)
+    return float(found.group(1)) if found else default
+
 
 # ------------------------------------------------------------------ pure layout math
 
@@ -109,13 +133,14 @@ def cell_anchor(cell_px: int, origin_y: float = 0.5):
     """Where the entity origin sits inside a compare cell, in pixels.
 
     Horizontally centred; vertically anchored at `origin_y` of the cell. The bias is not
-    decoration -- `model.offset` lifts the shark 0.85 tiles of world height, which the
-    45-degree camera turns into 0.85 * 0.7071 = 0.60 tiles up-screen, so he sits well
-    above the entity position and a cell centred on the origin crops him at the top.
-    Measured on the shipped knobs: over the eight preview rotations the rendered body
-    reaches 2.26 tiles above the origin and only 0.91 below. Factorio biases its own
-    frames the same way -- the stock torso is 138 px tall with the entity at pixel 106,
-    i.e. 77% of the way down.
+    decoration -- `model.offset` lifts the shark 0.5 tiles of world height, which the
+    45-degree camera turns into 0.5 * 0.7071 = 0.35 tiles up-screen, so he sits high in
+    his own canvas and a cell centred on the origin spends its bottom half on nothing.
+    MEASURED on the shipped knobs, union of all 64 rotations: the rendered body reaches
+    2.68 tiles above the origin and 1.81 below, so the honest split is 0.60. Factorio
+    biases its own frames the same way -- the stock torso is 138 px tall with the entity
+    at pixel 106, i.e. 77% of the way down -- but that is STOCK's ratio, and using it on
+    a shark this long is how a 4.6-tile cell came to slice 50 px off his tail.
     """
     return (fc.origin_pixel(cell_px), (cell_px - 1) * origin_y)
 
@@ -133,27 +158,66 @@ def centred_crop(origin_xy, cell_px: int, origin_y: float = 0.5):
     return (x0, y0, x0 + cell_px, y0 + cell_px), residual
 
 
-def mount_markers(px_per_tile: float):
+def crop_loss(sprite_box, cell_box):
+    """px of sprite that `cell_box` cuts off each edge: (left, top, right, bottom).
+
+    `sprite_box` is a Pillow alpha bbox (right/bottom exclusive) in the same pixel space
+    the crop box is stated in. All zeros means the cell holds the whole sprite.
+    """
+    if sprite_box is None:
+        return (0, 0, 0, 0)
+    x0, y0, x1, y1 = cell_box
+    return (max(0, x0 - sprite_box[0]), max(0, y0 - sprite_box[1]),
+            max(0, sprite_box[2] - x1), max(0, sprite_box[3] - y1))
+
+
+def cell_tiles_needed(sprite_box, origin_xy, cell_px_per_tile: float,
+                      origin_y: float = 0.5) -> float:
+    """Smallest square cell, IN TILES, that holds `sprite_box` at this anchor.
+
+    The four constraints are the four edges, and the vertical pair depends on `origin_y`:
+    the anchor sits at (cell-1) * origin_y down the cell, so it has origin_y of the cell
+    above it and 1 - origin_y below. A bias that suits one render clips the next, which
+    is exactly how the shipped 4.6-tile cell came to cut 32 px off each side and 50 off
+    the bottom of a shark nobody had re-measured it against.
+    """
+    if sprite_box is None:
+        return 0.0
+    ox, oy = origin_xy
+    oyf = min(max(origin_y, 1e-6), 1 - 1e-6)
+    need = max(2 * (ox - sprite_box[0]) + 1,
+               2 * (sprite_box[2] - ox) + 1,
+               (oy - sprite_box[1]) / oyf + 1,
+               (sprite_box[3] - oy) / (1 - oyf) + 1)
+    return max(0.0, need / cell_px_per_tile)
+
+
+def mount_markers(px_per_tile: float, shrink: float = 1.0):
     """The eight leg mounts as (mount_px, ground_px) offsets from the entity origin.
 
     Mount is a screen offset: straight multiply. Ground is a world position on the
     ground plane, so it goes through the camera -- and its north-south foreshortens by
     0.7071 while its east-west does not, which is why the stance reads as an ellipse
     rather than a circle.
+
+    `shrink` scales the MOUNTS ONLY, exactly as entity.lua does. Ground positions are
+    deliberately untouched there -- that is where the feet land, and shrinking them too
+    would give him a mincing stance instead of the splayed-from-a-harness look -- so they
+    are untouched here, and the drawn legs splay the way the shipped ones do.
     """
     out = []
     for (mx, my), (gx, gy) in LEG_MOUNTS:
-        mount = (mx * px_per_tile, my * px_per_tile)
+        mount = (mx * shrink * px_per_tile, my * shrink * px_per_tile)
         # fc.project takes (east, north, up); a ground position's y is SOUTH.
         ground = fc.project(gx, -gy, 0.0, scale=fc.NOMINAL_PX_PER_TILE / px_per_tile)
         out.append((mount, ground))
     return out
 
 
-def mount_extents(px_per_tile: float):
+def mount_extents(px_per_tile: float, shrink: float = 1.0):
     """(half_width_px, north_px, south_px) the mounts span. What the shark must cover."""
-    xs = [m[0] * px_per_tile for (m, _) in LEG_MOUNTS]
-    ys = [m[1] * px_per_tile for (m, _) in LEG_MOUNTS]
+    xs = [m[0] * shrink * px_per_tile for (m, _) in LEG_MOUNTS]
+    ys = [m[1] * shrink * px_per_tile for (m, _) in LEG_MOUNTS]
     return (max(abs(x) for x in xs), min(ys), max(ys))
 
 
@@ -335,7 +399,7 @@ def selfcheck_line(res: dict) -> str:
 
 
 def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
-                   alpha_threshold: int = 8) -> int:
+                   alpha_threshold: int = 8, shrink: float = 1.0) -> int:
     """How many of the eight leg mounts land on opaque pixels of OUR shark.
 
     mount_selfcheck() pointed at the other row. Stock answers "do the mounts land on
@@ -352,7 +416,7 @@ def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
     alpha = frame.getchannel("A").load()
     ax, ay = cell_anchor(frame.width, origin_y)
     on = 0
-    for (mx, my), _ in mount_markers(px_per_tile):
+    for (mx, my), _ in mount_markers(px_per_tile, shrink):
         ix, iy = int(round(ax + mx)), int(round(ay + my))
         if 0 <= ix < frame.width and 0 <= iy < frame.height:
             on += alpha[ix, iy] >= alpha_threshold
@@ -365,6 +429,10 @@ def coverage_line(samples, total: int = len(LEG_MOUNTS)) -> str:
     `samples` is [(label, count), ...], one per rendered rotation. Reports the WORST
     rotation as well as the total, because a leg that floats at one heading floats in the
     game -- an average would hide exactly the frame you need to see.
+
+    The tail of the line is the C.4 verdict it feeds: a full house means no under-plate is
+    needed and `base_animation` can stay empty, anything less means a leg is hanging in
+    the air somewhere and stock's answer to that was to draw a plate.
     """
     if not samples:
         return "shark mount coverage: no frames"
@@ -372,16 +440,31 @@ def coverage_line(samples, total: int = len(LEG_MOUNTS)) -> str:
     want = total * len(samples)
     worst = min(samples, key=lambda s: s[1])
     best = max(samples, key=lambda s: s[1])
+    verdict = ("FULL HOUSE, so base_animation stays empty" if got == want else
+               "the gap is what a base_animation plate would have to cover")
     return ("shark covers %d/%d mount samples over %d rotations (worst %d/%d at %s, "
-            "best %d/%d at %s); stock leans on a non-rotating plate for the rest"
+            "best %d/%d at %s); %s"
             % (got, want, len(samples), worst[1], total, worst[0],
-               best[1], total, best[0]))
+               best[1], total, best[0], verdict))
 
 
 def load_render_frame(path, cell_px: int, render_ppt: float, px_per_tile: float,
                       origin_y: float = 0.5):
     """One of our own renders, cropped to a cell. Our canvas is centred on the origin
     by construction, so the entity is at pixel index (res-1)/2 in both axes."""
+    return render_frame_cell(path, cell_px, render_ppt, px_per_tile, origin_y)[0]
+
+
+def render_frame_cell(path, cell_px: int, render_ppt: float, px_per_tile: float,
+                      origin_y: float = 0.5, alpha_threshold: int = 8):
+    """The same crop, plus WHAT IT THREW AWAY: (cell, cut, tiles_needed).
+
+    The render pass shouts when a frame runs out of RENDER canvas (art.warn_if_clipped).
+    Nothing shouted when the compare CELL ran out, and a cell crop is the more dangerous
+    of the two: it is the image the size and pivot decisions get made against, it looks
+    like a deliberately tight framing rather than an error, and it costs no Blender time
+    to be wrong. So it is measured here, every cell, off the same alpha the packer uses.
+    """
     img = Image.open(path).convert("RGBA")
     origin = (fc.origin_pixel(img.width), fc.origin_pixel(img.height))
     if abs(render_ppt - px_per_tile) > 1e-6:
@@ -390,7 +473,10 @@ def load_render_frame(path, cell_px: int, render_ppt: float, px_per_tile: float,
                          Image.LANCZOS)
         origin = (origin[0] * k, origin[1] * k)
     box, _ = centred_crop(origin, cell_px, origin_y)
-    return img.crop(box)
+    sprite = img.getchannel("A").point(
+        lambda v: 255 if v >= alpha_threshold else 0).getbbox()
+    return (img.crop(box), crop_loss(sprite, box),
+            cell_tiles_needed(sprite, origin, px_per_tile, origin_y))
 
 
 def shadow_layer(img, strength: float = 0.55):
@@ -430,7 +516,7 @@ def cell_background(cell_px: int, rgb, px_per_tile: float, grid: bool,
 
 
 def draw_mounts(cell, px_per_tile: float, show_legs: bool, origin_y: float = 0.5,
-                mount_rgb=(255, 64, 190), leg_rgb=(255, 205, 70)):
+                mount_rgb=(255, 64, 190), leg_rgb=(255, 205, 70), shrink: float = 1.0):
     """Leg mounts as crosses, plus each leg as a faint line to its ground position.
 
     Drawn on an overlay and composited, so the markers sit at a fixed opacity instead
@@ -440,7 +526,7 @@ def draw_mounts(cell, px_per_tile: float, show_legs: bool, origin_y: float = 0.5
     over = Image.new("RGBA", cell.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(over)
     ax, ay = cell_anchor(cell.width, origin_y)
-    for mount, ground in mount_markers(px_per_tile):
+    for mount, ground in mount_markers(px_per_tile, shrink):
         mx, my = ax + mount[0], ay + mount[1]
         if show_legs:
             gx, gy = ax + ground[0], ay + ground[1]

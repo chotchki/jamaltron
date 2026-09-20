@@ -29,6 +29,13 @@ THREE THINGS THIS BUYS BEYOND "a settings file":
     is the one failure mode a caching harness must not have.
  3. PROVENANCE. `config_hash()` over the fully resolved config is stamped into every
     PNG and written as a sidecar, so a sheet is always traceable back to its knobs.
+    The hash is over the config's HASHABLE form (`hashable()`), which is the resolved
+    knobs with `model.blend` replaced by a digest of the file's CONTENT. Hashing the
+    path made the stamp a fact about one machine's filesystem -- three copies of the
+    same .blend gave three hashes for identical pixels, and none of them reproduced
+    anywhere else. The digest also keeps a private scratch path out of a PNG that
+    ships in a public repo. A stamp read back off a sheet re-hashes to the hash it
+    claims, on any machine, which is the promise the word provenance was making.
 
 Constants are NOT forked from render/factorio_camera.py -- the defaults for camera
 pitch, sprite scale and sun geometry are read out of that module at import time, so
@@ -55,9 +62,19 @@ from render import factorio_camera as fc  # noqa: E402
 #: Where the shipped config lives. Committed; the model it points at is not.
 DEFAULT_CONFIG_PATH = pathlib.Path(__file__).resolve().parent / "jamaltron.toml"
 
+#: Repo root. A relative `model.blend` resolves against it, the same way art.py's
+#: renderer does -- and it has to be the same way, or the digest describes a different
+#: file from the one Blender opened.
+REPO = pathlib.Path(__file__).resolve().parents[2]
+
 #: Render passes a knob can affect. "compare" is a compositing pass -- it consumes
-#: the other two rather than invoking Blender.
-PASSES = ("body", "shadow", "compare")
+#: the others rather than invoking Blender.
+#:
+#: "mask" is the runtime-tint pass (C.4c). It shares the body's camera, canvas and
+#: resolution and differs only in the MATERIAL: one flat grey shader whose alpha is the
+#: harness band, so `render.use_normal_map` and friends are deliberately absent from its
+#: dependency list -- the mask never sees the shark's textures.
+PASSES = ("body", "shadow", "mask", "compare")
 
 #: Every knob: dotted key -> (type, default, passes it invalidates).
 #:
@@ -65,52 +82,65 @@ PASSES = ("body", "shadow", "compare")
 #: fixed-length list. Floats accept ints (TOML writes `0` for 0.0 readily enough).
 SCHEMA: dict[str, tuple] = {
     # ---- the model and where it sits -------------------------------------------
-    "model.blend":                (str, "assets/source/FILES/HAMMERHEAD.blend", ("body", "shadow")),
-    "model.object":               (str,    "HAMMERHEAD_RIG", ("body", "shadow")),
-    "model.pivot":                (("vec", 3, float), [-1.0746, 0.0, 0.3872], ("body", "shadow")),
-    "model.scale":                (float,             0.75, ("body", "shadow")),
-    "model.girth":                (float,             1.0,  ("body", "shadow")),
-    "model.offset":               (("vec", 3, float), [0.0, 0.0, 0.85], ("body", "shadow")),
-    "model.rotation":             (("vec", 3, float), [0.0, 0.0, 0.0], ("body", "shadow")),
-    "model.base_yaw":             (float,             90.0, ("body", "shadow")),
-    "model.mute_nla":             (bool,              True, ("body", "shadow")),
-    "model.rest_pose":            (bool,              True, ("body", "shadow")),
-    "model.drop_stale_keyframes": (bool,              True, ("body", "shadow")),
-    "model.frame":                (int,                  1, ("body", "shadow")),
-    "model.subdiv_render_levels": (int,                  1, ("body", "shadow")),
+    "model.blend":                (str, "assets/source/FILES/HAMMERHEAD.blend", ("body", "shadow", "mask")),
+    "model.object":               (str,    "HAMMERHEAD_RIG", ("body", "shadow", "mask")),
+    "model.pivot":                (("vec", 3, float), [-1.0746, 0.0, 0.3872], ("body", "shadow", "mask")),
+    "model.scale":                (float,             0.75, ("body", "shadow", "mask")),
+    "model.girth":                (float,             1.0,  ("body", "shadow", "mask")),
+    "model.offset":               (("vec", 3, float), [0.0, 0.0, 0.85], ("body", "shadow", "mask")),
+    "model.rotation":             (("vec", 3, float), [0.0, 0.0, 0.0], ("body", "shadow", "mask")),
+    "model.base_yaw":             (float,             90.0, ("body", "shadow", "mask")),
+    "model.mute_nla":             (bool,              True, ("body", "shadow", "mask")),
+    "model.rest_pose":            (bool,              True, ("body", "shadow", "mask")),
+    "model.drop_stale_keyframes": (bool,              True, ("body", "shadow", "mask")),
+    "model.frame":                (int,                  1, ("body", "shadow", "mask")),
+    "model.subdiv_render_levels": (int,                  1, ("body", "shadow", "mask")),
     # ---- the camera -------------------------------------------------------------
-    "camera.pitch":               (float, fc.CAMERA_ELEVATION_DEG, ("body", "shadow")),
-    "camera.sprite_scale":        (float,              0.5, ("body", "shadow", "compare")),
-    "camera.canvas_tiles":        (float,              6.0, ("body",)),
+    "camera.pitch":               (float, fc.CAMERA_ELEVATION_DEG, ("body", "shadow", "mask")),
+    "camera.sprite_scale":        (float,              0.5, ("body", "shadow", "mask", "compare")),
+    "camera.canvas_tiles":        (float,              6.0, ("body", "mask")),
     "camera.shadow_canvas_tiles": (float,             11.0, ("shadow",)),
     # ---- the sun ----------------------------------------------------------------
-    "sun.azimuth":                (float, fc.SUN_AZIMUTH_DEG, ("body", "shadow")),
-    "sun.elevation":              (float, fc.SUN_ELEVATION_DEG, ("body", "shadow")),
-    "sun.energy":                 (float,             16.0, ("body", "shadow")),
-    "sun.angular_size":           (float,              1.0, ("body", "shadow")),
-    "sun.ambient":                (float,             0.25, ("body", "shadow")),
+    "sun.azimuth":                (float, fc.SUN_AZIMUTH_DEG, ("body", "shadow", "mask")),
+    "sun.elevation":              (float, fc.SUN_ELEVATION_DEG, ("body", "shadow", "mask")),
+    "sun.energy":                 (float,             16.0, ("body", "shadow", "mask")),
+    "sun.angular_size":           (float,              1.0, ("body", "shadow", "mask")),
+    "sun.ambient":                (float,             0.25, ("body", "shadow", "mask")),
     # ---- the renderer -----------------------------------------------------------
-    "render.engine":              (str, "BLENDER_EEVEE_NEXT", ("body",)),
+    "render.engine":              (str, "BLENDER_EEVEE_NEXT", ("body", "mask")),
     "render.shadow_engine":       (str,           "CYCLES", ("shadow",)),
-    "render.device":              (str,              "CPU", ("body", "shadow")),
-    "render.samples":             (int,                 64, ("body",)),
-    "render.preview_samples":     (int,                 16, ("body",)),
+    "render.device":              (str,              "CPU", ("body", "shadow", "mask")),
+    "render.samples":             (int,                 64, ("body", "mask")),
+    "render.preview_samples":     (int,                 16, ("body", "mask")),
     "render.shadow_samples":      (int,                 32, ("shadow",)),
-    "render.supersample":         (int,                  1, ("body", "shadow")),
-    "render.resolution_px":       (int,                  0, ("body", "shadow")),
-    "render.view_transform":      (str,         "Standard", ("body",)),
-    "render.look":                (str,             "None", ("body",)),
+    "render.supersample":         (int,                  1, ("body", "shadow", "mask")),
+    "render.resolution_px":       (int,                  0, ("body", "shadow", "mask")),
+    "render.view_transform":      (str,         "Standard", ("body", "mask")),
+    "render.look":                (str,             "None", ("body", "mask")),
     "render.use_subsurface":      (bool,             False, ("body",)),
     "render.use_normal_map":      (bool,              True, ("body",)),
     "render.normal_strength":     (float,              0.4, ("body",)),
     # ---- the rotation wheel ------------------------------------------------------
-    "rotations.count":            (int,                 64, ("body", "shadow")),
+    "rotations.count":            (int,                 64, ("body", "shadow", "mask")),
     "rotations.preview":          (int,                  8, ()),
-    "rotations.counterclockwise": (bool,             False, ("body", "shadow")),
+    "rotations.counterclockwise": (bool,             False, ("body", "shadow", "mask")),
+    # ---- the runtime-tint mask ----------------------------------------------------
+    "mask.mode":                  (str,          "harness", ("mask",)),
+    "mask.strap_fore":            (float,             0.20, ("mask",)),
+    "mask.strap_aft":             (float,            -0.62, ("mask",)),
+    "mask.strap_width":           (float,             0.16, ("mask",)),
+    "mask.plate_z":               (float,             0.24, ("mask",)),
+    "mask.plate_top_z":           (float,             0.70, ("mask",)),
+    "mask.edge":                  (float,             0.04, ("mask",)),
+    "mask.grey":                  (float,             0.12, ("mask",)),
+    # ---- the water reflection (built at pack time, no Blender pass) ----------------
+    "reflection.blur_tiles":      (float,             0.16, ()),
+    "reflection.gain":            (float,              2.6, ()),
+    "reflection.recentre":        (bool,              True, ()),
     # ---- the compare sheet -------------------------------------------------------
     "compare.rotations":          (int,                  8, ("compare",)),
-    "compare.cell_tiles":         (float,              4.6, ("compare",)),
-    "compare.origin_y":           (float,             0.78, ("compare",)),
+    "compare.cell_tiles":         (float,              6.0, ("compare",)),
+    "compare.origin_y":           (float,             0.60, ("compare",)),
     "compare.background":         (("vec", 3, int), [58, 62, 66], ("compare",)),
     "compare.stock_alpha":        (float,             0.45, ("compare",)),
     "compare.show_stock":         (bool,              True, ("compare",)),
@@ -120,6 +150,13 @@ SCHEMA: dict[str, tuple] = {
     "compare.grid":               (bool,              True, ("compare",)),
     # ---- output -------------------------------------------------------------------
     "output.dir":                 (str,       "render-out", ()),
+}
+
+#: String knobs with a closed set of legal values. A misspelled VALUE is the same class
+#: of bug as a misspelled KEY -- it renders something, it renders the wrong thing, and it
+#: does it silently -- so it is fatal here rather than a warning at the far end.
+ENUMS = {
+    "mask.mode": ("harness", "silhouette"),
 }
 
 #: Env var that overrides `model.blend`. The model is gitignored and machine-local,
@@ -231,6 +268,11 @@ def resolve(raw: dict | None = None, overrides: dict | None = None, *,
             if key not in SCHEMA:
                 raise ConfigError(f"unknown knob {key!r} in {name}{suggest(key)}")
             cfg[key] = _coerce(key, SCHEMA[key], value)
+
+    for key, allowed in ENUMS.items():
+        if cfg[key] not in allowed:
+            raise ConfigError("%s: %r is not one of %s"
+                              % (key, cfg[key], ", ".join(repr(v) for v in allowed)))
 
     env = os.environ if env is None else env
     if env.get(BLEND_ENV):
@@ -355,6 +397,21 @@ def warnings(cfg: dict) -> list[str]:
             "render.shadow_engine=%s: only Cycles honours is_shadow_catcher. EEVEE Next "
             "renders the catcher plane fully opaque and the shadow pass is garbage"
             % cfg["render.shadow_engine"])
+    if cfg["mask.mode"] == "silhouette":
+        out.append(
+            "mask.mode=silhouette paints the WHOLE shark with the player's colour at ~90% "
+            "opacity (stock's own mask does this to the spidertron, which is a machine). "
+            "On a hammerhead it stops reading as a shark; `harness` tints the straps only")
+    if cfg["mask.plate_top_z"] <= cfg["mask.plate_z"] + cfg["mask.edge"]:
+        out.append(
+            "mask.plate_top_z %.3f is not above mask.plate_z %.3f by more than one edge "
+            "ramp (%.3f), so the dorsal plate is EMPTY and the harness is two bare straps"
+            % (cfg["mask.plate_top_z"], cfg["mask.plate_z"], cfg["mask.edge"]))
+    if cfg["mask.strap_fore"] <= cfg["mask.strap_aft"]:
+        out.append(
+            "mask.strap_fore %.3f is not forward of mask.strap_aft %.3f (+x is the nose), "
+            "so the dorsal plate spans backwards and the harness renders inside out"
+            % (cfg["mask.strap_fore"], cfg["mask.strap_aft"]))
     if cfg["rotations.count"] % max(cfg["rotations.preview"], 1):
         out.append("rotations.preview=%d does not divide rotations.count=%d, so preview "
                    "frames are not a subset of the full sheet and cannot be reused"
@@ -370,9 +427,71 @@ def canonical(cfg: dict) -> str:
     return json.dumps(cfg, sort_keys=True, separators=(",", ":"))
 
 
+#: How a redacted `model.blend` is spelled. Anything carrying this prefix is already a
+#: content digest and is passed through untouched, which is what makes a stamp read back
+#: off a PNG re-hash to the hash it claims.
+BLEND_DIGEST_PREFIX = "sha256:"
+
+#: What a digest is when the .blend is not on this machine. Deterministic on purpose --
+#: packing cached frames without the model must still produce a stable hash -- but it is
+#: a DIFFERENT hash from the one the frames were rendered under, so pack.py's pass-hash
+#: check refuses rather than shipping a sheet whose provenance nobody can verify.
+BLEND_ABSENT = "absent"
+
+#: (path, size, mtime_ns) -> digest. A 1.7 MiB .blend hashes in about 2 ms, and every
+#: stamp asks for it five times (config plus four passes).
+_DIGEST_CACHE: dict = {}
+
+
+def blend_path(cfg: dict) -> pathlib.Path:
+    """The .blend a config points at, absolute. Relative paths resolve from the repo."""
+    p = pathlib.Path(os.path.expanduser(cfg["model.blend"]))
+    return p if p.is_absolute() else REPO / p
+
+
+def blend_digest(path, length: int = 16) -> str:
+    """sha256 of the .blend's CONTENT, or BLEND_ABSENT when it is not readable.
+
+    THE PATH IS NOT THE MODEL. It is gitignored, machine-local and overridable by
+    $JAMALTRON_BLEND, so a hash over it says "this render happened in this directory on
+    this laptop" -- three copies of one file gave three config hashes for pixel-identical
+    sheets, and the shipped hash reproduced on exactly zero other machines. The content
+    digest is the same everywhere the same model is, which is what the provenance stamp
+    was always claiming to be.
+    """
+    p = pathlib.Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return BLEND_ABSENT
+    key = (str(p), st.st_size, st.st_mtime_ns)
+    if key not in _DIGEST_CACHE:
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        _DIGEST_CACHE[key] = BLEND_DIGEST_PREFIX + h.hexdigest()[:length]
+    return _DIGEST_CACHE[key]
+
+
+def hashable(cfg: dict) -> dict:
+    """The config as it is HASHED and STAMPED: `model.blend` replaced by its digest.
+
+    Two jobs in one substitution. It makes the hash a fact about the model rather than
+    about one filesystem (see blend_digest), and it keeps an absolute path -- which on
+    this machine is a private scratch directory -- out of PNG text chunks that ship in a
+    public repo. Already-redacted values pass straight through, so resolving a stamped
+    config and re-hashing it reproduces the stamp exactly.
+    """
+    value = cfg["model.blend"]
+    if not value.startswith(BLEND_DIGEST_PREFIX) and value != BLEND_ABSENT:
+        value = blend_digest(blend_path(cfg))
+    return dict(cfg, **{"model.blend": value})
+
+
 def config_hash(cfg: dict, length: int = 12) -> str:
     """Hash of the WHOLE resolved config. This is the provenance stamp."""
-    return hashlib.sha256(canonical(cfg).encode()).hexdigest()[:length]
+    return hashlib.sha256(canonical(hashable(cfg)).encode()).hexdigest()[:length]
 
 
 #: Derived numbers a pass's PIXELS depend on, on top of the knobs it declares.
@@ -389,6 +508,9 @@ def config_hash(cfg: dict, length: int = 12) -> str:
 PASS_DERIVED = {
     "body": ("body_render_px", "body_resolution_px"),
     "shadow": ("shadow_render_px", "shadow_resolution_px"),
+    # The mask rides the body canvas exactly, which is the point: its frames have to
+    # crop to the same box as the body's or the two layers slide apart in game.
+    "mask": ("body_render_px", "body_resolution_px"),
     "compare": ("sprite_px_per_tile", "body_px_per_tile", "shadow_px_per_tile"),
 }
 
@@ -407,18 +529,26 @@ def pass_hash(cfg: dict, pass_name: str, length: int = 12) -> str:
     resolution must throw away all of them too even when the knob that moved it belongs
     to another pass -- see PASS_DERIVED.
     """
-    subset = {k: cfg[k] for k in pass_keys(pass_name)}
+    view = hashable(cfg)
+    subset = {k: view[k] for k in pass_keys(pass_name)}
     d = derived(cfg)
     subset.update(("derived." + k, d[k]) for k in PASS_DERIVED[pass_name])
     return hashlib.sha256(canonical(subset).encode()).hexdigest()[:length]
 
 
 def stamp(cfg: dict, extra: dict | None = None) -> dict:
-    """The provenance blob written beside every render and into every PNG."""
+    """The provenance blob written beside every render and into every PNG.
+
+    `config` is the HASHABLE view, not the resolved one: `model.blend` is a content
+    digest. Nothing downstream wants the path (Blender is handed the file on argv), a
+    PNG that ships in a public repo must not carry one, and resolving this blob back and
+    re-hashing it has to return `config_hash` -- which only holds if what is written is
+    what was hashed.
+    """
     blob = {
         "config_hash": config_hash(cfg),
         "pass_hashes": {p: pass_hash(cfg, p) for p in PASSES},
-        "config": unflatten(cfg),
+        "config": unflatten(hashable(cfg)),
         "derived": derived(cfg),
     }
     if extra:
