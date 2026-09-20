@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+
+  "runtime.version": "Lua 5.2",
+  "runtime.path": ["?.lua", "mod/jamaltron/?.lua"],
+  "runtime.pathStrict": true,
+  "runtime.plugin": ".ls-defs/factorio/plugin.lua",
+  "runtime.builtin": {
+    "io": "disable",
+    "os": "disable",
+    "coroutine": "disable",
+    "package": "disable",
+    "math": "disable",
+    "debug": "disable"
+  },
+
+  "workspace.library": [
+    ".ls-defs/factorio/library",
+    ".ls-defs/supplement"
+  ],
+  "workspace.ignoreDir": [".ls-defs", "tools", "assets", "character", ".venv"],
+  "workspace.checkThirdParty": false,
+
+  "diagnostics.globals": ["__DebugAdapter", "__Profiler"],
+  "diagnostics.disable": ["lowercase-global"],
+  "diagnostics.libraryFiles": "Disable",
+
+  "hint.enable": true,
+  "hint.paramType": true
+}

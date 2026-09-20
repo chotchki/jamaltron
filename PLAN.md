@@ -1,0 +1,79 @@
+<!-- plan-bridge:phase-high-water=F -->
+# PLAN
+
+Jamaltron: a Factorio 2.1.x mod adding a spidertron variant that is Jamal, the spider-legged hammerhead shark from *Dungeon Crawler Carl* (books 7 and 8). What and why live in [SPEC.md](SPEC.md), this is the how. Three tracks that only meet at the entity prototype:
+
+- character: book text → per-book profiles → one canonical profile → a situation-to-line catalog, the SAME pipeline as an earlier private character project (extractors already exist there, we reuse them)
+- art: the bought hammerhead model → Blender headless → Factorio sprite sheets (64 rotations, shadow, flop loop). Only the renders get committed, the source model NEVER does
+- mod: Lua, cloned from the stock spidertron, plus a scripted jump that can break his legs
+
+The jump is the one genuine unknown (spider-vehicles don't jump, so it's a teleport or an entity swap and the spike in E.1 decides). Everything else is known-shape work with a headless smoke test (`factorio --create`) as the gate.
+
+<!--
+This PLAN.md is driven by `claude-plan-bridge` (FORMATv2):
+- Phases are `## Phase <ID> - <Title>` headers; tasks are `- [ ] <ID> - <task>`
+  lines under them.
+- TaskCreate adds a task line at `metadata.plan_path`; with no `plan_path` it
+  lands as a tracked note in the bottom `# Backlog (not yet phased)` section.
+- TaskUpdate(status='completed') ticks the box; (status='deleted') removes
+  the line; (subject='...') rewrites the title.
+- Hand-edits between turns surface as `additionalContext` on the next
+  prompt — the bridge reconciles on every UserPromptSubmit.
+- `claude-plan-bridge archive` sweeps fully-`[x]` top-level phases into
+  PLAN_ARCHIVE.md.
+- `claude-plan-bridge status` reports state-file health if something
+  looks wrong.
+-->
+
+## Phase B - Character: distill Jamal from books 7 and 8
+- [x] B.1 - Extract Jamal passages from books 7 + 8 with an earlier private project's `extract_pdf.py` (pattern `\bJamal\b`, 2-paragraph context) into `character/extracts/` (gitignored, book text never enters the repo)
+- [x] B.2 - Per-book profiles from an adapted `profile_template.md` (voice, apology + catchphrase tics, personality, who built his legs and how he treats them, how he moves and flops, running gags, what triggers what), merged into `character/jamal_profile.md`; the profile is in our own words, Jamal's quotes are collected verbatim for the line catalog
+- [ ] B.3 - Situation → line catalog `character/lines.md`: one weighted pool per mod event (built, enter/exit, moving, idle, attacking, damaged, low health, jump, land, legs break, flopping, repaired, died, remote command done, jump refused) tagged with a verbosity tier
+- [x] B.4 - Walk profile + catalog with chotchki; lock which quotes ship, the verbosity tiers and no voice audio in v1
+- [ ] B.5 - `tools/gen_lines.py`: catalog -> `scripts/lines.lua` + `locale/en/jamaltron.cfg` (catalog is the single source, generated files say so in a header). SCOPE GREW at the B.4 lock and the old one-line description undersells it: every row now carries CH (`speech` | `narration`), GRP (anti-repeat group = id of the first row with that exact string) and GATE (`once_per_save`), plus SOURCE of `verbatim` | `adapted` | `original`. Emit one locale key per ID with NO dedup, even though 50 strings appear in several pools - it keeps id->key total and leaves room for a reused line to diverge per pool later. `{N}` is the only surviving token. Generator must re-measure line length AFTER token substitution rather than trusting authored lengths, and must fail loudly on a row missing any column. AFTER THIS RUNS AN ID IS A SHIPPED LOCALE KEY: renumbering is over, a later cut leaves a gap and retires the id
+
+- [ ] B.6 - Split the `jump_refused` pool by refusal REASON (SUB column), one sub-pool per reason E.2 enumerates: water, blocked, platform, cooldown, autopilot, no driver. Today all 20 rows are one undifferentiated pool, so the shark-refusing-water gag can fire when he was merely on cooldown. Follow the `attacking` pool's existing gated-sub pattern: a sub that the mod cannot yet detect simply never rolls, so this is safe to land before E.2 exists. MUST happen before B.5 freezes the ids into locale keys
+
+## Phase C - Art pipeline: hammerhead model to Factorio sprites *(prefer after: A)*
+- [x] C.1 - License check: DONE 2026-09-19 against the authoritative agreement text. Extended Use License, Sec V.2.d covers computer games/software, renders ship as part of a larger Creation, model source stays out of git. Full finding and the residual Sec IV.5.c ambiguity recorded in SPEC.md
+- [ ] C.2 - Model triage: `tools/render/inspect.py` (headless Blender) dumps mesh dimensions, materials, texture resolution, rig and animation clips (the swim cycle) from HAMMERHEAD.blend with HAMMERHEAD_TEXTURES.zip unpacked
+- [ ] C.3 - Factorio camera: nail the projection (orthographic, 45° pitch, 64 px per tile at `scale = 0.5`, 64 rotations clockwise from north) by rendering a reference cube + the shark and overlaying on the stock torso sheet (132x138 frames, 8 per row); ship as `tools/render/factorio_camera.py`
+- [ ] C.4 - Body sheets: 64-rotation torso → `animation`, shadow-only pass → `shadow_animation`, static under-plate → `base_animation`, blurred silhouette → `water_reflection` (448x448); shark size is a render knob so it sits right on the stock legs
+- [ ] C.5 - Beached + airborne sheets: swim cycle re-posed on its side → flopping loop for `jamaltron-beached`; pitched-up body rotations for the jump arc
+- [ ] C.6 - Icons: 64px item/tech icon with mipmaps, 128px minimap representation (normal + selected), 256px tech icon, 144x144 `thumbnail.png`
+- [ ] C.7 - `tools/render/pack.py`: frames → sheets and emits the Lua sprite table (width, height, line_length, direction_count, shift, scale) so no number is hand-copied; sheets ≤ 8192px, PNG-crushed; in-game side-by-side vs the stock spidertron at all 64 rotations
+
+- [ ] C.8 - `tools/lint_sprites.py`: pure-python gate cross-checking the generated Lua sprite table against real PNG dimensions (frame count vs `line_length`, declared width/height vs actual, sheet <= 8192px). Needed because MEASURED 2026-09-19: `--dump-data` and `--create` are sprite-blind on BOTH builds, headless ships zero PNGs so it can never validate sprites, and the only rasterizing mode (`--dump-icon-sprites`) is mac-only and reports errors through a modal dialog
+
+- [ ] C.9 - Split the repo licensing, required by the C.1 finding. Blanket MIT over the whole repo would grant third parties unrestricted reuse of the sprite sheets as standalone assets, which RenderHub Sec IV.5.a does not permit chotchki to grant. MIT keeps covering the CODE; add an asset notice (assets LICENSE stanza + a README section + `mod/jamaltron/graphics/LICENSE`) saying the sprites are derived from a 3D model licensed from Pig Scales Studio via RenderHub, redistributable AS PART OF THIS MOD and not as standalone assets. Use their mandated credit format verbatim: "3D model copyright Pig Scales Studio via RenderHub". MUST land before F.5 pushes anything public
+
+## Phase D - Jamaltron entity *(depends on: A)* *(prefer after: B, C)*
+- [ ] D.1 - Prototypes: `jamaltron` spider-vehicle on the Phase C sheets, `jamaltron-leg-1..8`, remnants + dying explosion, sounds (drop the spidertron vox), factoriopedia entry; `jamaltron-beached` variant (flop loop, stub legs, `allow_remote_driving = false`, same inventory + grid so swaps are lossless)
+- [ ] D.2 - Item, recipe, tech: recipe = spidertron + raw fish (+ whatever reads funny), tech after `spidertron`, localised names + descriptions in Jamal's voice
+- [ ] D.3 - Settings: startup (jump on/off, jump distance, leg-break chance), per-player (verbosity quiet/normal/unbearable, bubbles vs chat vs both), runtime-global (cooldowns)
+- [ ] D.4 - `scripts/swap.lua`: replace entity A with B keeping position, orientation, health ratio, driver + passenger, color, label, main + trash inventories, equipment grid (items + energy), logistic sections, autopilot queue, follow target and every player's remote selection
+- [ ] D.5 - `scripts/speech.lua`: `say(entity, situation)` does a weighted pick behind the verbosity gate, wired to built, driving changed, damaged (throttled), command completed, idle timer, died. THE B.4 LOCK ADDS FIVE MECHANICS, all of them already encoded in `character/lines.md`: (1) TWO OUTPUT CHANNELS - `speech` renders as a `speech-bubble` entity, `narration` renders as game-note text about him (this is where the silence rows and the book's own narrator voice live); (2) anti-repeat keys on GRP, per ENTITY, ACROSS pools - NOT per id and not per pool, because `legs break` -> `flopping` fire back to back sharing 17 strings and that is the mod's centerpiece moment; (3) an explicit allow-list exception letting `idle.01` -> `idle.02` repeat, the one callback gag he performs on himself; (4) `once_per_save` gated rows, fired-set stored per entity; (5) `{N}`, the per-entity cumulative leg-break count, substituted at say-time. Items 4 and 5 share one `storage` table per entity, which E.6 already requires for multiplayer sync
+- [ ] D.6 - SFX: a few CC0 sounds (wet slap, landing thud) with credits; `working_sound` replaced
+- [ ] D.7 - Flamethrower loadout: replace the 4 rocket launchers with `jamaltron-flamethrower` (cloned from `tank-flamethrower`, ammo category `flamethrower`, stream attack) because that's his weapon in the books; fix the stream origin for the raised body (`gun_center_shift` per direction against the vehicle `height`), confirm auto-targeting still engages at flamethrower range (~9 tiles vs 36 for rockets) and swap the rocket launcher out of the recipe for a flamethrower
+
+## Phase E - Jump and leg-break *(depends on: D)*
+- [ ] E.1 - Spike: prototype (a) `teleport` + landing FX against (b) swap to an airborne entity animated along an arc via `rendering` for ~30 ticks then swap back at the landing spot (the Jetpack-mod pattern, needs D.4); judge on look, driver control, zero state loss and UPS; record the verdict in SPEC.md
+- [ ] E.2 - Jump input: `custom-input` (SPACE while driving), direction from torso orientation, distance from settings, cooldown; landing validity via `find_non_colliding_position`. REFUSAL IS A FIRST-CLASS FEATURE, not an error path - `jump_refused` is a 20-line pool and its comedy depends on knowing WHY. Enumerate the reasons and emit a distinct one per refusal: WATER (the best joke in the mod, a shark that will not go near water - detect via `tile.prototype.fluid ~= nil`, which is exactly the 6 base water tiles AND picks up modded water for free, unlike a hardcoded name list), BLOCKED (`find_non_colliding_position` returns nil - cliffs, buildings, trees), PLATFORM (Space Age, E.6 forbids it), COOLDOWN, AUTOPILOT (`autopilot_destination` / `autopilot_destinations` are both on LuaEntity), NO DRIVER. Every one of these is cheaply detectable except PLATFORM which needs confirming. chotchki's call 2026-09-19: this needs real in-game testing, a refusal that fires the wrong complaint is worse than a generic one
+- [ ] E.3 - Landing: impact damage roll, dust/explosion FX + thud, landing line
+- [ ] E.4 - Leg break: `break_chance` roll on landing → swap to `jamaltron-beached`, `active = false`, `custom_status`, force alert, apology spam on a timer scaled by verbosity
+- [ ] E.5 - Repair: `on_player_repaired_entity` reaching full health → swap back; bot repairs caught by a 60-tick poll over beached entities only
+- [ ] E.6 - Edge cases: jump under autopilot or remote driving (cancel the queue), passengers, Space Age platforms (no jumping), `storage`-only state so multiplayer stays in sync, `on_configuration_changed` + migrations, mod removal leaves no orphans
+
+## Phase F - Test, polish, release *(depends on: E)*
+- [ ] F.1 - Headless harness: a debug remote interface spawns a jamaltron and scripts jump → break → repair over N ticks under `--benchmark`, asserting via `log()`; GitHub Actions runs it on the free headless linux build
+- [ ] F.2 - Playtest checklist: all 64 rotations + shadow alignment, leg mounts, jump feel, break/repair loop, remote driving, autopilot, 2-client multiplayer, SA planets and platforms
+- [ ] F.3 - Performance: zero per-tick work while idle, profiled with 50 jamaltrons flopping at once
+- [ ] F.4 - Docs: README (what/why, install, credits: Pig Scales Studio, Matt Dinniman fan-work disclaimer, SFX sources), `changelog.txt` in portal format, portal description
+- [ ] F.5 - Release: build zip, git tag, upload to the mod portal + GitHub release
+
+## Backlog (not yet phased)
+
+- Voice audio lines. Jeff Hays's audiobook reads are the ones we want but clips carry a SEPARATE sound-recording copyright (the audiobook producer's, not Dinniman's) plus performer likeness, so they are a much weaker fair-use case than text quotes. Deferred until the mod exists; then ask Soundbooth Theater / Dinniman for permission outright (both are famously fan-friendly). Generic TTS is the fallback, a voice-clone of Hays is off the table
+- Jump draws energy from the equipment grid
+- Eats raw fish from his own inventory to self-heal
+- Size variants (a baby Jamal)

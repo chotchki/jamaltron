@@ -1,0 +1,7 @@
+-- Settings stage entry point: startup, per-player and runtime-global settings (PLAN D.3).
+--
+-- Empty on purpose until D.3. Its payload is a data:extend of mod setting prototypes,
+-- so the annotation it will want is ---@type data.AnyModSettingPrototype[] on a hoisted
+-- local, or the per-kind data.ModBoolSettingPrototype / data.ModDoubleSettingPrototype /
+-- data.ModStringSettingPrototype. Note those live in .ls-defs/factorio/library/data/
+-- mod-settings.lua, not under prototype-api/ - the settings stage is its own world.

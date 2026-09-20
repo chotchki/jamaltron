@@ -1,0 +1,7 @@
+-- Runtime stage entry point: event registration and requires from scripts/.
+--
+-- Empty on purpose until D.5 (speech) and E.2 (jump input) land. No ---@ annotations
+-- here yet because there is nothing to type - lua-language-server has no file-level
+-- doc tag, and an annotation with no declaration under it checks nothing. The first
+-- handler brings the first ---@param, typed from .ls-defs/factorio/library/runtime-api/
+-- events.lua (e.g. EventData.on_player_driving_changed_state).

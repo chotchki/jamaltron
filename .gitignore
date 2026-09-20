@@ -1,0 +1,45 @@
+# claude-plan-bridge state (bridge-owned, machine-local)
+.claude/plan-bridge-state.json
+.claude/plan-bridge-state.json.lock
+.claude/plan-bridge-cleared.jsonl
+
+# The bought 3D model, its textures and any .blend derived from them.
+# RenderHub license: renders ship, source does NOT. Nothing in here is ever committed.
+assets/source/
+
+# Book text. Jamal's extracted passages are Matt Dinniman's copyrighted prose and
+# must never land in a public repo - only the distilled profile and line catalog do.
+character/extracts/
+
+# Blender
+*.blend1
+*.blend2
+
+# Python / uv tooling under tools/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Factorio smoke-test scratch (tools/smoke.sh) and build output (tools/build.sh)
+.smoketest/
+dist/
+jamaltron_*.zip
+factorio-current.log
+*.log
+
+# macOS
+.DS_Store
+
+# FMTK-generated Factorio API type defs (1157 files / 7.0M, regenerate with tools/gen-defs.sh).
+# Only the generated tree is ignored - .ls-defs/supplement/ is hand-written source and IS committed.
+.ls-defs/factorio/
+
+# Per-book verbatim quote banks: ~22KB of tabulated Dinniman dialogue. These are the
+# intermediate the line catalog is authored FROM, not a deliverable. character/lines.md
+# ships (B.5 generates scripts/lines.lua + the locale file from it); the raw banks stay
+# local. Regenerate by re-running the Phase B pipeline against the gitignored extracts.
+character/profiles/*_quote_bank.md
+character/profiles/book8_lines.md

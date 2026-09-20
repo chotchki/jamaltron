@@ -1,0 +1,22 @@
+[project]
+name = "jamaltron-tools"
+version = "0.1.0"
+description = "Build tooling for the jamaltron Factorio mod: Blender render driver, sprite packer, line-catalog codegen"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "pillow>=11.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+# Never published to an index, so no build backend and no editable self-install.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # lets tests do `from render.spritesheet import ...`
+addopts = "-q"
