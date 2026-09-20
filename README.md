@@ -95,4 +95,12 @@ dist/                build.sh output. gitignored
 
 ## License
 
-MIT, see [LICENSE](LICENSE). That covers this repo's code and the sprites rendered here. It does NOT cover the underlying 3D model (Pig Scales Studio's, licensed to me and not sublicensed onward) or the *Dungeon Crawler Carl* characters and quotes (Dinniman's).
+**The code is MIT. The sprites are not, and cannot be.**
+
+MIT, see [LICENSE](LICENSE), covers the Lua, the Python and the tooling - everything in this repo I actually wrote.
+
+`mod/jamaltron/graphics/` is NOT MIT, see [its own LICENSE](mod/jamaltron/graphics/LICENSE). Those sprites are renders of a 3D model licensed from Pig Scales Studio via RenderHub under an Extended Use License, and that license grants no right to SUBLICENSE - so I cannot hand you MIT rights over them, because I was never given them to hand on. RenderHub's grant lets renders ship as part of a larger work, which this mod is. It does not let them be lifted out and reused as standalone art. Take the mod, fork it, ship it; do not take the shark.
+
+The underlying model files are not here at all and never will be - `assets/source/` is gitignored, which is the condition the license actually turns on.
+
+*Dungeon Crawler Carl*, Jamal, and his dialogue are Matt Dinniman's. This is unaffiliated non-commercial fan work.

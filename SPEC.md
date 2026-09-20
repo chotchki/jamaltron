@@ -26,7 +26,15 @@ Decisions (locked 2026-09-19):
 - Target Factorio 2.1.x ONLY (`factorio_version = "2.1"`), no 2.0 backport. Base game required, Space Age optional (jumping is disabled on space platforms).
 - Jamal is in books 7 and 8 only (96 and 71 mentions, zero in 1-6). Book text never enters this repo, only the distilled profile + line catalog do.
 - Art: only RENDERED sprites are committed. The source model, textures and .blend stay gitignored under `assets/source/`. Credit Pig Scales Studio in README and the portal page.
-- Mod license MIT (the portal default). DCC is Matt Dinniman's IP, this is non-commercial fan work: Jamal's quotes in the mod are fair use (chotchki's call), the raw book extracts NEVER land in the repo, no voice audio in v1.
+- Mod license: MIT for the CODE ONLY (amended 2026-09-20, was a blanket MIT). The RenderHub Extended Use
+  License's grant in Sec III.2 contains no SUBLICENSE verb, Sec III.1 reserves every unenumerated right and
+  transfers are barred - while MIT purports to grant recipients the right to "sublicense, and/or sell copies".
+  Those are rights chotchki was never given and therefore cannot pass on, so a blanket MIT over the sprites is a
+  MATERIAL BREACH that terminates the model license under Sec VI.2, and it separately manufactures the Sec IV
+  competition problem by making an MIT-labelled PNG folder read as stock art offered for reuse.
+  `mod/jamaltron/graphics/LICENSE` carves the sprites out: redistributable as part of this mod, never as
+  standalone art. THE GATE IS THE FIRST SPRITE COMMIT, NOT THE PUBLIC PUSH - git history is permanent and forks
+  survive a takedown, so a sprite committed under blanket MIT cannot be un-granted later. DCC is Matt Dinniman's IP, this is non-commercial fan work: Jamal's quotes in the mod are fair use (chotchki's call), the raw book extracts NEVER land in the repo, no voice audio in v1.
 - THE JUMP IS THE JOKE. Jamal is the literal personification of jumping the shark, so the jump is not a
   feature bolted onto a spidertron reskin, it is the punchline the whole mod exists to deliver. This sets the
   acceptance bar for the E.1 spike: a plain teleport CANNOT land it (nothing visibly jumps, so there is no

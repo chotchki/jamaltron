@@ -1,3 +1,12 @@
+SCOPE: this MIT license covers the CODE in this repository - the Lua under
+mod/, the Python under tools/, and the configuration. It does NOT cover
+mod/jamaltron/graphics/, which carries its own LICENSE file: those sprites are
+renders of a 3D model licensed from Pig Scales Studio via RenderHub, and that
+license grants no right to sublicense, so MIT rights over them cannot be and are
+not granted here.
+
+----------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2026 Christopher Hotchkiss
