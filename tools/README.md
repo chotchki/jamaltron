@@ -44,6 +44,34 @@ rendering. The model is gitignored, so point at your copy with `--blend PATH` or
 `$JAMALTRON_BLEND`. Sheets land in `render-out/` (gitignored) and nothing is ever promoted
 into `mod/jamaltron/graphics/` for you - that directory carries the licence carve-out.
 
+## Sliders, when you do not know the number yet
+
+`--compare` answers "is this value right". It is the wrong tool for "which value IS right",
+where you are moving one number by 0.1 and looking again:
+
+```sh
+uv run --directory tools python render/tune.py            # opens a browser at 127.0.0.1:8765
+```
+
+Five sliders - pivot fore/aft, height, girth, scale, pitch - driving the SAME
+`ac.load -> art.render_pass -> art.compare_sheet` path the CLI drives, so a value found
+there is the same value here: same cache, same sheet, same coverage count, same hash. The
+page shows the shark's dimensions and the leg-mount coverage as you drag, and a **copy
+TOML** button emits the exact lines to paste into `jamaltron.toml` - the hash it prints is
+the hash `art.py --compare` stamps after the paste, so there is no transcription step.
+`--set` seeds it, the same syntax as `art.py`, which is how you carry on from yesterday.
+
+MEASURED, and it is why the defaults are what they are: **1.8 s per slider change** (8
+body rotations, EEVEE, 16 samples, 384 px, 4 jobs), 0.2 s when the frames are cached, and
+**17 s with the shadow toggle on** - Cycles is the whole difference, so shadow is OFF until
+you ask for it. Four rotations is NOT faster than eight (the loop is Blender *launch*-bound,
+not pixel-bound) and `--jobs 8` is **14x SLOWER** than `--jobs 4` on this machine: eight
+simultaneous Blenders thrash the Metal context. Do not go looking for speed there.
+
+It is a local tool and it acts like one: stdlib `http.server`, one file, no dependency, and
+it binds 127.0.0.1 only. A render that fails leaves the last good image up and puts the
+error on the page - a tuner that dies on a value you were curious about is worse than none.
+
 ## Commands
 
 | command | what it does |
@@ -69,6 +97,8 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
+| `uv run --directory tools python render/tune.py` | **the slider UI.** five knobs, live coverage count, copy-TOML button; shadow off by default |
+| `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
 
 `Blender` is `/Applications/Blender.app/Contents/MacOS/Blender` on this machine.
 `blender_check.py` prints the Blender and bundled-Python versions plus the usable
