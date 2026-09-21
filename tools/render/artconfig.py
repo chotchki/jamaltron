@@ -36,10 +36,14 @@ THREE THINGS THIS BUYS BEYOND "a settings file":
     anywhere else. The digest also keeps a private scratch path out of a PNG that
     ships in a public repo. A stamp read back off a sheet re-hashes to the hash it
     claims, on any machine, which is the promise the word provenance was making.
+    ONE DELIBERATE HOLE, and it is the only one: a knob added after art shipped is
+    left OUT of the hash while it sits at a default that is an exact no-op, so the
+    schema can grow without re-dating pixels that did not move. See ADDITIVE.
 
 Constants are NOT forked from render/factorio_camera.py -- the defaults for camera
 pitch, sprite scale and sun geometry are read out of that module at import time, so
-there is exactly one place the derived 45-degree camera lives.
+there is exactly one place the derived 45-degree camera lives. `render/pose.py` is read
+the same way for the clip ids `model.action` accepts.
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from render import factorio_camera as fc  # noqa: E402
+from render import pose  # noqa: E402
 
 #: Where the shipped config lives. Committed; the model it points at is not.
 DEFAULT_CONFIG_PATH = pathlib.Path(__file__).resolve().parent / "jamaltron.toml"
@@ -95,6 +100,14 @@ SCHEMA: dict[str, tuple] = {
     "model.drop_stale_keyframes": (bool,              True, ("body", "shadow", "mask")),
     "model.frame":                (int,                  1, ("body", "shadow", "mask")),
     "model.subdiv_render_levels": (int,                  1, ("body", "shadow", "mask")),
+    # ---- C.5's flop: which clip, how hard, and the rig fix it needs ---------------
+    "model.action":               (str,          pose.REST, ("body", "shadow", "mask")),
+    "model.pose_gain":            (float,              1.0, ("body", "shadow", "mask")),
+    "model.reparent_head":        (bool,             False, ("body", "shadow", "mask")),
+    # ---- C.5's bounce: the lift that makes the shadow separate --------------------
+    "bounce.height":              (float,              0.0, ("body", "shadow", "mask")),
+    "bounce.phase":               (float,              0.0, ("body", "shadow", "mask")),
+    "bounce.gravity":             (float,              9.8, ("body", "shadow", "mask")),
     # ---- the camera -------------------------------------------------------------
     "camera.pitch":               (float, fc.CAMERA_ELEVATION_DEG, ("body", "shadow", "mask")),
     "camera.sprite_scale":        (float,              0.5, ("body", "shadow", "mask", "compare")),
@@ -155,9 +168,45 @@ SCHEMA: dict[str, tuple] = {
 #: String knobs with a closed set of legal values. A misspelled VALUE is the same class
 #: of bug as a misspelled KEY -- it renders something, it renders the wrong thing, and it
 #: does it silently -- so it is fatal here rather than a warning at the far end.
+#:
+#: `model.action` takes its list from render/pose.py rather than repeating the five clip
+#: ids, because two lists of the same thing is one list that rots. A clip added to the
+#: table is selectable from the CLI the same minute.
 ENUMS = {
     "mask.mode": ("harness", "silhouette"),
+    "model.action": pose.ACTION_CHOICES,
 }
+
+#: Knobs added AFTER the standing sheets shipped, and excluded from every hash while they
+#: sit at their defaults. Read that twice, because it is the one deliberate hole in the
+#: provenance story and it exists for exactly one reason.
+#:
+#: mod/jamaltron/graphics/ ships four PNGs stamped `config 83d6be794998` plus a per-pass
+#: hash each, and pack.py REFUSES a sheet whose pass hash does not match the config being
+#: packed. A hash over "every key in SCHEMA" therefore means the schema can never grow
+#: again without invalidating art that is already correct: adding `bounce.height = 0.0` to
+#: the file would move all five hashes and re-date pixels that did not move.
+#:
+#: The invariant the hash actually promises is "these knobs made these pixels". A knob at a
+#: default that is an exact no-op -- no action assigned, gain 1.0, the rig as bought, zero
+#: lift -- cannot have made any pixel, so it hashes as ABSENT and the standing config keeps
+#: the hash its sheets carry. Move any of them off the default and it is in the hash like
+#: anything else, which is what keeps a posed or bouncing render from colliding with a
+#: standing one. test_art_harness.py pins both halves, and a new entry here MUST be a
+#: provable no-op at its default -- if it is not, it does not belong in this tuple.
+ADDITIVE = ("model.action", "model.pose_gain", "model.reparent_head",
+            "bounce.height", "bounce.phase", "bounce.gravity")
+
+#: Where `model.rotation[0]` stops reading as BEACHED, in degrees of roll either way.
+#: Measured off the C.5 sheets (sheet B): 80-90 is the flop and past about 105 he reads as
+#: dead, belly-up, in WATER -- a different animal in a different place, not a worse flop.
+#:
+#: A number and not a clamp, deliberately. The schema does not range-check anything else
+#: either, and a knob you cannot set past the edge is an edge you have to take on faith --
+#: which is the opposite of what C.5 needs, since the whole phase exists to replace faith
+#: with looking. So the slider reaches past it, warnings() says what you are looking at,
+#: and `--set model.rotation=[140,0,0]` stops being silent (it was, until this landed).
+ROLL_BELLY_UP = 105.0
 
 #: Env var that overrides `model.blend`. The model is gitignored and machine-local,
 #: so the committed config cannot name a path that works for anyone else.
@@ -313,6 +362,82 @@ def parse_set(assignments) -> dict:
     return out
 
 
+# ----------------------------------------------------------------------------- bounce
+
+
+def cycle_of(cfg: dict) -> tuple:
+    """(lo, hi) of the frames `model.action` plays, inclusive. REST is (1, 1) -- one frame
+    and no cycle, which is what makes the bounce arithmetic below fall to zero."""
+    c = pose.clip_of(cfg["model.action"])
+    return (c.lo, c.hi) if c else (1, 1)
+
+
+def bounce_flight(cfg: dict) -> tuple:
+    """(launch speed in tiles/s, airtime in seconds) implied by height and gravity.
+
+    Airtime is DERIVED, not a knob, and that is the choice worth defending: gravity is one
+    number for every jump, so once you have said how high he gets you have also said how
+    long he hangs. A separate airtime knob would let a 0.3-tile hop float for a second,
+    which is the exact tell of an animation that was drawn rather than dropped.
+    """
+    h = max(0.0, cfg["bounce.height"])
+    g = max(1e-6, cfg["bounce.gravity"])
+    if h <= 0.0:
+        return 0.0, 0.0
+    v0 = math.sqrt(2.0 * g * h)
+    return v0, 2.0 * v0 / g
+
+
+def bounce_lift(cfg: dict, frame=None) -> float:
+    """World-z lift in TILES at one animation frame. Zero on the ground, never negative.
+
+    A PARABOLA, NOT A SINE, and the difference is the whole point of the bounce. A sine
+    spends most of its time near the extremes and crosses the middle fast, so it reads as
+    something floating -- hanging low, hanging high, easing through the transit. Ballistic
+    flight is the opposite shape: it leaves the ground at full speed, decelerates into a
+    brief apex and accelerates back down, which is what a thing being PULLED looks like.
+    Same peak height either way; only one of them reads as gravity. So: v0 = sqrt(2gh) up,
+    z = v0 t - gt^2 / 2, and the 45-degree camera turns every tile of that into 0.707 tiles
+    up-screen and -- the part that sells it -- a whole tile of shadow travel east.
+
+    GROUND CONTACT IS A HARD FLOOR, not the bottom of a curve. Outside the flight window he
+    is ON the ground at exactly z = 0 for as many frames as the cycle has left over: the
+    max() is the floor, and it is a max() rather than an abs() because a bounced ball does
+    not mirror through the floor, it waits there. Those waiting frames are where the curl-up
+    happens, which is why the phase knob matters more than the height one.
+
+    PHASE, and why it is a knob rather than a relationship. `bounce.phase` is where in the
+    clip's own cycle the push-off happens, as a fraction: 0.0 launches on the clip's first
+    frame, 0.5 half a cycle in. The thrash's peak curl is the frame you want to launch ON,
+    and which frame that is depends on the clip, the roll and the gain -- it is an eyeball
+    decision on a compare sheet, not an identity we can write down here. Wrong phase and the
+    lift fights the pose: he leaves the ground at the moment the body is straight, which
+    reads as a sprite being dragged upward.
+    """
+    lo, hi = cycle_of(cfg)
+    span = hi - lo + 1
+    v0, airtime = bounce_flight(cfg)
+    if span < 2 or airtime <= 0.0:
+        # No clip means no cycle to push off in, so there is no bounce -- a constant hover
+        # is not one. warnings() says so out loud rather than letting a set height do nothing.
+        return 0.0
+    f = cfg["model.frame"] if frame is None else frame
+    phase = cfg["bounce.phase"] - math.floor(cfg["bounce.phase"])     # wraps, so 1.25 == 0.25
+    launch = lo + phase * span
+    fps = pose.FPS
+    t = ((float(f) - launch) % span) / fps
+    if t >= airtime:
+        return 0.0
+    g = max(1e-6, cfg["bounce.gravity"])
+    return max(0.0, v0 * t - 0.5 * g * t * t)
+
+
+def bounce_profile(cfg: dict) -> list:
+    """The lift at every frame of the cycle, for reporting. [(frame, tiles), ...]."""
+    lo, hi = cycle_of(cfg)
+    return [(f, bounce_lift(cfg, f)) for f in range(lo, hi + 1)]
+
+
 # ---------------------------------------------------------------------------- derived
 
 
@@ -347,6 +472,15 @@ def derived(cfg: dict) -> dict:
     el = math.radians(cfg["sun.elevation"])
     az = math.radians(cfg["sun.azimuth"])
     run = math.cos(el) / max(math.sin(el), 1e-9)
+    # One tile of world HEIGHT is cos(pitch) tiles of up-screen travel and one tile of
+    # ground DEPTH is sin(pitch) -- Factorio's own math3d.lua collapses the two into one
+    # constant because at 45 degrees sin == cos. Spelled separately here so the height
+    # term still means height if anyone ever moves the camera off 45 (the harness warns).
+    up_per_height = math.cos(math.radians(cfg["camera.pitch"]))
+    lift = bounce_lift(cfg)
+    peak = max(0.0, cfg["bounce.height"])
+    lo, hi = cycle_of(cfg)
+    _, airtime = bounce_flight(cfg)
     return {
         # On disk, and therefore what every stamp means.
         "body_resolution_px": body_res,
@@ -367,6 +501,23 @@ def derived(cfg: dict) -> dict:
         # Sun as the shadow's ground run, the form factorio_camera states it in.
         "light_run_east": run * math.sin(az),
         "light_run_south": -run * math.cos(az),
+        # THE BOUNCE, every number it costs. `bounce_lift_tiles` is THIS frame's lift in
+        # world z; the rest is what that does to the picture. The shadow term is the one
+        # that matters: at the game's own 45-degree sun a tile of lift is a tile of shadow
+        # travel east while the body only rises 0.707 tiles up-screen, and that SEPARATION
+        # is what reads as airborne. It is free -- the shadow pass is a real Cycles render
+        # with a real sun and a catcher at z=0, so lifting the model lands the shadow
+        # correctly by itself rather than us applying an offset to a sprite.
+        "bounce_lift_tiles": lift,
+        "bounce_peak_tiles": peak,
+        "bounce_cycle_frames": hi - lo + 1,
+        "bounce_airtime_seconds": airtime,
+        "bounce_airtime_frames": airtime * pose.FPS,
+        "bounce_lift_up_screen_tiles": lift * up_per_height,
+        "bounce_peak_up_screen_tiles": peak * up_per_height,
+        "bounce_peak_shadow_east_tiles": peak * run * math.sin(az),
+        # What the frame box grows by: the canvas has to hold the peak, not this frame.
+        "bounce_canvas_cost_tiles": peak * up_per_height,
         "camera_is_factorio_default": (
             abs(cfg["camera.pitch"] - fc.CAMERA_ELEVATION_DEG) < 1e-9
             and abs(cfg["camera.sprite_scale"] - 0.5) < 1e-9
@@ -412,6 +563,68 @@ def warnings(cfg: dict) -> list[str]:
             "mask.strap_fore %.3f is not forward of mask.strap_aft %.3f (+x is the nose), "
             "so the dorsal plate spans backwards and the harness renders inside out"
             % (cfg["mask.strap_fore"], cfg["mask.strap_aft"]))
+    posed = cfg["model.action"] != pose.REST
+    roll = cfg["model.rotation"][0]
+    if abs(roll) > ROLL_BELLY_UP:
+        out.append(
+            "model.rotation roll %.1f is past %.0f deg, where C.5's own sheets say he stops "
+            "reading as BEACHED and starts reading as dead, belly-up, in WATER. 80-90 is the "
+            "flop -- far enough over that the swim's bend plane stands up into the bounce's "
+            "plane, not so far that he is floating" % (roll, ROLL_BELLY_UP))
+    if posed and not cfg["model.reparent_head"]:
+        out.append(
+            "model.action=%s with model.reparent_head=false: HEAD is a ROOT bone on this rig "
+            "and NO swim clip touches it (C.18a), so the snout is welded to world space and "
+            "the head cannot lift off the ground however hard the spine thrashes. At roll "
+            "80-90 that is the curl-up the whole pose depends on. Set "
+            "model.reparent_head = true" % cfg["model.action"])
+    if not posed and not cfg["model.rest_pose"]:
+        out.append(
+            "model.action=rest with model.rest_pose=false renders whatever pose the .blend "
+            "happened to be SAVED in, scrubbed by model.frame -- not a clip, and not the rest "
+            "shark either. Pick a model.action, or set rest_pose = true. (The other way round "
+            "is fine: with an action selected, the pose is cleared and posed either way, so "
+            "rest_pose stops meaning anything.)")
+    if posed:
+        lo, hi = cycle_of(cfg)
+        if not lo <= cfg["model.frame"] <= hi:
+            out.append(
+                "model.frame %d is outside %s's own range %d-%d, so the renderer CLAMPS it to "
+                "%d -- two configs that hash differently and render the same pixels. Set a "
+                "frame the clip has"
+                % (cfg["model.frame"], cfg["model.action"], lo, hi,
+                   min(max(cfg["model.frame"], lo), hi)))
+    if cfg["model.pose_gain"] > pose.GAIN_SAFE:
+        out.append(
+            "model.pose_gain %.2f is past the %.1fx the rig was MEASURED to survive. Above "
+            "it, check the neck and the tail tip for mesh tearing before you believe the "
+            "frame" % (cfg["model.pose_gain"], pose.GAIN_SAFE))
+    if cfg["model.pose_gain"] < 0.0:
+        out.append(
+            "model.pose_gain %.2f is NEGATIVE, which mirrors every bone through its rest "
+            "rotation -- a shark bent the wrong way, not a quieter one. 1.0 is the clip as "
+            "bought" % cfg["model.pose_gain"])
+    if cfg["bounce.height"] > 0.0 and not posed:
+        out.append(
+            "bounce.height %.2f with model.action=rest never leaves the ground: the lift is "
+            "driven by the thrash PHASE and a rest pose has no cycle to push off in. Pick a "
+            "clip or set the height to 0" % cfg["bounce.height"])
+    if cfg["bounce.height"] > 0.0 and posed:
+        air, span = d["bounce_airtime_frames"], d["bounce_cycle_frames"]
+        if air > span:
+            out.append(
+                "bounce.height %.2f at gravity %.1f is %.1f frames of airtime in a %d-frame "
+                "cycle: he is still up when the next push-off comes, so the loop POPS at the "
+                "seam instead of landing. Lower the height or raise bounce.gravity"
+                % (cfg["bounce.height"], cfg["bounce.gravity"], air, span))
+        elif air > span * 0.85:
+            out.append(
+                "bounce.height %.2f leaves only %.1f of %d frames on the GROUND. The landing "
+                "is where the comedy is and he has no time to lie in it"
+                % (cfg["bounce.height"], span - air, span))
+    if cfg["bounce.gravity"] <= 0.0:
+        out.append("bounce.gravity %.2f is not gravity; nothing comes down. 9.8 is real"
+                   % cfg["bounce.gravity"])
     if cfg["rotations.count"] % max(cfg["rotations.preview"], 1):
         out.append("rotations.preview=%d does not divide rotations.count=%d, so preview "
                    "frames are not a subset of the full sheet and cannot be reused"
@@ -474,10 +687,10 @@ def blend_digest(path, length: int = 16) -> str:
     return _DIGEST_CACHE[key]
 
 
-def hashable(cfg: dict) -> dict:
-    """The config as it is HASHED and STAMPED: `model.blend` replaced by its digest.
+def redacted(cfg: dict) -> dict:
+    """The config as it is STAMPED: `model.blend` replaced by a digest of its CONTENT.
 
-    Two jobs in one substitution. It makes the hash a fact about the model rather than
+    Two jobs in one substitution. It makes the stamp a fact about the model rather than
     about one filesystem (see blend_digest), and it keeps an absolute path -- which on
     this machine is a private scratch directory -- out of PNG text chunks that ship in a
     public repo. Already-redacted values pass straight through, so resolving a stamped
@@ -487,6 +700,29 @@ def hashable(cfg: dict) -> dict:
     if not value.startswith(BLEND_DIGEST_PREFIX) and value != BLEND_ABSENT:
         value = blend_digest(blend_path(cfg))
     return dict(cfg, **{"model.blend": value})
+
+
+def is_default(key: str, value) -> bool:
+    """Is this the value the schema ships? Lists compare by content, not identity."""
+    want = SCHEMA[key][1]
+    if isinstance(want, list):
+        return list(value) == list(want)
+    return value == want and isinstance(value, type(want))
+
+
+def hashable(cfg: dict) -> dict:
+    """The config as it is HASHED: redacted, minus any ADDITIVE knob still at its default.
+
+    The subtraction is the whole of the story in ADDITIVE above: a knob that cannot have
+    changed a pixel is not in the key, so the schema can grow without re-dating art that
+    already shipped. Everything else -- including every one of those knobs the moment it is
+    touched -- is hashed exactly as before.
+    """
+    view = redacted(cfg)
+    for key in ADDITIVE:
+        if key in view and is_default(key, view[key]):
+            del view[key]
+    return view
 
 
 def config_hash(cfg: dict, length: int = 12) -> str:
@@ -530,7 +766,9 @@ def pass_hash(cfg: dict, pass_name: str, length: int = 12) -> str:
     to another pass -- see PASS_DERIVED.
     """
     view = hashable(cfg)
-    subset = {k: view[k] for k in pass_keys(pass_name)}
+    # `if k in view` because hashable() drops an ADDITIVE knob sitting at its default. A
+    # KeyError here would be the schema growing and the CACHE crashing on the same commit.
+    subset = {k: view[k] for k in pass_keys(pass_name) if k in view}
     d = derived(cfg)
     subset.update(("derived." + k, d[k]) for k in PASS_DERIVED[pass_name])
     return hashlib.sha256(canonical(subset).encode()).hexdigest()[:length]
@@ -539,16 +777,20 @@ def pass_hash(cfg: dict, pass_name: str, length: int = 12) -> str:
 def stamp(cfg: dict, extra: dict | None = None) -> dict:
     """The provenance blob written beside every render and into every PNG.
 
-    `config` is the HASHABLE view, not the resolved one: `model.blend` is a content
+    `config` is the REDACTED view, not the resolved one: `model.blend` is a content
     digest. Nothing downstream wants the path (Blender is handed the file on argv), a
     PNG that ships in a public repo must not carry one, and resolving this blob back and
-    re-hashing it has to return `config_hash` -- which only holds if what is written is
-    what was hashed.
+    re-hashing it has to return `config_hash` -- which holds because resolve() fills every
+    knob back in from the schema, including the ADDITIVE ones the HASH leaves out.
+
+    Redacted rather than hashable on purpose: this blob is also the payload handed to
+    Blender and the sidecar a human reads three weeks later, and both want every knob
+    written down -- `model.action = "rest"` is worth saying even though it hashes as absent.
     """
     blob = {
         "config_hash": config_hash(cfg),
         "pass_hashes": {p: pass_hash(cfg, p) for p in PASSES},
-        "config": unflatten(hashable(cfg)),
+        "config": unflatten(redacted(cfg)),
         "derived": derived(cfg),
     }
     if extra:

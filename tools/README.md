@@ -64,7 +64,8 @@ where you are moving one number by 0.1 and looking again:
 uv run --directory tools python render/tune.py            # opens a browser at 127.0.0.1:8765
 ```
 
-Six sliders - pivot fore/aft, height, girth, scale, pitch, roll - driving the SAME
+Eight sliders - pivot fore/aft, height, girth, scale, pitch, roll, bounce height and bounce
+phase - driving the SAME
 `ac.load -> art.render_pass -> art.compare_sheet` path the CLI drives, so a value found
 there is the same value here: same cache, same sheet, same coverage count, same hash. The
 page shows the shark's dimensions and the leg-mount coverage as you drag, and a **copy
@@ -93,20 +94,73 @@ once and then plays out of the browser's own memory, so the second cycle is free
 
 MEASURED, ten frames from cold: **15.1 s** to fill broadside (1.51 s a frame), 18.1 s on the
 full wheel, and **0.13 s a frame** to re-tick PLAY afterwards - zero in the browser, which is
-where it plays. All ten poses bake in ONE Blender launch (0.7 s for the set), so scrubbing
-the frame slider by hand is the slow way: that pays a launch per frame. 256 px is **not**
-faster than 384 - this loop is Blender *launch*-bound at both ends, exactly like `--jobs`.
-The **broadside** view is not a speed knob either (17%, i.e. nothing); it is there because a
-beached shark only reads as beached from the side - nose-on, the roll is invisible and the
-thrash is all in screen depth, so five of the wheel's eight views cannot answer the question.
+where it plays. 256 px is **not** faster than 384 - this loop is Blender *launch*-bound at
+both ends, exactly like `--jobs`. The **broadside** view is not a speed knob either (17%,
+i.e. nothing); it is there because a beached shark only reads as beached from the side -
+nose-on, the roll is invisible and the thrash is all in screen depth, so five of the wheel's
+eight views cannot answer the question.
 
-There is no `model.action` or `model.pose_gain` knob in `artconfig.SCHEMA` yet, which is
-deliberate (gain is the knob that decides whether the bought animation ships at all).
-`render/pose.py` bakes the selected pose into a temp `.blend` under `$TMPDIR` instead, and
-`model.blend` points at it - same cache, same hashes, same provenance, because the config
-hashes the model by CONTENT. The TOML export names both missing knobs in a commented block
-rather than emitting two keys that would be a fatal `unknown knob` in the file they land in.
-A baked pose is still the licensed mesh, so it never goes anywhere near the repo.
+**flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, gain 1.0, bounce 0.3,
+HEAD reparented, broadside - and it leaves scale, girth, pivot and pitch where you have them,
+because half the time those are mid-tuning. The page still OPENS on the committed standing
+config (the header's `paste` hash reads `83d6be794998` on arrival, which is the live proof the
+flop work has not touched the art that ships), so 85 is a button and not a boot value.
+
+AND THE LOOP WAS MEASURED BY DRIVING IT, which is the whole point - every call about this pose
+until now was made off still frames. **Stride 1: 23.40 fps against the 24.00 target** (mean
+42.7 ms a frame, min 40.4, max 43.4), seven clean passes of f1..f20, wrapping; stride 2 is
+11.80 against 12.00. The 2.5% shortfall is `setInterval`'s own drift - there is no network and
+no render inside the loop, just an `img.src` swap to an object URL. The fill is the cost and
+it is paid once: 15.2 s for 20 frames, 0.10 s to re-tick the whole loop afterwards. A still is
+**1.37-1.42 s** round trip, and 16 renders with one knob moved each came back 16 DIFFERENT
+sheets - no slider on that page is decorative.
+
+The **roll** slider runs 15 deg past the 105 where sheet B says he stops reading as beached
+and starts reading as dead, belly-up, in WATER, and `artconfig.warnings()` says so from 105
+on - `art.py --set 'model.rotation=[140,0,0]'` used to render that in silence. A warning and
+not a clamp on purpose: C.5 is judged by eye, and an edge you cannot cross is an edge you have
+to take on faith.
+
+**THE FLOP IS KNOBS**, so everything above is available from the CLI too:
+
+```sh
+uv run --directory tools python render/art.py --compare \
+    --set 'model.action="SWIM_FAST"' --set model.frame=12 --set model.pose_gain=1.0 \
+    --set model.reparent_head=true --set 'model.rotation=[85,0,0]' \
+    --set bounce.height=0.3 --set bounce.phase=0.25
+```
+
+| knob | what it does |
+| --- | --- |
+| `model.action` | which of the five clips, or `"rest"` for the standing shark. A misspelled id is a fatal `not one of` - the enum IS `render/pose.py`'s table |
+| `model.frame` | which frame of that clip, clamped to its range |
+| `model.pose_gain` | every bone's rotation scaled away from rest. **1.0 ships**: at roll 80-90 the bounce carries the thrash. The rig survives 2.6x, measured |
+| `model.reparent_head` | C.18a rig fix, applied in memory - HEAD ships as a ROOT bone, so the snout is welded to world space until this is on |
+| `bounce.height` / `.phase` / `.gravity` | the ballistic lift: how high, where in the cycle he pushes off, and the `g` that fixes the airtime |
+
+All of them are ordinary schema knobs, so a flop frame caches, hashes and stamps exactly like
+a standing one. Two consequences worth knowing. The tuner's header names the hash of the
+picture it is showing you, pose included (it used to say `pending bake`, because the pose
+lived in a temp `.blend` that did not exist until a render ran). And they are **hash-neutral
+at their defaults** - `ac.ADDITIVE` - so adding them did not move the `83d6be794998` the
+shipped sheets carry; move one off its default and it is in the hash like anything else.
+
+### What the bounce is for
+
+The shadow. The shadow pass is a real Cycles render with the game's own 45-degree sun and a
+catcher at z=0, so lifting the model separates the shadow by itself. MEASURED at 0.3 tiles,
+one direction, one clip frame, the lift the only difference between two renders: the shadow's
+alpha centroid moves **+19.12 px east** (0.2987 tiles against 0.300 predicted, a pure
+translation) while the body rises **exactly 14 px up-screen** (0.219 against 0.212
+predicted). That separation is what reads as airborne; a lift without it looks like the
+sprite growing. It costs 8 px of the body canvas's 84 px of headroom over the whole loop.
+
+The fall is a **parabola, not a sine**, and the airtime is derived from the height and
+gravity rather than authored - see `artconfig.bounce_lift` for the argument. A sine hangs at
+both extremes and reads as floating; ballistic flight leaves at full speed and comes back
+accelerating, which is what being pulled looks like. Ground contact is a hard floor, so the
+frames he is not airborne for are frames spent lying on the ground - which is where the
+landing, and the joke, lives.
 
 ## Shipping a sheet
 
@@ -215,7 +269,6 @@ is the promise the word provenance was making.
 | `uv run --directory tools python render/factorio_camera.py` | print the camera and sun constants |
 | `uv run --directory tools python render/factorio_camera.py --verify` | re-derive both constants off the installed game's own sprites |
 | `Blender -b MODEL.blend --python tools/render/model_inspect.py -- --out report.json` | dump mesh, rig, clips and materials from a model |
-| `Blender -b MODEL.blend --python tools/render/pose.py -- --jobs jobs.json` | bake one action/frame/gain per job into a temp `.blend`. Driven by `pose.ensure()`, never by hand |
 
 The C.10 art harness, all from the repo root (`--set` takes TOML values, repeatable):
 
@@ -230,9 +283,8 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
-| `uv run --directory tools python render/tune.py` | **the slider UI.** six knobs, the five shipped clips with a PLAY loop, live coverage count, copy-TOML button; shadow off by default |
+| `uv run --directory tools python render/tune.py` | **the slider UI.** eight knobs, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix toggle, live coverage count, copy-TOML button; shadow off by default |
 | `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
-| `$JAMALTRON_POSE_CACHE=DIR` | where baked poses go (default `$TMPDIR/jamaltron-pose`, pruned at 96 files). Never inside the repo |
 
 The C.7 packer, also from the repo root:
 
@@ -360,9 +412,17 @@ render/
                        the compare and contact sheets, stamps provenance on everything
   artconfig.py         the knob SCHEMA, resolution, validation, derived numbers and the
                        per-pass cache hashes. stdlib only, so both sides import it
-  render_jamal.py      entry point, Blender side. Takes a resolved config, fixes the C.2
-                       hazards (NLA, pivot, stale keyframes, shipped cams/lights), renders
-                       N rotations of the body or the shadow pass
+  render_jamal.py      entry point, Blender side. Takes a resolved config, fixes the C.2 and
+                       C.18a hazards (NLA, pivot, stale keyframes, shipped cams/lights, HEAD
+                       parented to nothing), poses the rig from model.action, lifts it from
+                       [bounce], renders N rotations of the body, shadow or mask pass
+  pose.py              the five shipped clips: which action, which frames, which bones, and
+                       the arithmetic of a loop over one. `model.action`'s enum reads this
+                       table, and every posed render re-checks it against the model. stdlib
+                       only and imports no sibling -- artconfig imports IT
+  tune.py              entry point, uv side. The slider UI (127.0.0.1, stdlib http.server):
+                       drives the same ac.load -> render_pass -> compare_sheet path art.py
+                       does, plus the flop's clip select, frame scrub and PLAY loop
   sheets.py            compare/contact sheet layout and compositing, plus the mount
                        self-check. Pure arithmetic above the Pillow import, so it tests
                        without rendering
@@ -383,6 +443,10 @@ tests/
   test_spritesheet.py       layout math, incl. two cases checked against shipped Factorio assets
   test_factorio_camera.py   projection against 8 muzzle positions the GAME computes, the sun,
                             and the guard that keeps the module importable inside Blender
+  test_pose.py              the clip table: its own consistency, the checker that catches
+                            the model moving under it, and the loop arithmetic
+  test_tune.py              the tuner's two promises: the TOML export round-trips to the hash
+                            the page printed, and nothing can slip out of the export
   test_pack.py              the packer: shift against the stock torso's own declaration,
                             the union box, the line_length divisor property over every
                             count, a byte-exact place-it-back round trip, and the two

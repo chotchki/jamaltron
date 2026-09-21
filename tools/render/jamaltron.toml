@@ -90,6 +90,12 @@ offset = [0.0, 0.0, 0.5]
 # Extra (roll about east, PITCH about north, yaw) in degrees, on top of base_yaw. Pitch is
 # the nose-up/nose-down knob -- a few degrees of nose-up reads as "swimming" rather than
 # "dead fish on a stick", and the jump arc in C.5 wants much more of it.
+# ROLL IS THE BEACHED KNOB and it has a measured ceiling: 80-90 is the flop (chotchki's call
+# off the C.5 sheets -- far enough over that the swim's bend plane stands up into the same
+# plane [bounce] works in, so curl-up / lift-off / slam-down is ONE motion and the clip needs
+# no gain), and past about 105 sheet B says he stops reading as BEACHED and starts reading as
+# dead, belly-up, in WATER. Not clamped -- C.5 is judged by eye -- but warned, here and in the
+# tuner, because the difference is a different animal in a different place.
 # default [0.0, 0.0, 0.0]
 rotation = [0.0, 0.0, 0.0]
 
@@ -118,7 +124,10 @@ rest_pose = true
 # default true
 drop_stale_keyframes = true
 
-# Scene frame to sit on. Only matters with rest_pose = false or once C.5 animates.
+# Which frame to sit on. With `action` set this is the frame OF THAT CLIP, clamped to its
+# range, and it is also what [bounce] reads to work out where in the cycle he is. With
+# `action = "rest"` it only matters if `rest_pose = false`, and that combination renders
+# whatever pose the .blend was saved in, which is nothing you asked for.
 # default 1
 frame = 1
 
@@ -127,6 +136,84 @@ frame = 1
 # subdivision off entirely and the silhouette goes faceted.
 # default 1
 subdiv_render_levels = 1
+
+# WHICH CLIP (C.5). "rest" is the standing shark the shipped sprites came off -- no action
+# assigned, bones cleared, exactly as C.4 rendered them. Anything else is one of the five
+# actions the model ships, by the id render/pose.py gives it: SWIM_FAST, SWIM_MEDIUM,
+# SWIM_SLOW (one wave at three speeds, spine only) or BITE_01 / BITE_02 (head, jaw and
+# pectoral fins, DISJOINT from the swims). `model.frame` then picks the frame of it.
+# This is the knob `rest_pose = false` was NOT: false does not select a clip, it leaves
+# whatever pose the .blend was saved in and lets `frame` scrub it.
+# default "rest"
+action = "rest"
+
+# How hard the selected clip is pushed: every bone's rotation scaled away from its rest
+# rotation. 1.0 is the clip as bought AND IS WHAT SHIPS -- chotchki's call off the C.5
+# sheets. The reasoning is worth keeping: at roll 80-90 the swim's bend plane stands up into
+# the same plane the BOUNCE works in, so curl-up / lift-off / slam-down compose into one
+# motion and the bounce carries the thrash. A roll-30 flop needed 2.0-2.6x to read at all.
+# The knob exists so gain can be ruled OUT deliberately rather than assumed. MEASURED: the
+# rig survives 2.6x with no mesh tearing; past that check the neck and the tail tip.
+# default 1.0
+pose_gain = 1.0
+
+# RIG FIX (C.18a), applied in memory at render time because the bought .blend never enters
+# the repo. HEAD ships as a ROOT bone and no swim clip touches it, so the snout is welded to
+# world space and a thrashing spine cannot move his face. This hangs HEAD off SPINE_01,
+# where the rest geometry already says it belongs (HEAD's head at x 0.708, SPINE_01's at
+# 0.577), keeping its rest position.
+# MEASURED, both halves. At rest it changes NOTHING (two renders' IDAT streams are byte
+# identical), which is why it is safe to have at all. Playing SWIM_FAST at roll 85 it moves
+# 1448-2555 px -- 1.0-1.7% of a 384 px frame -- all inside a 60 px box on the head. But the
+# snout only travels 0.056 BU (2.9 px) and the alpha box does not move, so at gain 1.0 the
+# head shifts WITHIN his outline: SPINE_01 is itself a root bone and, on a wave rear-loaded
+# 3:1, the first joint rotates least (~4.3 deg). Necessary, not sufficient -- it stops the
+# neck stretching against a pinned skull, and the LIFT comes from [bounce].
+# Off by default: the sheets in mod/jamaltron/graphics/ came off the rig as bought.
+# default false
+reparent_head = false
+
+[bounce]
+# THE BOUNCE (C.5). A per-frame vertical lift so he LAUNCHES off the ground and LANDS, driven
+# by the thrash's own phase. Without it a beached shark pinned to z=0 slides, and the landing
+# is where the comedy is.
+#
+# THE SHADOW IS THE WHOLE POINT AND IT IS FREE. The shadow pass is a real Cycles render with
+# the game's own 45-degree sun and a catcher at z=0, so lifting the model separates the shadow
+# by itself -- nothing applies an offset to a sprite. MEASURED at height 0.3, dir 16,
+# SWIM_FAST f12, the lift the only difference between two renders: the shadow's alpha
+# centroid moves +19.12 px east (0.2987 tiles against 0.300 predicted, and it is a pure
+# translation -- west edge +19, east edge +20, dy -0.5) while the body rises exactly 14 px
+# up-screen (0.219 tiles against 0.212 predicted). That SEPARATION is what reads as airborne;
+# a lift without it looks like the sprite growing.
+#
+# WHAT IT COSTS THE CANVAS, measured over all 20 frames of SWIM_FAST at roll 85, dir 16: the
+# loop's union box grows from 3.78 x 2.03 to 3.78 x 2.08 tiles and the top margin drops from
+# 84 px to 76 px of the 6-tile canvas. So 0.3 tiles is cheap and there is room for about 1.6
+# tiles of lift before the top edge cuts. art.py re-measures and shouts either way.
+
+# Peak height in TILES of world z. 0 disables the bounce entirely (and is the default, so the
+# standing sprites cannot be touched by it). 0.3 is the C.5 number: 12 of SWIM_FAST's 20
+# frames airborne, 19 px of shadow travel, 8 px of canvas.
+# default 0.0
+height = 0.0
+
+# WHERE in the clip's cycle the push-off happens, as a fraction of the cycle: 0.0 launches on
+# the clip's first frame, 0.25 a quarter of the way in. Launch on the frame of peak CURL and
+# the thrash throws him; launch on a straight frame and the sprite reads as dragged upward.
+# Which frame that is depends on the clip, the roll and the gain, so it is an eyeball
+# decision on a compare sheet -- that is why this is a knob and not a formula.
+# default 0.0
+phase = 0.0
+
+# Gravity in tiles/s^2, and it is the knob that shapes the FALL. 9.8 is real gravity at
+# 1 tile = 1 m, which is the point: airtime is DERIVED from height and gravity
+# (t = 2*sqrt(2h/g)), never authored, so you cannot accidentally ask for a 0.3-tile hop that
+# floats for a second. A parabola reads as gravity and a sinusoid reads as floating -- see
+# artconfig.bounce_lift for the argument. Raise it for a snappier, shorter hop at the same
+# height; lower it and he hangs.
+# default 9.8
+gravity = 9.8
 
 [camera]
 # Camera elevation in degrees. 45 IS NOT A PREFERENCE: core/lualib/math3d.lua ships

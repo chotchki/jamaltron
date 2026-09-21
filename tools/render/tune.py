@@ -28,7 +28,7 @@ TWO HASHES, ON PURPOSE. The tuner renders with shadow off (and possibly 4 rotati
 possibly a reduced resolution), and all three of those are knobs, so the hash of what you
 are LOOKING AT is not the hash you get after pasting the TOML and running `art.py
 --compare`. The page shows both: `tuner` is provenance for the image on screen, `paste` is
-what the CLI will stamp once the five model knobs are committed. A tool that showed one
+what the CLI will stamp once the exported knobs are committed. A tool that showed one
 hash would be lying about one of them.
 
 ONE CAVEAT ON `paste`, inherited from artconfig and not fixable here: `model.blend` is in
@@ -43,21 +43,21 @@ list is data (KNOBS) and not markup. Add a row, and the TOML export, the reset b
 the round-trip all pick it up -- TOML_KEYS asserts at import that a new slider cannot
 silently fall out of the export.
 
-C.5 ARRIVED, AND IT BROUGHT A THIRD HASH PROBLEM. The flop needs three things the standing
-shark never did: pick one of the five shipped clips, scrub a frame of it, and PLAY it,
-because a flop is a MOTION and a still frame of one cannot be judged -- frame 7 of a thrash
-and frame 7 of a shark swimming sideways are the same picture. Two of those three are not
-knobs (see THE TWO KNOBS THAT SHOULD EXIST, below), so render/pose.py bakes the pose into a
-temp .blend and this page points `model.blend` at it. Consequence, stated out loud because
-it is the kind of thing a tool lies about: in a POSED state the `tuner` hash is not known
-until the bake has happened, so the header shows it only after a render, and the `paste`
-hash is the hash of the REST config those five lines describe. The pose is in the picture
-and NOT in that hash. The export says so in the block itself.
+C.5 ARRIVED AND BROUGHT THE FLOP: pick one of the five shipped clips, scrub a frame of it,
+and PLAY it, because a flop is a MOTION and a still frame of one cannot be judged -- frame 7
+of a thrash and frame 7 of a shark swimming sideways are the same picture. Plus the bounce,
+which is the part that carries it: a per-frame ballistic lift whose whole payoff is that the
+shadow separates from the body.
+
+ALL OF IT IS KNOBS NOW. `model.action`, `model.pose_gain`, `model.reparent_head` and the
+`bounce` table live in artconfig.SCHEMA, so this page sets knobs and the renderer poses the
+rig inside the render it was launching anyway. There is no temp .blend and no third hash any
+more: the `tuner` hash is the hash of the picture on screen, including the pose, and `paste`
+is that same config minus the tuner's own three render options. The pose USED to be baked
+into a copy of the model, which meant the header could not name the hash of what you were
+looking at until the bake had run -- that seam is gone.
 
 MEASURED for the flop loop, same machine, a 10-frame loop from cold:
-  * the bake is NOT the cost. All ten poses bake in ONE Blender launch, 0.7 s for the set,
-    charged to the first frame. Scrub the frame slider by hand instead and each frame pays
-    its own 0.4-0.5 s launch, which is the entire reason PLAY prefetches.
   * broadside (3 directions): 15.1 s to fill, 1.51 s a frame. Full wheel (8): 18.1 s, 1.81 s.
   * re-ticking PLAY after a fill: 0.13 s a frame from the server, and ZERO in the browser,
     which is where it actually plays -- the frames are object URLs by then.
@@ -69,6 +69,23 @@ MEASURED for the flop loop, same machine, a 10-frame loop from cold:
   * a knob move during playback stops the loop, re-renders the frame you are on as a still,
     and refills afterwards -- dragging roll against a flopping shark would be 10 renders a
     tick, which is the tool feeling broken rather than slow.
+
+AND THEN IT WAS DRIVEN, which is the whole point of the phase -- every call about this pose so
+far was made off still frames. The page's own script, run against a live server with a DOM
+stub standing in for the browser (scratchpad, not shipped -- it is a measuring rig, not a
+test), at roll 85 / SWIM_FAST / bounce 0.3 / broadside:
+  * PLAY LOOPS. Stride 1: 140 swaps in 6.00 s = 23.40 fps against the 24.00 target, mean
+    42.7 ms a frame (min 40.4, max 43.4), seven clean passes of f1..f20 and it wraps. Stride
+    2: 11.80 fps against 12.00, mean 84.8 ms. The 2.5% shortfall is setInterval's own drift,
+    not the frames -- there is no network and no render inside the loop.
+  * the fill is the cost and it is paid once: 15.2 s for 20 frames, 14.2 s for 10 (~1.4 s a
+    frame, broadside). Re-ticking PLAY on the same knobs: 0.10 s, the whole loop out of the
+    page's blob cache.
+  * a still is 1.37-1.42 s round trip (median 1.42 over 16 one-knob-at-a-time renders), and
+    every one of those 16 came back a DIFFERENT sheet -- no slider on this page is decorative.
+  * the export round-trips: the block the server hands you, pasted into the shipped TOML,
+    re-hashes to the `paste` hash the header showed (460805dd6aef), and the shipped file with
+    nothing pasted still hashes 83d6be794998.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
@@ -142,45 +159,67 @@ KNOBS = [
          "pitch (nose up/down)", "deg", "nose down", "nose up",
          "A few degrees of nose-up reads as swimming rather than dead-fish-on-a-stick. "
          "C.5's jump arc wants a lot more."),
-    Knob("roll", "model.rotation", 0, -90.0, 90.0, 1.0,
+    Knob("roll", "model.rotation", 0, -(ac.ROLL_BELLY_UP + 15.0), ac.ROLL_BELLY_UP + 15.0, 1.0,
          "roll (lays him over)", "deg", "&larr; onto one flank", "onto the other &rarr;",
          "THE beached knob: 0 is upright, &plusmn;90 is flat on a flank. Sign picks which "
          "flank, and it is worth looking at both -- the dorsal fin and the harness are not "
-         "symmetric. MEASURED AND COUNTER-INTUITIVE (C.5): 90 does not turn the swim into a "
-         "flop, it KILLS it. At the broadside directions the swim's bend plane is his "
-         "transverse plane, and 90 stands that plane perpendicular to the screen, so the "
-         "thrash foreshortens into depth and every frame looks the same. 25-35 with the "
-         "pose gain up is what reads as an animal in distress."),
+         "symmetric. 80-90 IS THE CALL (chotchki, off the C.5 sheets), and the reason is the "
+         "BOUNCE: at that roll the swim's bend plane stands up into the same plane the lift "
+         "works in, so curl-up / lift-off / slam-down is ONE composed motion and the bought "
+         "clip needs no gain at all. The slider runs 15 deg PAST the 105 where sheet B says "
+         "he starts reading as dead belly-up in WATER, and warns from there on -- a limit you "
+         "cannot cross is a limit you have to take on faith, and this phase exists to replace "
+         "faith with looking. Drag it there once, see it, come back."),
+    Knob("bounce_height", "bounce.height", None, 0.0, 0.8, 0.02,
+         "bounce height", "tiles", "&larr; sliding", "launched &uarr;",
+         "How far off the ground the push-off throws him, in world tiles. 0 pins him to the "
+         "floor and he SLIDES, which is the failure this knob exists to fix. THE SHADOW IS "
+         "THE POINT: MEASURED at 0.3 tiles, the body rises 14 px up-screen while the shadow "
+         "runs 19 px EAST, and that separation is what reads as airborne -- a lift without it "
+         "just looks like the sprite growing. Airtime follows from the height (real gravity), "
+         "so 0.3 is already 12 of SWIM_FAST's 20 frames in the air."),
+    Knob("bounce_phase", "bounce.phase", None, 0.0, 1.0, 0.05,
+         "bounce phase", "cycle", "push off at f1", "&larr; late in the cycle",
+         "WHERE in the clip's own cycle he pushes off, as a fraction. Launch on the frame of "
+         "peak curl and the thrash throws him; launch on a straight frame and the sprite "
+         "looks dragged upward. Which frame that is depends on clip, roll and gain, so it is "
+         "an eyeball decision -- watch the lift-off against the body, not one still."),
 ]
 
-#: Keys the TOML export writes. Every KNOBS entry must land in one of these or the export
-#: would quietly drop a value you spent an afternoon finding -- asserted at import, not
-#: documented and hoped for.
-TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model.rotation")
+#: Keys the TOML export writes, in the order it writes them. Every KNOBS entry must land in
+#: one of these or the export would quietly drop a value you spent an afternoon finding --
+#: asserted at import, not documented and hoped for.
+#:
+#: Five of these are NOT sliders (`action`, `pose_gain`, `frame`, `reparent_head`,
+#: `bounce.gravity`): they come off the clip selects or off `--set`, and they ride the export
+#: because the five shark knobs are meaningless without them. A flop tuned at gain 1.0 and
+#: pasted without `action` is the standing shark.
+TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model.rotation",
+             "model.action", "model.pose_gain", "model.frame", "model.reparent_head",
+             "bounce.height", "bounce.phase", "bounce.gravity")
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
+assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema does not have"
 
 #: Render options the page can set. All three are real knobs, which is why they move the
 #: tuner hash: rotations -> compare.rotations, res -> render.resolution_px (0 = native
 #: 384 px), shadow -> compare.show_shadow plus whether the Cycles pass runs at all.
 ROTATION_CHOICES = (4, 8)
 RES_CHOICES = (0, 256)
+#: `reparent` is deliberately absent: it defaults to whatever the config being tuned says,
+#: so `--set model.reparent_head=true` is not silently overridden by a page default. page()
+#: seeds the checkbox off the committed config for the same reason.
 DEFAULT_OPTS = {"rotations": 8, "res": 0, "shadow": False, "view": "wheel"}
 
 # ----------------------------------------------------------------------------- the pose
 #
-# TODO(C.5) THE TWO KNOBS THAT SHOULD EXIST. Selecting a clip and amplifying it want to be
-# `model.action` (str, one of pose.CLIPS' ids or "rest") and `model.pose_gain` (float, 1.0 =
-# as bought) in artconfig.SCHEMA with ("body", "shadow", "mask") dependencies, read in
-# render_jamal.main() right where `model.rest_pose` is read today. Until they land, this page
-# bakes the pose into a temp .blend (render/pose.py) and points `model.blend` at it: same
-# pixels, same cache, same provenance stamp, and nothing added to the schema.
+# THE TWO KNOBS LANDED. Selecting a clip is `model.action` and amplifying it is
+# `model.pose_gain`, both in artconfig.SCHEMA with ("body", "shadow", "mask") dependencies,
+# both read in render_jamal.main() right where `model.rest_pose` is read. This page sets
+# them like any other knob; `model.reparent_head` and the `bounce` table came with them.
 #
-# They are held back DELIBERATELY. artconfig.py was clean when this landed, so the file
-# -ownership guard is not what stopped it -- `pose_gain` is the knob that decides whether the
-# bought animation ships AT ALL (at gain 1.0 the swim is too polite to read as a flop), and
-# that is chotchki's call to make off the pictures this page produces, not the tuner's to
-# pre-empt by writing a schema entry. The whole cost of the seam is one 0.4 s Blender launch
-# per pose and two commented lines in the TOML export.
+# What that bought, beyond deleting a Blender launch per pose: the page can name the hash of
+# the picture it is showing you (it used to be a .blend digest that did not exist until the
+# bake ran), and the export is TOML you paste rather than TOML you uncomment.
 
 #: Which of the wheel's directions the BROADSIDE view renders: 3/16, 4/16 and 5/16 of the
 #: way round, which is E and E +- 22.5 deg at the shipped rotations.count of 64.
@@ -200,12 +239,26 @@ STRIDE_MIN, STRIDE_MAX = 1, 6
 #: The pose the page boots with: none. The committed config is the STANDING shark and the
 #: shipped sprites came off it, so the tool has to open on exactly that and never surprise
 #: you into tuning a pose you did not ask for.
-DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2, "prefetch": False}
+DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2}
 
-#: What the header shows instead of a tuner hash while a pose is selected. NOT a hash and
-#: deliberately unmistakable for one: the posed hash is over a .blend that gets baked at
-#: render time, so quoting a number here would be a guess dressed as provenance.
-PENDING_HASH = "pending bake"
+#: THE C.5 FLOP, in one click: the recipe as decided, and nothing else.
+#:
+#: WHY A BUTTON AND NOT THE BOOT STATE. The ask was a roll slider "defaulted to 85", and the
+#: page cannot boot there: it opens on the COMMITTED config, which is the standing shark the
+#: shipped sprites came off, and that is load bearing twice over -- the header's paste hash
+#: reads 83d6be794998 on arrival, which is the live proof that nothing about the flop has
+#: touched the art that ships, and `reset to committed` has something to mean. Roll 85 with
+#: no clip selected is also a pose nobody wants: a STANDING shark lying on his side.
+#:
+#: So: one click to the recipe, from wherever the sliders are. It sets only the six knobs the
+#: flop is about and deliberately leaves scale, girth, pivot and pitch alone -- those are
+#: mid-tuning values half the time, and a preset that silently reverted them would be a
+#: preset nobody presses twice. `--set model.rotation=[85,0,0]` still seeds it from the CLI.
+FLOP_PRESET = {
+    "values": {"roll": 85.0, "bounce_height": 0.3},
+    "pose": {"clip": "SWIM_FAST", "frame": 1, "gain": 1.0, "stride": 2},
+    "opts": {"view": "broadside", "reparent": True},
+}
 
 #: The model's own rest-pose box in tiles at scale 1, read OUT of artconfig.derived()
 #: rather than copied from it, so the page's live dimensions cannot drift from the
@@ -266,12 +319,24 @@ def apply_opts(cfg: dict, opts: dict) -> dict:
     cfg["compare.rotations"] = choice("rotations", ROTATION_CHOICES)
     cfg["render.resolution_px"] = choice("res", RES_CHOICES)
     cfg["compare.show_shadow"] = bool(opts.get("shadow", False))
+    cfg["model.reparent_head"] = reparent_of(cfg, opts)
     if view_of(opts) == "broadside":
         # The COUNT has to follow the view or the hash claims eight cells for a three-cell
         # sheet. Which three is not expressible as a knob (there is no "directions" knob,
         # only a count), so the page and the terminal both name them; see view_frames.
         cfg["compare.rotations"] = len(BROADSIDE_SIXTEENTHS)
     return cfg
+
+
+def reparent_of(cfg: dict, opts: dict) -> bool:
+    """The rig-fix checkbox, falling back to the CONFIG's own value and not to False.
+
+    Two reasons it is not just `opts.get("reparent", False)`. `--set
+    model.reparent_head=true` has to survive a POST that does not mention the checkbox, and
+    the EXPORT has to carry whatever is ticked -- a block that says `reparent_head = false`
+    under a picture rendered with it on is the export lying about the picture.
+    """
+    return bool(opts.get("reparent", cfg["model.reparent_head"]))
 
 
 def view_of(opts: dict) -> str:
@@ -313,34 +378,26 @@ def normalize_pose(state: dict | None) -> dict:
     return {"clip": clip_id,
             "frame": pose.clamp_frame(clip_id, state.get("frame", 1)),
             "gain": pose.clamp_gain(state.get("gain", 1.0)),
-            "stride": stride,
-            "prefetch": bool(state.get("prefetch", False))}
+            "stride": stride}
 
 
-def posed(cfg: dict, p: dict):
-    """cfg -> (a cfg that renders the pose, the Baked record). REST returns cfg untouched.
+def posed(cfg: dict, p: dict) -> dict:
+    """cfg + the page's pose state -> a cfg that RENDERS that pose. Pure knobs, no Blender.
 
-    THREE KNOBS MOVE TOGETHER and they have to. `model.blend` becomes the baked file;
-    `model.rest_pose` goes FALSE, because true clears the pose that was just baked in and
-    you would tune the standing shark while the page said SWIM_FAST; `model.frame` goes to
-    the pose's own frame, which changes no pixel (the baked file has no animation left) and
-    is the only place the stamped config gets to record WHICH frame you were looking at.
+    THREE KNOBS MOVE TOGETHER and they have to: `model.action` names the clip, `model.frame`
+    picks the frame of it, `model.pose_gain` amplifies it. Set the action and leave the frame
+    behind and you are looking at frame 1 of a thrash while the page's slider says 12.
 
-    PREFETCH is what makes the loop cheap: the whole strided loop bakes in the one Blender
-    launch this render already pays for, so the other nine frames cost 0.06 s each instead
-    of 0.41 s each.
+    Cheap enough to call on every slider tick, which is what lets quote() report the real
+    hash of the picture instead of promising one after the render.
     """
-    if p["clip"] == pose.REST:
-        return cfg, None
-    frames = [p["frame"]]
-    if p["prefetch"]:
-        frames += pose.loop_frames(p["clip"], p["stride"])
-    baked = pose.ensure(cfg, p["clip"], frames, p["gain"])
     cfg = {key: (list(v) if isinstance(v, list) else v) for key, v in cfg.items()}
-    cfg["model.blend"] = str(baked.paths[p["frame"]])
-    cfg["model.rest_pose"] = False
+    cfg["model.action"] = p["clip"]
+    if p["clip"] == pose.REST:
+        return cfg
+    cfg["model.pose_gain"] = p["gain"]
     cfg["model.frame"] = p["frame"]
-    return cfg, baked
+    return cfg
 
 
 def pose_report(p: dict) -> dict:
@@ -357,9 +414,14 @@ def pose_report(p: dict) -> dict:
             "loop_seconds": round(len(loop) * p["stride"] / pose.FPS, 3)}
 
 
-def pose_warnings(cfg: dict, p: dict, committed: dict, baked=None) -> list[str]:
-    """What is legal, posed, and will bite. The pivot one is the whole reason C.5 has a
-    tuning task at all."""
+def pose_warnings(cfg: dict, p: dict, committed: dict, mismatches=()) -> list[str]:
+    """What is legal, posed, and will bite AND is not already in ac.warnings().
+
+    Only two things qualify. The pivot one is the whole reason C.5 has a tuning task at all,
+    and it can only be asked here because it is about the value being INHERITED from the
+    committed file -- the schema has no idea what you started from. The other is the clip
+    table drifting from the model, which only a render can report.
+    """
     if p["clip"] == pose.REST:
         return []
     out = []
@@ -371,12 +433,29 @@ def pose_warnings(cfg: dict, p: dict, committed: dict, baked=None) -> list[str]:
             "cell if it is off. Find the flop's own, the same way: watch the nose across "
             "the columns, not one frame."
             % (", ".join("%.4g" % v for v in cfg["model.pivot"])))
-    if p["gain"] > pose.GAIN_SAFE:
-        out.append(
-            "pose gain %.2f is past the %.1fx the rig was MEASURED to survive. Above it, "
-            "check the neck and the tail tip for mesh tearing before you believe the frame"
-            % (p["gain"], pose.GAIN_SAFE))
-    out += ["pose table vs the model: " + m for m in (baked.mismatches if baked else [])]
+    out += ["clip table vs the model: " + m for m in (mismatches or ())]
+    return out
+
+
+def render_warnings(log: str) -> list:
+    """WARN lines the RENDER itself produced, lifted out of the harness output for the box.
+
+    Some things only a render can know, and they are the ones that bite hardest. At roll 85
+    with the bounce on, the posed body reaches 0.28 tiles BELOW the ground plane -- the shadow
+    catcher sits at z=0 and quietly slices him there, which reads as a bad shadow rather than
+    as a body in the wrong place, and no amount of config checking can see it because it
+    depends on the pose, the roll and the scale together. render_jamal prints it; art.py now
+    lets it through however quiet the pass is; this puts it where the other warnings are,
+    because the log panel is a <details> nobody opens while dragging a slider.
+
+    Deduped: four jobs over two passes say the same thing four times.
+    """
+    seen, out = set(), []
+    for line in log.splitlines():
+        line = line.strip()
+        if line.startswith("WARN ") and line not in seen:
+            seen.add(line)
+            out.append("the render says: " + line[len("WARN "):])
     return out
 
 
@@ -410,9 +489,22 @@ def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
     Seeded PAST a slider end is the other quiet one: the page paints 1.5 in the number box,
     the range input pins itself at 1.2, and the render clamps to 1.2 -- three numbers, one
     of them a lie. Clamp here instead and return what got moved so the terminal can say so.
+
+    AND THE EXTRAS ARE VALIDATED, which they were not until C.5 gave the schema its second
+    enum. `committed` arrives already resolved, so updating a dict with `{"model.action":
+    "SWIM_FASTT"}` writes straight past every check ac.resolve() does: the name is spelled
+    right, so the unknown-knob suggester never sees it, and the tuner would boot, print the
+    typo in its own header note, and hand you a Blender traceback on the first render. Round
+    the extras back through resolve() -- one call, artconfig's own message, before the server
+    binds a port. art.py has always behaved this way because its --set goes through resolve;
+    this is the tuner catching up rather than a new rule.
     """
     slider_keys = {k.key for k in KNOBS}
     extra = {key: value for key, value in sets.items() if key not in slider_keys}
+    if extra:
+        # env={} because model.blend is already resolved in `committed` and this call is a
+        # type/enum check on the extras, not a second config to render from.
+        ac.resolve(ac.unflatten(extra), env={})
     committed = dict(committed)
     committed.update(extra)
     start = apply_values(committed, values_of(committed))
@@ -434,39 +526,17 @@ def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
     return committed, start, note, pinned
 
 
-def pose_lines(p: dict, tuner_hash: str = "") -> list[str]:
-    """The pose, as TOML that is COMMENTED OUT on purpose, plus why.
-
-    The two keys do not exist in artconfig.SCHEMA yet (see THE TWO KNOBS THAT SHOULD EXIST),
-    and an unknown knob is fatal there -- correctly, because a knob that silently does
-    nothing wastes a morning. So the block names them exactly, spells the values you found,
-    and says what to delete when they land. A paste that errors would be worse than a paste
-    that is inert, and a paste that SILENTLY rendered the rest shark would be worse than
-    both: `rest_pose = false` alone does not select this clip, it unmutes all five at once.
-    """
-    if p["clip"] == pose.REST:
-        return []
-    c = pose.clip_of(p["clip"])
-    lines = [
-        "",
-        "# ---- THE POSE, WHICH THIS FILE CANNOT SAY YET -----------------------------------",
-        "# `action` and `pose_gain` are NOT knobs in artconfig.SCHEMA; tune.py baked them into",
-        "# a temp .blend instead. Uncommenting them as they stand is a fatal `unknown knob`,",
-        "# and `rest_pose = false` on its own does NOT select this clip -- it unmutes all five",
-        "# NLA tracks at once. TODO(C.5): land model.action + model.pose_gain, then drop the #.",
-        '# action = "%s"   # %s, frame %d of %d-%d @ %d fps (%.2f s cycle)'
-        % (c.id, c.action, p["frame"], c.lo, c.hi, pose.FPS, c.seconds),
-        "# pose_gain = %s" % _num(p["gain"]),
-        "# rest_pose = false   # the bake needs this; true CLEARS the pose it baked",
-        "# frame = %d" % p["frame"],
-    ]
-    if tuner_hash:
-        lines.append(
-            "# the `config` hash above is the hash of THESE LINES, which are the rest shark."
-            "\n#   the posed image's own hash is %s and it is not reproducible from this file"
-            "\n#   until the knobs land, because the pose lives in the .blend's content digest."
-            % tuner_hash)
-    return lines
+def _toml_scalar(v) -> str:
+    """One TOML value. Bools and strings are values too, now that the export carries
+    `action = "SWIM_FAST"` and `reparent_head = true` -- `_num` on either of those is a
+    TypeError, and on a bool it is the number 1."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return '"%s"' % v
+    if isinstance(v, int) and not isinstance(v, float):
+        return str(v)
+    return _toml_value(v)
 
 
 def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None,
@@ -475,22 +545,44 @@ def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None
     the file's comments, and NEVER `model.blend` -- that path is machine-local and
     gitignored, and pasting it would break the config for everyone else.
 
+    GROUPED BY TABLE, because the export outgrew `[model]`: the bounce is its own table and
+    emitting `height = 0.3` under `[model]` would be a fatal `unknown knob model.height` in
+    the file it lands in. The groups come out in TOML_KEYS order, one header per table.
+
     REPLACE, do not append. Both paste modes were checked against `art.py --compare` and
     both come back with the hash in the header; appending to the end of the file does not,
     it is `tomllib.TOMLDecodeError: Cannot declare ('model',) twice` and it arrives as a
     raw traceback. Hence the second comment line -- the instruction rides WITH the lines,
     because the clipboard is the only part of this that reaches the other window.
+
+    `p` and `tuner_hash` are still taken because the page passes them, and they still do one
+    job each: the pose state is what `cfg` was posed FROM (so the block can say what clip
+    this is in words), and the tuner hash rides in a comment when the picture on screen was
+    rendered at tuner-only options. Neither is a knob any more -- the pose is in `cfg`.
     """
+    p = normalize_pose(p)
+    clip = pose.clip_of(cfg["model.action"])
     head = ["# tuned in render/tune.py %s -- config %s"
-            % (time.strftime("%Y-%m-%d %H:%M"), paste_hash),
-            "# REPLACE the [model] table in render/jamaltron.toml, or just these five keys "
-            "inside it. Appending is a TOML error (model declared twice)."]
+            % (time.strftime("%Y-%m-%d %H:%M"), paste_hash)]
+    if clip is not None:
+        head.append("# %s (%s), frame %d of %d-%d @ %d fps (%.2f s cycle), gain %s"
+                    % (clip.id, clip.action, cfg["model.frame"], clip.lo, clip.hi, pose.FPS,
+                       clip.seconds, _num(cfg["model.pose_gain"])))
+    head.append("# REPLACE these tables in render/jamaltron.toml, or just these keys inside "
+                "them. Appending is a TOML error (model declared twice).")
     if note:
         head.append("# " + note)
-    head.append("[model]")
+    table = None
     for key in TOML_KEYS:
-        head.append("%s = %s" % (key.split(".", 1)[1], _toml_value(cfg[key])))
-    head += pose_lines(normalize_pose(p), tuner_hash)
+        section, leaf = key.split(".", 1)
+        if section != table:
+            head.append("[%s]" % section)
+            table = section
+        head.append("%s = %s" % (leaf, _toml_scalar(cfg[key])))
+    if tuner_hash and tuner_hash != paste_hash:
+        head.append("# the picture this came off hashes %s -- the difference is the tuner's "
+                    "own render options (rotations, resolution, shadow), not the pose."
+                    % tuner_hash)
     return "\n".join(head) + "\n"
 
 
@@ -522,26 +614,36 @@ class Tuner:
     # -- the cheap path: numbers and text, no Blender ---------------------------------
 
     def quote(self, values: dict, opts: dict, p: dict | None = None) -> dict:
-        """Everything a slider move can answer without rendering: hashes, the derived
-        dimensions, the TOML to paste, and the standing knob warnings.
+        """Everything a slider move can answer without rendering: both hashes, the derived
+        dimensions, the TOML to paste, and every warning.
 
-        ONE THING IT CANNOT ANSWER in a posed state: the tuner hash. That hash is over a
-        .blend that has not been baked yet, and quote() runs on every tick of every slider --
-        baking here would put a Blender launch behind a drag. It reports PENDING_HASH and the
-        render, which bakes anyway, fills the real one in.
+        IT CAN ANSWER THE TUNER HASH NOW, pose and all, because posing is setting three knobs
+        rather than baking a .blend. That used to be a promise the page could only keep after
+        a render.
+
+        `paste_cfg` carries the pose and NOT the tuner's three render options, which is
+        exactly the config the exported block describes; `cfg` adds the options and is what
+        renders. Hence two hashes, and the header names both.
         """
         p = normalize_pose(p)
-        paste_cfg = apply_values(self.committed, values)
+        paste_cfg = posed(apply_values(self.committed, values), p)
+        # The rig fix rides with the POSE, not with the tuner's render options, because it is
+        # a knob the export has to carry. apply_opts sets it again from the same opts, so the
+        # two configs cannot disagree about it.
+        paste_cfg["model.reparent_head"] = reparent_of(paste_cfg, opts)
         cfg = apply_opts(paste_cfg, opts)
         paste_hash = ac.config_hash(paste_cfg)
+        tuner_hash = ac.config_hash(cfg)
         d = ac.derived(cfg)
         return {
-            "tuner_hash": PENDING_HASH if p["clip"] != pose.REST else ac.config_hash(cfg),
+            "tuner_hash": tuner_hash,
             "paste_hash": paste_hash,
             "derived": {key: d[key] for key in
                         ("shark_length_tiles", "shark_width_tiles", "shark_height_tiles",
-                         "body_resolution_px", "body_px_per_tile")},
-            "toml": toml_block(paste_cfg, paste_hash, self.note, p),
+                         "body_resolution_px", "body_px_per_tile",
+                         "bounce_lift_tiles", "bounce_peak_tiles", "bounce_airtime_frames",
+                         "bounce_cycle_frames", "bounce_lift_up_screen_tiles")},
+            "toml": toml_block(paste_cfg, paste_hash, self.note, p, tuner_hash),
             "pose": pose_report(p),
             "view": {"name": view_of(opts), "frames": view_frames(cfg, opts)},
             "warnings": ac.warnings(cfg) + pose_warnings(cfg, p, self.committed),
@@ -585,20 +687,14 @@ class Tuner:
         try:
             quote = self.quote(values, opts, p)
             p = normalize_pose(p)
-            cfg = apply_opts(apply_values(self.committed, values), opts)
+            cfg = apply_opts(posed(apply_values(self.committed, values), p), opts)
             frames = view_frames(cfg, opts)
             # stdout AND stderr: art.py reports through the first and blender's own
             # failure text goes to the second, and the failure text is the half you need.
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                cfg, baked = posed(cfg, p)
-                if baked is not None:
-                    print("  pose    %s@%d gain %.2f  %d baked / %d cached in %.2fs  %s"
-                          % (p["clip"], p["frame"], p["gain"], len(baked.baked),
-                             len(baked.cached), baked.seconds, baked.paths[p["frame"]].name))
-                    if baked.log:
-                        print("  " + baked.log.replace("\n", "\n  "))
-                bodydir, _ = art.render_pass(cfg, "body", frames,
-                                             cfg["render.preview_samples"], jobs=self.jobs)
+                bodydir, body_stats = art.render_pass(cfg, "body", frames,
+                                                      cfg["render.preview_samples"],
+                                                      jobs=self.jobs)
                 passes = [("body", cfg["render.engine"], cfg["render.preview_samples"])]
                 shadowdir = None
                 if cfg["compare.show_shadow"]:
@@ -617,26 +713,29 @@ class Tuner:
                 "image": "/sheet?f=" + pathlib.Path(png).name,
                 "seconds": round(time.time() - t0, 2),
                 "frames": frames,
-                # The hash of what is ON SCREEN, now that the pose has been baked and the
-                # digest of the baked file is knowable. quote() could only say "pending".
-                "tuner_hash": ac.config_hash(cfg),
-                "warnings": ac.warnings(cfg) + pose_warnings(cfg, p, self.committed, baked),
-                "bake": ({"seconds": baked.seconds, "baked": baked.baked,
-                          "cached": baked.cached, "box_bu": baked.box_bu.get(p["frame"], []),
-                          "mismatches": baked.mismatches}
-                         if baked is not None else None),
+                # The render's OWN warnings ride with the config's. A buried body or a
+                # clipped frame is only knowable from the pixels, and it must not be a line
+                # in a <details> nobody opens mid-drag.
+                "warnings": (ac.warnings(cfg) + pose_warnings(cfg, p, self.committed)
+                             + render_warnings(buf.getvalue())),
+                # The box of what was RENDERED, in tiles, unioned over the directions on
+                # screen. artconfig.derived() reports the REST box off a constant, which is
+                # right for the standing shark and wrong the moment he thrashes -- and the
+                # bounce grows it, so the page has to say both.
+                "box_tiles": body_stats.get("box_tiles"),
+                # Whether a Blender actually ran. If every frame came from the cache the box
+                # was not re-measured and the render printed no warnings of its own -- the
+                # page has to say that rather than leave the PREVIOUS render's box sitting
+                # under a different picture. (Persisting the box per frame in the pass dir
+                # would fix it properly; it needs a per-frame box out of render_jamal, which
+                # is more than this phase should touch.)
+                "rendered": body_stats.get("rendered", 0),
                 "coverage_line": cov.get("line", ""),
                 "coverage": cov.get("per_frame", []),
                 "selfcheck": sheets.selfcheck_line(blob.get("mount_selfcheck", {"ran": False,
                                                             "why": "not in sidecar"})),
                 "log": buf.getvalue(),
             })
-            if baked is not None:
-                # Re-issued with the real hash, which quote() did not have: the export's own
-                # caveat line names the posed hash, so writing it before the bake would name
-                # the wrong one.
-                out["toml"] = toml_block(apply_values(self.committed, values),
-                                         out["paste_hash"], self.note, p, out["tuner_hash"])
         except (Exception, SystemExit) as exc:                 # SystemExit: art.py's own
             out = dict(quote or {})                            # blender-failed path
             out.update({
@@ -847,7 +946,7 @@ PAGE = r"""<!doctype html>
             <span class="dim" id="frameof"></span></span></label>
         <input type="range" id="r_frame" step="1">
         <div class="ends"><span id="framelo">-</span>
-          <span class="hot">no knob for this yet</span><span id="framehi">-</span></div>
+          <span class="dim">model.frame</span><span id="framehi">-</span></div>
         <div class="hint">Which frame of the selected clip, at 24 fps. A STILL cannot tell a
           flop from a shark swimming sideways -- frame 7 of either is the same picture -- so
           scrub it, then hit PLAY and judge the motion.</div>
@@ -857,12 +956,17 @@ PAGE = r"""<!doctype html>
           <span class="val"><input type="number" id="n_gain"><span class="dim">x</span></span></label>
         <input type="range" id="r_gain">
         <div class="ends"><span>as bought</span>
-          <span class="hot">no knob for this yet</span><span>thrashing &rarr;</span></div>
-        <div class="hint">Every bone's rotation pushed away from rest by this factor, baked
-          per frame. 1.0 is the clip as the seller shipped it, and at 1.0 the swim is too
-          POLITE to read as a flop. MEASURED: the rig survives 2.6x with no mesh tearing --
-          past that, check the neck and the tail tip before you believe the frame.</div>
+          <span class="dim">model.pose_gain</span><span>thrashing &rarr;</span></div>
+        <div class="hint">Every bone's rotation pushed away from rest by this factor. 1.0 is
+          the clip as the seller shipped it and 1.0 is what SHIPS -- at roll 80-90 the bounce
+          carries the thrash, so the gain a roll-30 flop needed is not needed here. The knob
+          is here so gain can be ruled OUT by looking rather than assumed. MEASURED: the rig
+          survives 2.6x with no mesh tearing -- past that, check the neck and the tail tip
+          before you believe the frame.</div>
       </div>
+      <label class="opts" style="margin-top:4px"><input type="checkbox" id="reparent">
+        reparent HEAD to SPINE_01 <span class="dim">(C.18a: HEAD is a ROOT bone, so the
+        snout is welded to world space until this is on)</span></label>
       <div class="dim" id="posenote"></div>
     </div>
     <div class="panel" id="knobs"></div>
@@ -877,6 +981,8 @@ PAGE = r"""<!doctype html>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="rerender">re-render</button>
+        <button id="flop" title="SWIM_FAST, roll 85, gain 1.0, bounce 0.3, HEAD reparented,
+broadside. Leaves scale / girth / pivot / pitch where you have them.">flop preset</button>
         <button id="reset">reset to committed</button>
         <button id="copy">copy TOML</button>
       </div>
@@ -960,7 +1066,7 @@ function rangeFrame() {
   $("r_gain").disabled = $("n_gain").disabled = !c;
   $("clipnote").innerHTML = c
     ? `<span class="hot">${c.action}</span> &middot; bones ${c.bones}<br>${c.note}`
-    : "The shipped standing shark: no action, no bake, rest pose. Pick a clip to flop him.";
+    : "The shipped standing shark: model.action = rest. Pick a clip to flop him.";
   paintPose();
 }
 
@@ -1001,17 +1107,27 @@ function paintKnobs() {
                                 $("n_" + k.id).value = values[k.id]; }
   $("rotations").value = opts.rotations; $("res").value = opts.res;
   $("shadow").checked = opts.shadow; $("view").value = opts.view;
+  $("reparent").checked = !!opts.reparent;
 }
 $("rotations").onchange = e => { opts.rotations = +e.target.value; touched(); quote(); render(); };
 $("res").onchange = e => { opts.res = +e.target.value; touched(); quote(); render(); };
 $("shadow").onchange = e => { opts.shadow = e.target.checked; touched(); quote(); render(); };
+$("reparent").onchange = e => { opts.reparent = e.target.checked; touched(); quote(); render(); };
 $("view").onchange = e => { opts.view = e.target.value; touched(); quote(); render(); };
 $("rerender").onclick = () => render();
+// The C.5 recipe in one click -- roll 85, SWIM_FAST, gain 1.0, bounce 0.3, HEAD reparented,
+// broadside. Only those: scale, girth, pivot and pitch stay where they are, because half the
+// time they are mid-tuning and a preset that reverted them is one nobody presses twice.
+$("flop").onclick = () => { Object.assign(values, BOOT.flop.values);
+                            Object.assign(posest, BOOT.flop.pose);
+                            Object.assign(opts, BOOT.flop.opts);
+                            touched(); paintKnobs(); rangeFrame(); quote(); render(); };
 // Reset means the COMMITTED config, and the committed config is the standing shark -- so it
 // drops the pose too. Leaving a clip selected would put you back on sliders that belong to a
 // pose you just threw away.
 $("reset").onclick = () => { Object.assign(values, BOOT.committed);
                              Object.assign(posest, BOOT.pose);
+                             Object.assign(opts, BOOT.opts);
                              touched(); paintKnobs(); rangeFrame();
                              quote(); render(); };
 
@@ -1093,7 +1209,7 @@ async function startPlay() {
     const t0 = performance.now();
     try {
       res = await post("/render", {seq: ++seq, session: SESSION,
-                                   pose: Object.assign({}, posest, {frame: f, prefetch: true})});
+                                   pose: Object.assign({}, posest, {frame: f})});
     } catch (e) { fail("server unreachable: " + e); stopPlay(true); return; }
     if (gen !== fillGen) return;
     if (res.error || res.superseded || !res.ok) {
@@ -1227,18 +1343,27 @@ function apply(res, rtt) {
     `seq ${res.seq} | ${res.frames.length} ${res.view ? res.view.name : "wheel"} dirs `
     + `${(res.frames || []).join(",")} @ ${res.derived.body_resolution_px}px `
     + `(${res.derived.body_px_per_tile.toFixed(1)} px/tile) | server ${res.seconds}s`
-    + `${res.bake ? " (bake " + res.bake.seconds + "s)" : ""}, `
-    + `round trip ${rtt.toFixed(2)}s | ${res.selfcheck.startsWith("mount self-check PASS")
+    + `, round trip ${rtt.toFixed(2)}s | ${res.rendered ? res.rendered + " frame(s) rendered"
+       : "all cached"} | ${res.selfcheck.startsWith("mount self-check PASS")
        ? "selfcheck PASS" : res.selfcheck}`;
-  // The POSED box, measured at bake time. artconfig.derived() reports the REST box from a
-  // constant -- correct for the standing shark, and wrong the moment he thrashes -- so say
-  // both and let the frame-box question be asked of the right one.
-  if (res.bake && (res.bake.box_bu || []).length === 3) {
-    const b = res.bake.box_bu, r0 = BOOT.model_bu, across = b[1] / r0[1];
-    lastBox = `<br>posed box <span class="num">${b.map(v => v.toFixed(2)).join(" &times; ")
-      }</span> BU vs rest ${r0.map(v => v.toFixed(2)).join(" &times; ")} &mdash; <span class="${
-      across > 1.25 ? "hot" : "num"}">${(across * 100 - 100).toFixed(0)}%</span> wider across.`;
-  } else if (!(res.pose && res.pose.posed)) { lastBox = ""; }
+  // The box of what was RENDERED, in tiles, measured off the evaluated mesh. derived()
+  // reports the REST box from a constant -- correct for the standing shark, and wrong the
+  // moment he thrashes -- so say both and let the frame-box question be asked of the right
+  // one. This is the number C.17's pivot session and the bounce's canvas cost both need.
+  const bt = res.box_tiles;
+  if (bt && bt.length === 3) {
+    const size = bt.map(a => a[1] - a[0]);
+    lastBox = `<br>rendered box <span class="num">${size.map(v => v.toFixed(2)).join(
+      " &times; ")}</span> tiles, z ${bt[2][0].toFixed(2)}..${bt[2][1].toFixed(2)}${
+      res.derived.bounce_lift_tiles > 0
+        ? ` &middot; lifted <span class="hot">${res.derived.bounce_lift_tiles.toFixed(3)
+          }</span> tiles this frame` : ""}`;
+  } else if (res.pose && res.pose.posed) {
+    // No box came back, which means no Blender ran: every frame was cached. Keeping the last
+    // render's box here would put roll 90's numbers under a roll 85 picture.
+    lastBox = "<br><span class=\"dim\">box not re-measured &mdash; every frame came out of "
+              + "the cache, so the render printed no report of its own</span>";
+  } else { lastBox = ""; }
   paintPose();
   setStatus(`ok in ${rtt.toFixed(2)}s`);
 }
@@ -1271,7 +1396,10 @@ def page(tuner: Tuner) -> str:
                   for k in KNOBS],
         "start": values_of(tuner.start),
         "committed": values_of(tuner.committed),
-        "opts": DEFAULT_OPTS,
+        # `reparent` is seeded off the config rather than off DEFAULT_OPTS, so
+        # `--set model.reparent_head=true` boots with the box ticked instead of being
+        # silently turned back off by the page's own default.
+        "opts": dict(DEFAULT_OPTS, reparent=tuner.committed["model.reparent_head"]),
         "rotation_choices": list(ROTATION_CHOICES),
         "res_choices": list(RES_CHOICES),
         "view_choices": list(VIEW_CHOICES),
@@ -1280,8 +1408,9 @@ def page(tuner: Tuner) -> str:
         "mount_span_y": list(MOUNT_SPAN_Y),
         # The pose half. The clip table is pose.CLIPS itself, not a copy of it, so the
         # select, the frame slider's range and every duration on the page all come off the
-        # same five records the bake verifies against the model.
+        # same five records every posed render re-checks against the model.
         "pose": DEFAULT_POSE,
+        "flop": FLOP_PRESET,
         "rest": pose.REST,
         "fps": pose.FPS,
         "clips": [{"id": c.id, "action": c.action, "lo": c.lo, "hi": c.hi, "span": c.span,
@@ -1354,10 +1483,10 @@ def main(argv=None):
           "  frames and sheets land in %s (gitignored). Every distinct value is its own\n"
           "  cache dir: ~2.8 MB per change, ~13 MB with the shadow on. A long session is\n"
           "  hundreds of MB you can delete whenever. Ctrl-C to stop.\n"
-          "  POSED frames bake a temp .blend into %s (%.0f MB there now, pruned at %d files).\n"
-          "  That is OUTSIDE the repo on purpose -- a baked pose is still the licensed model."
-          % (url, tuner.jobs, art.out_root(committed), pose.cache_root(),
-             pose.cache_bytes() / 1e6, pose.CACHE_MAX))
+          "  A POSE is knobs (model.action / pose_gain / frame, plus [bounce]), so a flop\n"
+          "  frame caches and stamps exactly like a standing one -- nothing is written\n"
+          "  outside %s and the licensed model is never copied."
+          % (url, tuner.jobs, art.out_root(committed), art.out_root(committed)))
     if not args.no_open:
         threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     try:

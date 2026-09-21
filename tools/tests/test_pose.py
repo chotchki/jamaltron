@@ -1,23 +1,25 @@
-"""The pose baker's promises, with no Blender and no model anywhere in the loop.
+"""The clip table's promises, with no Blender and no model anywhere in the loop.
 
 Three of them are load bearing and the rest is arithmetic:
 
- 1. THE CLIP TABLE CANNOT LIE FOR LONG. It is hardcoded knowledge about a file this repo
-    does not ship, so pose.verify_clips() checks it against what Blender reports on every
-    bake. These tests pin the checker, because a checker that cannot fail is decoration.
- 2. A BAKED POSE NEVER LANDS IN THE REPO. It is the licensed mesh with its bones moved --
-    derived, still licensed -- and the one rule the model has is that it does not enter the
-    repo. That is one assert, and it is the most important one in this file.
- 3. A LOOP STARTS WHERE THE CLIP STARTS. Every stride keeps frame 1, or the loop stutters
-    at the seam that the stale-final-keyframe drop exists to remove.
-"""
+ 1. THE TABLE CANNOT LIE FOR LONG. It is hardcoded knowledge about a file this repo does not
+    ship, so pose.verify_clips() checks it against what Blender reports on every posed
+    render. These tests pin the checker, because a checker that cannot fail is decoration.
+ 2. THE SCHEMA AND THE TABLE AGREE ON WHAT A CLIP IS CALLED. `model.action` takes its legal
+    values from ACTION_CHOICES; a clip that is in the table and not in the enum is a clip you
+    cannot select, and one in the enum and not the table is a fatal render halfway through.
+ 3. A LOOP STARTS WHERE THE CLIP STARTS. Every stride keeps frame 1, or the loop stutters at
+    the seam that the stale-final-keyframe drop exists to remove.
 
-import pathlib
+This module used to bake poses into temp .blends because the harness had no knob for which
+action. The knobs landed (artconfig.SCHEMA: model.action / model.pose_gain), so the bake and
+its cache are gone and the tests that pinned "a baked pose never lands in the repo" went with
+them -- there is nothing to write any more. The rule they protected is now structural: the
+only thing that ever opens the model is Blender, and it opens the bought file read-only.
+"""
 
 from render import artconfig as ac
 from render import pose
-
-REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
 def test_the_clip_table_is_internally_consistent():
@@ -28,6 +30,25 @@ def test_the_clip_table_is_internally_consistent():
         assert c.span == c.hi - c.lo + 1
         assert abs(c.seconds - c.span / pose.FPS) < 1e-9
         assert c.id != pose.REST, "a clip cannot be called rest; rest means no clip"
+
+
+def test_the_schema_offers_exactly_the_clips_the_table_knows():
+    """Two lists of the same thing is one list that rots. `model.action`'s enum IS this
+    table, so a clip added here is selectable from the CLI and the tuner the same minute."""
+    assert ac.ENUMS["model.action"] is pose.ACTION_CHOICES
+    assert list(pose.ACTION_CHOICES) == [pose.REST] + [c.id for c in pose.CLIPS]
+    assert ac.SCHEMA["model.action"][1] == pose.REST, "the schema must default to no pose"
+    for name in pose.ACTION_CHOICES:
+        ac.resolve({"model": {"action": name}}, env={})          # would raise on a bad enum
+
+
+def test_an_action_the_table_does_not_know_is_fatal_not_silent():
+    """A misspelled clip that rendered the rest shark would be the worst outcome: the sheet
+    looks plausible and the footer names a pose that never happened."""
+    import pytest
+    with pytest.raises(ac.ConfigError) as exc:
+        ac.resolve({"model": {"action": "SWIM_FASTT"}}, env={})
+    assert "SWIM_FAST" in str(exc.value)
 
 
 def test_verify_clips_catches_a_range_that_moved_under_it():
@@ -52,38 +73,6 @@ def test_verify_clips_reads_the_dropped_range_not_the_raw_one():
     raw_only = {c.action: {"raw": [c.lo, c.hi + 1], "dropped": [c.lo, c.hi]}
                 for c in pose.CLIPS}
     assert pose.verify_clips(raw_only) == []
-
-
-def test_a_baked_pose_never_lands_in_the_repo(monkeypatch):
-    """The model is licensed and gitignored. A baked pose is the same mesh with its bones
-    moved, so it lives in $TMPDIR and nowhere near here."""
-    monkeypatch.delenv(pose.CACHE_ENV, raising=False)
-    cfg = ac.resolve(env={})
-    p = pose.baked_path(cfg, "SWIM_FAST", 7, 2.0)
-    assert REPO not in p.parents, p
-    assert pose.cache_root() not in REPO.parents
-    assert p.suffix == ".blend" and "SWIM_FAST" in p.name and "f007" in p.name
-
-
-def test_the_bake_key_moves_for_everything_the_POSE_depends_on():
-    base = ("sha256:abc", "ArmatureAction.002", 7, 2.0, "HAMMERHEAD_RIG", True)
-    key = pose.bake_key(*base)
-    for i, other in enumerate(("sha256:def", "ArmatureAction.004", 8, 2.5, "OTHER_RIG",
-                               False)):
-        args = list(base)
-        args[i] = other
-        assert pose.bake_key(*args) != key, "argument %d does not move the key" % i
-    assert pose.bake_key(*base) == key, "not deterministic"
-
-
-def test_the_bake_key_does_not_move_for_anything_applied_at_render_time():
-    """Roll, scale, girth, pivot and the camera are build_rig's job, not the bake's. If they
-    keyed a baked file, every drag of the roll slider would throw away the whole loop."""
-    cfg = ac.resolve(env={})
-    rolled = dict(cfg, **{"model.rotation": [30.0, 0.0, 0.0], "model.scale": 0.9,
-                          "model.girth": 1.8, "model.pivot": [-0.9, 0.0, 0.4]})
-    assert pose.baked_path(cfg, "SWIM_FAST", 7, 2.0) == pose.baked_path(rolled, "SWIM_FAST",
-                                                                       7, 2.0)
 
 
 def test_clamp_frame_holds_the_clips_own_range():
@@ -128,28 +117,28 @@ def test_the_loop_plays_at_the_clips_own_tempo():
     assert abs(len(frames) * pose.loop_ms(2) / 1000.0 - pose.clip_of("SWIM_FAST").seconds) < 1e-9
 
 
-def test_prune_drops_the_oldest_and_keeps_the_rest(tmp_path):
-    import os
-    root = tmp_path / "cache" / "abc123"
-    root.mkdir(parents=True)
-    made = []
-    for i in range(10):
-        p = root / ("f%02d.blend" % i)
-        p.write_bytes(b"x")
-        os.utime(p, (1_600_000_000 + i, 1_600_000_000 + i))
-        made.append(p)
-    gone = pose.prune(tmp_path / "cache", keep=4)
-    assert [p.name for p in gone] == [p.name for p in made[:6]]
-    assert sorted(p.name for p in root.glob("*.blend")) == [p.name for p in made[6:]]
-    assert pose.prune(tmp_path / "cache", keep=4) == [], "a second prune has nothing to do"
-    assert pose.prune(tmp_path / "does-not-exist") == []
+def test_the_table_digest_moves_for_a_range_and_not_for_a_comment():
+    """It is a label for reports, so it has to track what the table CLAIMS about the model
+    and ignore how the claim is worded -- a re-worded note must not look like a new table."""
+    before = pose.table_digest()
+    reworded = pose.Clip("SWIM_FAST", "ArmatureAction.002", 1, 20, "SPINE", "different prose")
+    moved = pose.Clip("SWIM_FAST", "ArmatureAction.002", 1, 21, "SPINE", "x")
+    original = pose.CLIPS
+    try:
+        pose.CLIPS = (reworded,) + original[1:]
+        assert pose.table_digest() == before
+        pose.CLIPS = (moved,) + original[1:]
+        assert pose.table_digest() != before
+    finally:
+        pose.CLIPS = original
+    assert pose.table_digest() == before
 
 
-def test_rest_bakes_nothing_and_never_launches_blender(monkeypatch):
-    """Selecting the rest pose has to be the shipped render, byte for byte -- no temp file,
-    no bake, nothing between the committed config and the sprites that already ship."""
-    monkeypatch.setattr(pose.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("rest must not launch Blender")))
-    out = pose.ensure(ac.resolve(env={}), pose.REST, [1, 2, 3], gain=2.0)
-    assert out.paths == {} and out.baked == [] and out.clip_id == pose.REST
-    assert out.ok
+def test_pose_imports_no_sibling_and_needs_no_blender():
+    """artconfig imports pose (for the action enum), so pose importing artconfig would be a
+    cycle -- and `bpy` in here would make the schema unloadable outside Blender."""
+    source = (pose.__file__ and open(pose.__file__).read()) or ""
+    body = "\n".join(line for line in source.splitlines()
+                     if line.startswith(("import ", "from ")))
+    assert "bpy" not in body and "mathutils" not in body
+    assert "render" not in body, "pose.py must not import a sibling; artconfig imports IT"

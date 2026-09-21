@@ -80,15 +80,28 @@ def test_toml_export_round_trips_to_the_same_hash():
     assert ac.config_hash(full) == ac.config_hash(tuned)
 
 
-def test_toml_numbers_are_always_floats():
-    """`offset = [0, 0, 0.85]` parses, but it reads as an integer knob to the next person
-    and TOML's own types disagree with the schema's."""
+def test_every_exported_value_is_spelled_the_way_its_schema_type_reads():
+    """`offset = [0, 0, 0.85]` parses, but it reads as an integer knob to the next person and
+    TOML's own types disagree with the schema's -- so a float knob always carries a point.
+    The export also carries a string, a bool and an INT knob now (`action`, `reparent_head`,
+    `frame`), and `frame = 12.0` would be a fatal `expected an integer` in the file it is
+    pasted into. One rule per type, checked against the schema rather than by eye."""
     cfg = tune.apply_values(ac.load(), {"pitch": 0.0, "girth": 1.0})
-    for line in tune.toml_block(cfg, "deadbeef").splitlines():
-        if line.startswith("#") or "=" not in line:
-            continue
-        for number in line.partition("=")[2].strip(" []").split(","):
-            assert "." in number or "e" in number, line
+    lines = {line.partition("=")[0].strip(): line.partition("=")[2].strip()
+             for line in tune.toml_block(cfg, "deadbeef").splitlines()
+             if "=" in line and not line.startswith("#")}
+    for key in tune.TOML_KEYS:
+        kind = ac.SCHEMA[key][0]
+        got = lines[key.split(".", 1)[1]]
+        if kind is str:
+            assert got.startswith('"') and got.endswith('"'), (key, got)
+        elif kind is bool:
+            assert got in ("true", "false"), (key, got)
+        elif kind is int:
+            assert got.isdigit(), (key, got)
+        else:
+            for number in got.strip(" []").split(","):
+                assert "." in number or "e" in number, (key, got)
 
 
 def test_toml_never_exports_the_machine_local_model_path():
@@ -211,7 +224,8 @@ def test_export_tells_you_to_replace_and_not_append():
     only part of this that reaches the other window."""
     text = tune.toml_block(ac.load(), "deadbeef")
     head = "\n".join(line for line in text.splitlines() if line.startswith("#"))
-    assert "REPLACE" in head and "[model]" in head
+    assert "REPLACE" in head
+    assert "[model]" in text and "[bounce]" in text, "the export spans two tables now"
     assert "ppend" in head, "say what goes wrong if you append it"
 
 
@@ -258,10 +272,12 @@ def test_post_refuses_a_body_that_is_not_an_object():
 
 # ---------------------------------------------------------------------------- C.5: poses
 #
-# The flop half of the page, still with no Blender in the loop. The seam being pinned here
-# is that `model.action` and `model.pose_gain` DO NOT EXIST in the schema yet: what the page
-# tunes is baked into a temp .blend, and what it exports has to say so rather than emitting
-# two keys that would be a fatal `unknown knob` in the file they are pasted into.
+# The flop half of the page, still with no Blender in the loop. The seam this section used to
+# pin was that `model.action` and `model.pose_gain` DID NOT EXIST: the page baked the pose
+# into a temp .blend and the export had to emit two COMMENTED keys so a paste would not be a
+# fatal `unknown knob`. The knobs landed, so what is pinned now is the opposite promise --
+# the page sets knobs, the export is TOML you paste as-is, and the hash on screen is the hash
+# of the picture.
 
 
 def test_pose_falls_back_instead_of_rendering_something_misleading():
@@ -270,12 +286,22 @@ def test_pose_falls_back_instead_of_rendering_something_misleading():
     junk = tune.normalize_pose({"clip": "../../etc/passwd", "frame": "x", "gain": [2],
                                 "stride": None})
     assert junk == {"clip": tune.pose.REST, "frame": 1, "gain": 1.0,
-                    "stride": tune.DEFAULT_POSE["stride"], "prefetch": False}
+                    "stride": tune.DEFAULT_POSE["stride"]}
     assert tune.normalize_pose(None)["clip"] == tune.pose.REST
     assert tune.normalize_pose("not a dict")["clip"] == tune.pose.REST
     got = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 999, "gain": 99, "stride": 99})
     assert got == {"clip": "SWIM_FAST", "frame": 20, "gain": tune.pose.GAIN_MAX,
-                   "stride": tune.STRIDE_MAX, "prefetch": False}
+                   "stride": tune.STRIDE_MAX}
+
+
+def test_a_clip_the_page_cannot_render_never_reaches_the_schema():
+    """normalize_pose is the only thing between a browser select and `model.action`, whose
+    enum is fatal. A junk clip has to become REST before it gets there, or a stale tab is a
+    500 instead of a standing shark."""
+    cfg = ac.load(env={})
+    out = tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FASTT", "frame": 7}))
+    assert out["model.action"] == tune.pose.REST
+    ac.resolve(ac.unflatten(out), env={})            # would raise on a bad enum
 
 
 def test_roll_is_rotation_zero_and_pitch_is_rotation_one():
@@ -285,11 +311,24 @@ def test_roll_is_rotation_zero_and_pitch_is_rotation_one():
     assert (by_id["roll"].key, by_id["roll"].index) == ("model.rotation", 0)
     assert (by_id["pitch"].key, by_id["pitch"].index) == ("model.rotation", 1)
     assert by_id["roll"].lo <= -90.0 and by_id["roll"].hi >= 90.0, "must reach both flanks"
+    # ... and it has to reach chotchki's 80-90 call plus the 105 where he starts reading as
+    # dead belly-up in water, because that is the range the sheets are judged over.
+    assert by_id["roll"].hi >= 105.0 and by_id["roll"].lo <= -105.0
 
 
 def test_the_roll_slider_writes_the_knob_the_renderer_reads():
     cfg = tune.apply_values(ac.load(), {"roll": 35.0, "pitch": -4.0})
     assert cfg["model.rotation"] == [35.0, -4.0, 0.0]
+
+
+def test_the_bounce_sliders_write_the_bounce_knobs():
+    """The height and the phase are the two C.5 asked for, and they are the two you cannot
+    pick without looking -- so they are sliders and not TOML-only."""
+    cfg = tune.apply_values(ac.load(), {"bounce_height": 0.3, "bounce_phase": 0.25})
+    assert cfg["bounce.height"] == 0.3 and cfg["bounce.phase"] == 0.25
+    by_id = {k.id: k for k in tune.KNOBS}
+    assert by_id["bounce_height"].lo == 0.0, "zero must be reachable: it is the default"
+    assert by_id["bounce_phase"].hi <= 1.0, "phase is a fraction of one cycle"
 
 
 def test_broadside_is_three_directions_around_east():
@@ -306,19 +345,26 @@ def test_broadside_is_three_directions_around_east():
     assert tune.view_of({"view": "sideways"}) == "wheel", "unknown view falls back"
 
 
-def test_a_posed_quote_does_not_guess_a_hash_it_cannot_know():
-    """The posed hash is over a .blend that has not been baked yet. Quoting a number here
-    would be provenance invented on the spot -- so it says so, unmistakably."""
-    cfg = ac.load()
+def test_a_posed_quote_names_the_hash_of_the_picture_it_is_showing():
+    """This is what landing the knobs bought. The pose used to live in a baked .blend that
+    did not exist until a render had run, so the header could only say "pending bake" -- a
+    tool refusing to guess at provenance. Now the pose IS the config, both hashes are
+    arithmetic, and they differ only by the tuner's own render options."""
+    cfg = ac.load(env={})
     tuner = tune.Tuner(cfg, cfg, jobs=1)
-    rest = tuner.quote(tune.values_of(cfg), {}, {"clip": tune.pose.REST})
-    posed = tuner.quote(tune.values_of(cfg), {}, {"clip": "SWIM_FAST", "frame": 7,
-                                                  "gain": 2.0})
-    assert len(rest["tuner_hash"]) == 12 and int(rest["tuner_hash"], 16) >= 0
-    assert posed["tuner_hash"] == tune.PENDING_HASH
-    assert " " in tune.PENDING_HASH, "must not be mistakable for a hash"
-    # the paste hash is knowable in both states: it is the hash of the five exported lines
-    assert posed["paste_hash"] == rest["paste_hash"]
+    values = tune.values_of(cfg)
+    rest = tuner.quote(values, {}, {"clip": tune.pose.REST})
+    posed = tuner.quote(values, {}, {"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
+    for q in (rest, posed):
+        assert len(q["tuner_hash"]) == 12 and int(q["tuner_hash"], 16) >= 0
+        assert len(q["paste_hash"]) == 12 and int(q["paste_hash"], 16) >= 0
+    # the pose is in BOTH hashes now -- it is in the config, not in a temp file
+    assert posed["paste_hash"] != rest["paste_hash"]
+    assert posed["tuner_hash"] != rest["tuner_hash"]
+    # and the paste hash is exactly the hash of the block over the file it lands in, which
+    # is the whole promise of the copy-TOML button
+    full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(posed["toml"])), env={})
+    assert ac.config_hash(full) == posed["paste_hash"]
 
 
 def test_a_posed_quote_warns_that_the_rest_pivot_is_unverified():
@@ -335,82 +381,98 @@ def test_a_posed_quote_warns_that_the_rest_pivot_is_unverified():
     moved = tuner.quote(dict(values, pivot_x=-0.9), {},
                         {"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
     assert not any("pivot" in w for w in moved["warnings"])
+    # the gain and rig-fix warnings come off the SCHEMA now (ac.warnings), so they reach the
+    # CLI too -- the page just shows them
+    assert any("C.18a" in w for w in posed["warnings"]), "HEAD is still welded to the world"
     hard = tuner.quote(dict(values, pivot_x=-0.9), {},
                        {"clip": "SWIM_FAST", "frame": 7, "gain": 2.9})
     assert any("2.6" in w for w in hard["warnings"]), "past the measured safe gain"
 
 
-def test_the_posed_export_comments_out_the_knobs_that_do_not_exist():
-    """`action = "SWIM_FAST"` pasted into jamaltron.toml is a fatal unknown knob, and
-    `rest_pose = false` on its own renders a DIFFERENT picture (it unmutes all five NLA
-    tracks at once). So the block names them, spells the values, and stays commented."""
+def test_the_posed_export_is_toml_you_paste_not_toml_you_uncomment():
+    """It used to emit `# action = "SWIM_FAST"` because the knob did not exist and an
+    uncommented paste was a fatal `unknown knob`. Now the paste is the point."""
     cfg = ac.load(env={})
     p = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
-    text = tune.toml_block(cfg, "deadbeef", "", p, "cafef00dbeef")
-    assert "action" in text and "pose_gain" in text and "SWIM_FAST" in text
-    for line in text.splitlines():
-        if line.startswith("#"):
-            continue
-        assert "action" not in line and "pose_gain" not in line and "rest_pose" not in line
+    posed = tune.posed(cfg, p)
+    text = tune.toml_block(posed, "deadbeef", "", p, "cafef00dbeef")
+    assert 'action = "SWIM_FAST"' in text and "pose_gain = 2.0" in text
+    assert "frame = 7" in text
     parsed = tomllib.loads(text)
-    assert set(parsed["model"]) == {k.split(".", 1)[1] for k in tune.TOML_KEYS}
-    ac.resolve(parsed, env={})            # would raise on an unknown knob
-    assert "cafef00dbeef" in text, "the posed image's own hash has to be findable"
-    assert "TODO(C.5)" in text, "say what makes the block live"
+    assert set(parsed["model"]) | {"bounce." + k for k in parsed["bounce"]} == {
+        k.split(".", 1)[1] if k.startswith("model.") else k for k in tune.TOML_KEYS}
+    ac.resolve(parsed, env={})                       # would raise on an unknown knob
+    assert "TODO" not in text, "nothing is pending any more"
 
 
-def test_a_rest_export_is_unchanged_by_the_pose_half():
-    """The standing shark already shipped. Selecting no pose has to produce exactly the
-    block it produced before any of this existed."""
+def test_a_rest_export_says_rest_and_nothing_else():
+    """The standing shark already shipped. No clip selected has to export as the config the
+    sprites came off -- which now means saying `action = "rest"` out loud rather than
+    omitting the key and hoping the reader knows the default."""
     cfg = ac.load(env={})
-    assert tune.toml_block(cfg, "deadbeef") == tune.toml_block(
-        cfg, "deadbeef", "", {"clip": tune.pose.REST}, "cafef00d")
+    text = tune.toml_block(tune.posed(cfg, tune.normalize_pose({})), "deadbeef")
+    assert 'action = "rest"' in text
+    assert "SWIM" not in text and "BITE" not in text
+    pasted = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(text)), env={})
+    assert ac.config_hash(pasted) == ac.config_hash(cfg), "a rest paste is the shipped config"
 
 
 def test_the_posed_export_still_round_trips_and_leaks_no_local_path():
     cfg = ac.load(env={})
-    tuned = tune.apply_values(cfg, {"roll": 30.0, "pivot_x": -0.62})
-    p = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
-    text = tune.toml_block(tuned, ac.config_hash(tuned), "", p, "cafef00dbeef")
+    tuned = tune.apply_values(cfg, {"roll": 85.0, "pivot_x": -0.62,
+                                    "bounce_height": 0.3, "bounce_phase": 0.25})
+    posed = tune.posed(tuned, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 12}))
+    text = tune.toml_block(posed, ac.config_hash(posed), "", None, "cafef00dbeef")
     full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(text)), env={})
-    assert ac.config_hash(full) == ac.config_hash(tuned)
-    assert "HAMMERHEAD" not in text and str(tune.pose.cache_root()) not in text
+    assert ac.config_hash(full) == ac.config_hash(posed)
+    assert "HAMMERHEAD" not in text
 
 
-def test_posing_moves_three_knobs_together_or_none(monkeypatch, tmp_path):
-    """`model.blend`, `model.rest_pose` and `model.frame` are one change. Set the blend and
-    leave rest_pose true and the renderer CLEARS the pose it was handed: you would be tuning
-    the standing shark while the page said SWIM_FAST, at the pose's own hash."""
-    baked_file = tmp_path / "SWIM_FAST_f007.blend"
-    baked_file.write_bytes(b"not really a blend")
-    calls = []
-
-    def fake_ensure(cfg, clip_id, frames, gain, **kw):
-        calls.append((clip_id, sorted(set(frames)), gain))
-        return tune.pose.Baked(clip_id=clip_id, gain=gain, paths={7: baked_file})
-
-    monkeypatch.setattr(tune.pose, "ensure", fake_ensure)
+def test_posing_moves_three_knobs_together_or_none():
+    """`model.action`, `model.frame` and `model.pose_gain` are one change. Set the action and
+    leave the frame behind and the page's slider says 12 while the render shows frame 1."""
     cfg = ac.load(env={})
-    out, baked = tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7,
-                                                      "gain": 2.0}))
-    assert out["model.blend"] == str(baked_file)
-    assert out["model.rest_pose"] is False
+    out = tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0}))
+    assert out["model.action"] == "SWIM_FAST"
     assert out["model.frame"] == 7
-    assert baked is not None
-    assert cfg["model.rest_pose"] is True, "the committed config must not be mutated"
-    assert calls == [("SWIM_FAST", [7], 2.0)], "no prefetch unless asked"
+    assert out["model.pose_gain"] == 2.0
+    assert cfg["model.action"] == "rest", "the committed config must not be mutated"
+    assert cfg["model.frame"] == 1
+    # every one of them has to move the body cache, or a frame change would serve the last
+    # frame's pixels
+    for key in ("model.action", "model.frame", "model.pose_gain"):
+        assert "body" in ac.SCHEMA[key][2] and "shadow" in ac.SCHEMA[key][2], key
+    assert ac.pass_hash(cfg, "body") != ac.pass_hash(out, "body")
 
-    # ... and with prefetch on, the whole loop bakes in the one launch this render pays for
-    calls.clear()
-    tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0,
-                                         "stride": 2, "prefetch": True}))
-    assert calls[0][1] == sorted(set([7] + tune.pose.loop_frames("SWIM_FAST", 2)))
 
-
-def test_rest_never_bakes_and_never_touches_the_config():
+def test_rest_selects_no_action_and_changes_nothing_else():
     cfg = ac.load(env={})
-    out, baked = tune.posed(cfg, tune.normalize_pose({"clip": tune.pose.REST}))
-    assert out is cfg and baked is None
+    out = tune.posed(cfg, tune.normalize_pose({"clip": tune.pose.REST, "frame": 9,
+                                               "gain": 2.5}))
+    assert out["model.action"] == tune.pose.REST
+    # the frame and the gain are NOT carried: with no clip they would be a hash change for a
+    # picture that is identical, which is the one thing the additive knobs must never do
+    assert out["model.frame"] == cfg["model.frame"]
+    assert out["model.pose_gain"] == cfg["model.pose_gain"]
+    assert ac.config_hash(out) == ac.config_hash(cfg)
+
+
+def test_the_rig_fix_is_a_render_option_that_still_reaches_the_export():
+    """The checkbox lives in `opts` (it is a render option, like the shadow toggle), but the
+    EXPORT has to carry whatever is ticked or the block describes a different picture."""
+    cfg = ac.load(env={})
+    tuner = tune.Tuner(cfg, cfg, jobs=1)
+    values = tune.values_of(cfg)
+    on = tuner.quote(values, {"reparent": True}, {"clip": "SWIM_FAST", "frame": 7})
+    off = tuner.quote(values, {"reparent": False}, {"clip": "SWIM_FAST", "frame": 7})
+    assert "reparent_head = true" in on["toml"]
+    assert "reparent_head = false" in off["toml"]
+    assert on["paste_hash"] != off["paste_hash"] != ""
+    # and a POST that never mentions it keeps the CONFIG's value, so --set survives
+    seeded = ac.resolve({"model": {"reparent_head": True}}, env={})
+    assert tune.reparent_of(seeded, {}) is True
+    assert tune.reparent_of(seeded, {"reparent": False}) is False
+    assert tune.reparent_of(cfg, {}) is False
 
 
 def test_the_page_boots_with_the_clip_table_itself():
@@ -426,3 +488,121 @@ def test_the_page_boots_with_the_clip_table_itself():
     assert boot["pose"]["clip"] == tune.pose.REST, "the page opens on the shipped shark"
     assert boot["fps"] == tune.pose.FPS
     assert boot["gain"]["safe"] == tune.pose.GAIN_SAFE
+    # the rig-fix box boots off the CONFIG, not off a page default, or --set is overridden
+    assert boot["opts"]["reparent"] == cfg["model.reparent_head"]
+    seeded = ac.resolve({"model": {"reparent_head": True}}, env={})
+    boot2 = json.loads(tune.page(tune.Tuner(seeded, seeded, jobs=1))
+                       .split("const BOOT = ", 1)[1].split(";\n", 1)[0])
+    assert boot2["opts"]["reparent"] is True
+
+
+def test_every_element_the_script_reaches_for_exists_in_the_markup():
+    """A `$("reparent")` with no `id="reparent"` is a TypeError on page load and a BLANK
+    PAGE -- the failure you cannot debug from the terminal, because the terminal is fine.
+    Cheap to check: the page is one string, and both halves of it are in it."""
+    import re
+    cfg = ac.load()
+    html = tune.page(tune.Tuner(cfg, cfg, jobs=1))
+    markup, _, script = html.partition("<script>")
+    have = set(re.findall(r'id="([A-Za-z0-9_]+)"', markup))
+    # ids the script CREATES before reading (the slider panel is rendered from BOOT.knobs)
+    have |= {p + k.id for k in tune.KNOBS for p in ("k_", "r_", "n_")}
+    want = set(re.findall(r'\$\("([A-Za-z0-9_]+)"\)', script))
+    want -= {p + "${k.id}" for p in ("k_", "r_", "n_")}
+    missing = sorted(w for w in want if w not in have and "$" not in w)
+    assert not missing, "the page script reads ids the markup never defines: %s" % missing
+
+
+def test_the_flop_preset_is_the_decided_recipe_and_only_that():
+    """One click to C.5's pose, because the ask was a roll slider "defaulted to 85" and the
+    page cannot boot there -- it opens on the committed STANDING config, which is what keeps
+    `reset to committed` meaningful and the shipped hash visible in the header.
+
+    Pinned as data rather than trusted as markup: the preset is the decided recipe (roll 85,
+    SWIM_FAST, gain 1.0 ungained, bounce 0.3, HEAD reparented, broadside), and it must reach
+    the real knobs the renderer reads."""
+    ids = {k.id for k in tune.KNOBS}
+    assert set(tune.FLOP_PRESET["values"]) <= ids, "a preset value no slider owns"
+    assert set(tune.FLOP_PRESET["pose"]) == set(tune.DEFAULT_POSE), "pose keys must match"
+    assert set(tune.FLOP_PRESET["opts"]) <= set(tune.DEFAULT_OPTS) | {"reparent"}
+    assert tune.FLOP_PRESET["values"]["roll"] == 85.0
+    assert tune.FLOP_PRESET["pose"]["gain"] == 1.0, "ungained IS the call at this roll"
+    assert tune.FLOP_PRESET["pose"]["clip"] == "SWIM_FAST"
+    assert tune.FLOP_PRESET["opts"]["reparent"] is True
+
+    cfg = ac.load(env={})
+    p = tune.normalize_pose(tune.FLOP_PRESET["pose"])
+    out = tune.apply_opts(tune.posed(tune.apply_values(cfg, tune.FLOP_PRESET["values"]), p),
+                          dict(tune.DEFAULT_OPTS, **tune.FLOP_PRESET["opts"]))
+    assert out["model.rotation"][0] == 85.0
+    assert out["model.action"] == "SWIM_FAST" and out["model.pose_gain"] == 1.0
+    assert out["bounce.height"] == 0.3
+    assert out["model.reparent_head"] is True
+    assert out["compare.rotations"] == 3, "broadside, the three directions a roll reads in"
+    # and it leaves the shark's own shape where it found it -- those are mid-tuning values
+    # half the time, and a preset that reverted them is one nobody presses twice.
+    for key in ("model.scale", "model.girth", "model.pivot"):
+        assert out[key] == cfg[key], key
+    assert out["model.rotation"][1] == cfg["model.rotation"][1], "pitch is not the preset's"
+
+
+def test_the_roll_slider_reaches_past_the_rail_it_warns_about():
+    """artconfig owns the number and the warning; the slider has to be able to GET there or
+    the warning is unreachable from the page and the limit is back to being faith."""
+    roll = next(k for k in tune.KNOBS if k.id == "roll")
+    assert roll.hi > ac.ROLL_BELLY_UP and roll.lo < -ac.ROLL_BELLY_UP
+    cfg = tune.apply_values(ac.load(env={}), {"roll": roll.hi})
+    assert any("belly-up" in w for w in ac.warnings(cfg))
+    assert not any("belly-up" in w for w in
+                   ac.warnings(tune.apply_values(ac.load(env={}), {"roll": 85.0})))
+
+
+def test_the_page_boots_with_the_preset_the_button_presses():
+    import json
+    cfg = ac.load()
+    boot = json.loads(tune.page(tune.Tuner(cfg, cfg, jobs=1))
+                      .split("const BOOT = ", 1)[1].split(";\n", 1)[0])
+    assert boot["flop"] == tune.FLOP_PRESET
+    assert boot["start"]["roll"] == cfg["model.rotation"][0], "the page still opens committed"
+
+
+def test_a_set_the_sliders_do_not_own_is_still_checked_by_the_schema():
+    """C.5 gave the schema its second enum, and `--set 'model.action="SWIM_FASTT"'` used to
+    sail past every check: the KEY is spelled right, so the unknown-knob suggester never sees
+    it, and seed() wrote it into an already-resolved dict. The tuner booted, printed the typo
+    in its own header note, and handed you a Blender traceback on the first render."""
+    import pytest
+    with pytest.raises(ac.ConfigError) as bad:
+        seed_of({"model.action": "SWIM_FASTT"})
+    assert "SWIM_FASTT" in str(bad.value) and "SWIM_FAST" in str(bad.value)
+    with pytest.raises(ac.ConfigError):
+        seed_of({"model.frame": "twelve"})          # type, same path
+    # the valid ones still land, note and all
+    committed, _, note, _ = seed_of({"model.action": "SWIM_FAST"})
+    assert committed["model.action"] == "SWIM_FAST" and "model.action=SWIM_FAST" in note
+
+
+def test_the_renders_own_warnings_reach_the_warning_box():
+    """Some things only a render knows -- that the posed body reaches below the ground plane
+    at this roll, that a frame touched its canvas edge -- and they arrive as text. Four jobs
+    over two passes say each of them four times."""
+    log = ("  body    3 frames in 1.4s\n"
+           "   WARN the posed body reaches 0.283 tiles BELOW the ground plane (z=0)\n"
+           "   WARN the posed body reaches 0.283 tiles BELOW the ground plane (z=0)\n"
+           "  compare cell 6.00 tiles holds every frame\n"
+           "   WARN frame 016 touches the top edge of its canvas\n")
+    got = tune.render_warnings(log)
+    assert len(got) == 2, got
+    assert got[0].startswith("the render says: the posed body reaches 0.283 tiles BELOW")
+    assert "canvas" in got[1]
+    assert tune.render_warnings("nothing to see here") == []
+
+
+def test_a_warning_from_blender_is_not_hidden_behind_verbose():
+    """art.py collects the renderer's notes and used to print NONE of them unless -v, which
+    made every WARN the render can only discover itself -- the buried body, a clipped frame --
+    invisible in the CLI and in the tuner at the same time."""
+    from render import art
+    notes = ["FIX nla muted: 5", "POSE action=SWIM_FAST gain=1.00",
+             "WARN the posed body reaches 0.283 tiles BELOW the ground plane (z=0)"]
+    assert art.warn_notes(notes) == [notes[-1]]

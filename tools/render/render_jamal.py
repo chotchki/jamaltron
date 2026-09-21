@@ -19,6 +19,17 @@ WHAT IT FIXES BEFORE IT RENDERS (all three are C.2 findings, all three are silen
     that way has the shark orbiting the frame instead of spinning in place.
   * A STALE FINAL KEYFRAME on every clip, duplicating the cycle's first frame. It costs
     nothing on a static torso and it double-holds a frame in C.5's flop loop.
+  * HEAD IS A ROOT BONE (C.18a) and no swim clip touches it, so the snout is welded to
+    world space and a thrashing spine cannot lift his head off the ground. `reparent_head`
+    hangs it off SPINE_01 where the rest geometry says it belongs. OFF by default -- the
+    shipped sheets came off the rig as bought -- and, like the other three, it runs against
+    the bought model IN MEMORY, because the licence means there is no committed rig to fix.
+
+AND WHAT IT POSES. `model.action` picks one of the five shipped clips (or `rest`),
+`model.frame` picks a frame of it and `model.pose_gain` amplifies every bone's rotation
+about rest. `bounce.*` adds a per-frame ballistic lift on top, which the shadow pass turns
+into real shadow separation for free. All of it is ordinary knobs, so the cache keys and the
+provenance stamps cover a flop frame exactly as they cover a standing one.
 
 ENGINE, measured rather than assumed: the body pass defaults to EEVEE Next and the
 shadow pass is Cycles and has no choice. Only Cycles honours `is_shadow_catcher`; EEVEE
@@ -51,6 +62,7 @@ import mathutils
 
 from render import artconfig as ac
 from render import factorio_camera as fc
+from render import pose
 
 
 # --------------------------------------------------------------------------------- args
@@ -103,6 +115,203 @@ def clear_pose(obj):
             n += 1
         pb.matrix_basis = mathutils.Matrix.Identity(4)
     return n
+
+
+def reparent_head(obj, child: str = "HEAD", parent: str = "SPINE_01") -> str:
+    """C.18a: give HEAD a parent, IN MEMORY, before anything is posed. Returns what it did.
+
+    THE RIG SHIPS THE SNOUT WELDED TO WORLD SPACE. HEAD is a root bone and not one swim clip
+    touches it, so at roll 80-90 -- where the bend plane stands up into the bounce's plane
+    and the whole pose is a curl-up -- his head cannot leave the ground no matter what the
+    spine does. Six spine bones fold and the face stays nailed where it started, which reads
+    as a shark bolted to the floor rather than one trying to get off it.
+
+    The rest geometry already agrees with the fix: HEAD's head sits at x 0.708 and SPINE_01's
+    at 0.577, so HEAD is the next link forward along the same chain SPINE_02..TAIL already
+    form. Parenting without connecting keeps its rest position to the float, so a REST render
+    is untouched.
+
+    MEASURED, NOT ASSUMED, because silently doing nothing is the failure mode here. Two
+    renders of dir 16 at roll 85, this knob the only difference:
+      * AT REST the two PNGs' IDAT streams are byte-identical (only Blender's own render-time
+        tEXt differs). The fix cannot disturb the shipped sheets.
+      * PLAYING SWIM_FAST it moves 1448 px at frame 7 and 2555 px at frame 20 -- 1.0% and
+        1.7% of the canvas -- all of it inside a 60 px box on the head. It took.
+      * AND IT IS SMALLER THAN C.18a HOPED, which is worth writing down: the snout travels at
+        most 0.056 BU (2.9 px at 64 px/tile), and the ALPHA BOX does not move, so at gain 1.0
+        the head shifts WITHIN his outline rather than lifting clear of the ground. The reason
+        is structural -- SPINE_01 is itself a root bone and, on a wave that is rear-loaded
+        3:1, the first joint is the one that rotates least (~4.3 deg here). Note the travel is
+        almost pure model-space Y (-0.0559 y against +0.0002 z): the swim bends laterally, and
+        it is the ROLL that stands that plane up, which is exactly why 80-90 is the pose.
+        So this is necessary and NOT sufficient -- it stops the neck stretching against a
+        pinned skull, and the lift he needs comes from the bounce.
+
+    IT RUNS AT RENDER TIME AND IT HAS TO. The .blend is the bought model under a licence
+    whose one condition is that the source never ships, so there is no such thing as a
+    committed rig fix -- the same reason the NLA mute, the stale-keyframe drop and the
+    re-pivot all live in this file. `model.reparent_head` turns it off, and off is the
+    default, because the sheets in mod/jamaltron/graphics/ came off the rig as bought.
+
+    Raises rather than shrugging if either bone is missing. A silent no-op here would look
+    exactly like a pose that did not need the fix.
+    """
+    if obj is None or obj.type != "ARMATURE":
+        raise SystemExit("reparent_head: %r is not an armature" % (obj and obj.name))
+    bones = obj.data.bones
+    for name in (child, parent):
+        if name not in bones:
+            raise SystemExit("reparent_head: no bone %r on %s; have %s"
+                             % (name, obj.name, [b.name for b in bones]))
+    was = bones[child].parent.name if bones[child].parent else None
+    if was == parent:
+        return "%s was ALREADY parented to %s -- nothing to do" % (child, parent)
+    head_x = tuple(round(v, 4) for v in bones[child].head_local)
+    parent_x = tuple(round(v, 4) for v in bones[parent].head_local)
+
+    # Bone parenting is an EDIT-MODE edit; there is no pose-mode or data-level way to set it.
+    # In background mode the operator needs an active object, and it needs to be left in
+    # OBJECT mode afterwards or the armature modifier evaluates against an edit-mode copy.
+    bpy.context.view_layer.objects.active = obj
+    prev_mode = obj.mode
+    bpy.ops.object.mode_set(mode="EDIT")
+    try:
+        eb = obj.data.edit_bones
+        eb[child].parent = eb[parent]
+        # KEEP OFFSET, not connect: connecting would snap HEAD's root onto SPINE_01's tip
+        # and move the snout 0.13 BU back into his own skull.
+        eb[child].use_connect = False
+    finally:
+        bpy.ops.object.mode_set(mode=prev_mode if prev_mode != "EDIT" else "OBJECT")
+
+    now = bones[child].parent.name if bones[child].parent else None
+    if now != parent:
+        raise SystemExit("reparent_head: asked for %s -> %s and the rig still says %s -> %s"
+                         % (child, parent, child, now))
+    moved = tuple(round(v, 4) for v in bones[child].head_local)
+    return ("%s parent %s -> %s, rest head %s (was %s, %s sits at %s)"
+            % (child, was, parent, moved, head_x, parent, parent_x))
+
+
+def apply_action(cfg, obj):
+    """Put the rig on ONE frame of ONE clip, amplified `model.pose_gain` about rest.
+
+    This is what `model.action` MEANS, and it is the knob the harness was missing: with no
+    action selected, `model.rest_pose = false` does not pick a clip, it unmutes all five NLA
+    tracks at once and `model.frame` then scrubs whatever that soup evaluates to (BITE_01
+    blends COMBINE on top, so the shark renders mid-bite mid-swim). One action, assigned
+    explicitly, on top of a cleared pose.
+
+    BAKE THEN AMPLIFY. Read the evaluated basis of every bone, drop the animation so nothing
+    can overwrite it, then push each bone's rotation away from rest by `gain`. AXIS-ANGLE and
+    not slerp: slerp refuses a factor above 1.0, and above 1.0 was the only interesting
+    direction while gain was still an open question. Dropping the action first is what makes
+    the pose survive the `scene.frame_set` the render does later.
+
+    Returns a note for the log: which action, which frame, how many bones moved. Zero bones
+    moved is a failure, not a quiet success -- it means the action evaluated to nothing.
+    """
+    if obj is None or obj.type != "ARMATURE":
+        raise SystemExit("model.action=%s needs model.object to be the ARMATURE; %r is %s"
+                         % (cfg["model.action"], cfg["model.object"],
+                            "missing" if obj is None else obj.type))
+    action_id = cfg["model.action"]
+    clip = pose.clip_of(action_id)
+    if clip is None:
+        raise SystemExit("model.action=%r is not a clip; expected one of %s"
+                         % (action_id, ", ".join(pose.ACTION_CHOICES)))
+    act = bpy.data.actions.get(clip.action)
+    if act is None:
+        raise SystemExit("model.action=%s wants action %r; the model has %s"
+                         % (clip.id, clip.action, [a.name for a in bpy.data.actions]))
+    frame = pose.clamp_frame(clip.id, cfg["model.frame"])
+    gain = float(cfg["model.pose_gain"])
+
+    obj.data.pose_position = "POSE"
+    ad = obj.animation_data or obj.animation_data_create()
+    for track in ad.nla_tracks:
+        track.mute = True
+    ad.action = None
+    clear_pose(obj)
+
+    assign_action(obj, act)
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+
+    baked = {pb.name: pb.matrix_basis.copy() for pb in obj.pose.bones}
+    ad.action = None
+    posed = []
+    for pb in obj.pose.bones:
+        loc, rot, scl = baked[pb.name].decompose()
+        axis, angle = rot.to_axis_angle()
+        if abs(angle) > 1e-9 or loc.length > 1e-9:
+            posed.append(pb.name)
+        pb.matrix_basis = (mathutils.Matrix.Translation(loc * gain)
+                           @ mathutils.Quaternion(axis, angle * gain).to_matrix().to_4x4()
+                           @ mathutils.Matrix.Diagonal(scl).to_4x4())
+    bpy.context.view_layer.update()
+    if not posed:
+        raise SystemExit(
+            "model.action=%s frame %d posed NOTHING. The action exists and evaluated to the "
+            "rest pose, which on Blender 4.4 usually means it landed with no action slot "
+            "bound (see assign_action)." % (clip.id, frame))
+    return ("%s (%s) frame %d of %d-%d, gain %.2f, on a CLEARED pose (so model.rest_pose "
+            "stops meaning anything) -- %d bones posed: %s"
+            % (clip.id, clip.action, frame, clip.lo, clip.hi, gain, len(posed),
+               ", ".join(sorted(posed))))
+
+
+def assign_action(obj, act):
+    """4.4 actions are SLOTTED; a bare `animation_data.action = act` can land with no slot
+    and evaluate to NOTHING -- a silent rest pose wearing a clip's name. Bind the first
+    suitable slot. model_inspect.py carries its own copy rather than importing this one,
+    because importing it would drag in the whole 1100-line report harness."""
+    if obj.animation_data is None:
+        obj.animation_data_create()
+    ad = obj.animation_data
+    ad.action = act
+    try:
+        if getattr(ad, "action_slot", None) is None:
+            slots = list(getattr(ad, "action_suitable_slots", []) or [])
+            if slots:
+                ad.action_slot = slots[0]
+    except Exception:                                          # pragma: no cover
+        pass
+    return ad
+
+
+def action_ranges():
+    """Every action's frame range, raw and after the stale-keyframe drop. pose.verify_clips
+    reads this so the hardcoded clip table is checked against the model on every posed
+    render -- a table about a file this tool opens anyway is a table that rots silently."""
+    return {a.name: [float(v) for v in a.frame_range] for a in bpy.data.actions}
+
+
+def world_box(skip=("shadow_catcher",)):
+    """The rendered geometry's world bounding box, in TILES (1 BU = 1 m = 1 tile).
+
+    Measured off the EVALUATED depsgraph, so the subdivision and the armature deform count,
+    and measured AFTER build_rig, so it is the box the CANVAS has to hold rather than the
+    model's own. artconfig.derived() reports the REST box from a measured constant, which is
+    correct for the standing shark and wrong the moment he thrashes -- this is the number
+    C.17 needs and the one the bounce grows.
+    """
+    lo = [1e9] * 3
+    hi = [-1e9] * 3
+    dg = bpy.context.evaluated_depsgraph_get()
+    for ob in bpy.data.objects:
+        if ob.type != "MESH" or ob.name in skip:
+            continue
+        ev = ob.evaluated_get(dg)
+        mw = ev.matrix_world
+        for corner in ev.bound_box:
+            w = mw @ mathutils.Vector(corner)
+            for i in range(3):
+                lo[i] = min(lo[i], w[i])
+                hi[i] = max(hi[i], w[i])
+    if lo[0] > hi[0]:
+        return None
+    return [[round(lo[i], 4), round(hi[i], 4)] for i in range(3)]
 
 
 def drop_stale_final_keyframes():
@@ -418,7 +627,12 @@ def build_rig(scene, cfg):
     # and oversized". A uniform scale makes an overweight shark LONGER, which is the
     # one thing the books do not say about him.
     g = cfg["model.girth"]
-    adjust.location = tuple(cfg["model.offset"])
+    # THE BOUNCE rides on top of the height offset, in the same world-z units, because it is
+    # the same kind of thing: how far off the ground he is this frame. Pure root transform --
+    # no rig work, no keyframes, and the shadow pass picks it up for free because that pass
+    # is a real Cycles render with a real sun and a catcher at z=0.
+    east, north, up = cfg["model.offset"]
+    adjust.location = (east, north, up + ac.bounce_lift(cfg))
     adjust.rotation_euler = (0.0, 0.0, math.radians(cfg["model.base_yaw"]))
     adjust.scale = (s, s * g, s)
 
@@ -495,11 +709,28 @@ def main():
     scene = bpy.context.scene
     print("FIX nla muted:", mute_nla_tracks() if cfg["model.mute_nla"] else "SKIPPED")
     subject_name = cfg["model.object"]
+    rig = bpy.data.objects.get(subject_name)
     if cfg["model.rest_pose"]:
-        print("FIX pose bones cleared to rest:",
-              clear_pose(bpy.data.objects.get(subject_name)))
+        print("FIX pose bones cleared to rest:", clear_pose(rig))
+    raw = action_ranges()
     if cfg["model.drop_stale_keyframes"]:
         print("FIX stale final keyframes dropped:", drop_stale_final_keyframes())
+    # AFTER the drop, because the drop is what makes the table's ranges true.
+    mismatches = []
+    posed = cfg["model.action"] != pose.REST
+    if posed:
+        dropped = action_ranges()
+        mismatches = pose.verify_clips(
+            {name: {"raw": raw[name], "dropped": dropped.get(name, raw[name])} for name in raw})
+        for m in mismatches:
+            print("WARN clip table vs the model: " + m)
+    # The rig fix goes BEFORE the pose: reparenting changes how every frame of every clip
+    # evaluates, so doing it after would pose the rig as bought and then move the bones'
+    # parents under the result.
+    if cfg["model.reparent_head"]:
+        print("FIX head reparent:", reparent_head(rig))
+    if posed:
+        print("FIX pose:", apply_action(cfg, rig))
     print("FIX removed shipped cams/lights:", strip_scene(scene))
     print("CHECK unresolvable images:", json.dumps(dead_image_check()))
     print("FIX materials:", tune_materials(cfg))
@@ -556,7 +787,17 @@ def main():
           % (which, engine, samples, res, final, d["supersample"], canvas,
              final / canvas, frames))
 
+    if posed or d["bounce_lift_tiles"]:
+        print("POSE action=%s gain=%.2f frame=%d  reparent_head=%s  bounce lift %.3f tiles "
+              "(peak %.3f, %.1f of %d frames airborne, %.3f tiles up-screen, %.3f tiles of "
+              "shadow east at peak)"
+              % (cfg["model.action"], cfg["model.pose_gain"], cfg["model.frame"],
+                 cfg["model.reparent_head"], d["bounce_lift_tiles"], d["bounce_peak_tiles"],
+                 d["bounce_airtime_frames"], d["bounce_cycle_frames"],
+                 d["bounce_lift_up_screen_tiles"], d["bounce_peak_shadow_east_tiles"]))
+
     times = []
+    box = None
     for i in frames:
         root.rotation_euler = (0.0, 0.0, fc.model_z_rotation(
             i, cfg["rotations.count"], cfg["rotations.counterclockwise"]))
@@ -566,7 +807,25 @@ def main():
         bpy.ops.render.render(write_still=True)
         dt = time.time() - t0
         times.append(dt)
+        # The box of what was just rendered, unioned over the frames this process drew.
+        # Measured here and not up front because it turns with the wheel: broadside is the
+        # wide one and nose-on is the tall one, and the canvas has to hold both.
+        seen = world_box()
+        if seen is not None:
+            box = seen if box is None else [[min(box[k][0], seen[k][0]),
+                                            max(box[k][1], seen[k][1])] for k in range(3)]
         print("FRAME %03d %.3fs %s" % (i, dt, path))
+
+    # HE SANK. Only a render can measure this -- the box depends on the pose, the roll and
+    # the scale together -- and it is invisible in the body pass, which draws no ground: the
+    # shadow pass's catcher sits at z=0 and quietly slices whatever is under it. The BOUNCE
+    # cannot fix it (its floor is the lift, not the body); `model.offset`'s z can, and that
+    # is the C.17 tuning session's job.
+    if box is not None and box[2][0] < -0.01:
+        print("WARN the posed body reaches %.3f tiles BELOW the ground plane (z=0) at this "
+              "roll. The shadow catcher cuts through him there and in game he is buried to "
+              "that depth. Raise model.offset z (now %.2f) by at least that much"
+              % (-box[2][0], cfg["model.offset"][2]))
 
     print("JAMALTRON_RESULT " + json.dumps({
         "pass": which, "engine": engine, "samples": samples, "render_px": res,
@@ -574,6 +833,13 @@ def main():
         "canvas_tiles": canvas, "frames": frames, "seconds": round(sum(times), 3),
         "seconds_per_frame": round(sum(times) / max(len(times), 1), 4),
         "blender": bpy.app.version_string,
+        # What the pose and the bounce actually did, so a cached frame's own report says so.
+        "action": cfg["model.action"], "pose_gain": cfg["model.pose_gain"],
+        "model_frame": cfg["model.frame"], "reparent_head": cfg["model.reparent_head"],
+        "bounce_lift_tiles": round(d["bounce_lift_tiles"], 5),
+        # WHICH clip table this was checked against, so a report three weeks old still says.
+        "clip_table": pose.table_digest(), "clip_mismatches": mismatches,
+        "box_tiles": box,
     }))
 
 

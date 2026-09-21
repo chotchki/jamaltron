@@ -974,3 +974,226 @@ def test_girth_widens_only_the_width_report():
     assert w["shark_width_tiles"] == pytest.approx(b["shark_width_tiles"] * 1.6)
     assert w["shark_length_tiles"] == pytest.approx(b["shark_length_tiles"])
     assert w["shark_height_tiles"] == pytest.approx(b["shark_height_tiles"])
+
+
+# ------------------------------------------------- C.5: the flop knobs and the provenance
+#
+# Three knobs (model.action / pose_gain / reparent_head) and a [bounce] table landed AFTER
+# mod/jamaltron/graphics/ shipped four PNGs stamped with a config hash and four pass hashes.
+# The tests below are the two halves of that: the shipped stamps still reproduce, and every
+# one of the new knobs is in the hash the moment it is touched.
+
+#: What the shipped sheets carry, read off their own PNG text chunks. The digest is the
+#: MODEL's content, substituted in directly here so this runs with no .blend on the machine
+#: -- artconfig.hashable() passes an already-digested value straight through, which is the
+#: same property that lets a stamp read back off a PNG re-hash to itself.
+SHIPPED_BLEND_DIGEST = "sha256:0431897ccc701717"
+SHIPPED_CONFIG_HASH = "83d6be794998"
+SHIPPED_PASS_HASHES = {"body": "eadcbfceca50", "shadow": "c2fa4206163b",
+                       "mask": "2dbebe5a76b0", "compare": "4247c6a684a3"}
+
+
+def _shipped_cfg():
+    cfg = ac.load(env={})
+    cfg["model.blend"] = SHIPPED_BLEND_DIGEST
+    return cfg
+
+
+def test_the_standing_config_still_hashes_to_what_the_shipped_sheets_carry():
+    """THE TRIPWIRE. mod/jamaltron/graphics/*.png carry these five hashes in their own text
+    chunks and pack.py REFUSES a sheet whose pass hash does not match the config being
+    packed. So a schema addition that moves them does not "change a number", it re-dates art
+    that did not move and breaks the packer against the sheets already on disk.
+
+    If this fails after you added a knob: the knob is not hash-neutral at its default. Either
+    its default is not an exact no-op (in which case it is not additive -- leave it out of
+    ac.ADDITIVE and accept that the hashes move, deliberately, with a re-pack), or the
+    committed jamaltron.toml sets it to something other than its default.
+    """
+    cfg = _shipped_cfg()
+    assert ac.config_hash(cfg) == SHIPPED_CONFIG_HASH
+    for name, want in SHIPPED_PASS_HASHES.items():
+        assert ac.pass_hash(cfg, name) == want, name
+
+
+def test_a_new_knob_at_its_default_is_not_in_any_hash():
+    """The rule ADDITIVE encodes: a knob that cannot have changed a pixel is not in the key.
+    Checked by hashing a config that has never heard of them -- which is exactly what the
+    shipped sheets were hashed from."""
+    cfg = _shipped_cfg()
+    stripped = {k: v for k, v in cfg.items() if k not in ac.ADDITIVE}
+    assert ac.canonical(ac.hashable(cfg)) == ac.canonical(dict(
+        stripped, **{"model.blend": SHIPPED_BLEND_DIGEST}))
+    for key in ac.ADDITIVE:
+        assert ac.is_default(key, cfg[key]), "%s: the committed file moves it off default" % key
+
+
+@pytest.mark.parametrize("key,value", [
+    ("model.action", "SWIM_FAST"),
+    ("model.pose_gain", 2.0),
+    ("model.reparent_head", True),
+    ("bounce.height", 0.3),
+    ("bounce.phase", 0.25),
+    ("bounce.gravity", 4.0),
+])
+def test_a_new_knob_moves_every_hash_the_moment_it_is_touched(key, value):
+    """The other half, and the one that stops the hole in the provenance from spreading: off
+    its default an additive knob is hashed like anything else, so a flop frame can never be
+    served out of the standing shark's cache directory."""
+    cfg = _shipped_cfg()
+    moved = dict(cfg, **{key: value})
+    assert ac.config_hash(moved) != ac.config_hash(cfg)
+    for name in ("body", "shadow", "mask"):
+        assert ac.pass_hash(moved, name) != ac.pass_hash(cfg, name), name
+    # ... and back to the default is back to the shipped hash, not a third value
+    assert ac.config_hash(dict(moved, **{key: ac.SCHEMA[key][1]})) == SHIPPED_CONFIG_HASH
+
+
+def test_the_stamp_writes_the_new_knobs_even_though_the_hash_omits_them():
+    """The sidecar is what a human reads three weeks later, so it says `action = "rest"` out
+    loud. It still has to re-hash to the hash it claims, which is the only reason the
+    redacted/hashable split exists."""
+    blob = ac.stamp(_shipped_cfg())
+    assert blob["config"]["model"]["action"] == "rest"
+    assert blob["config"]["bounce"]["height"] == 0.0
+    assert blob["config_hash"] == SHIPPED_CONFIG_HASH
+    assert ac.config_hash(ac.resolve(blob["config"], env={})) == blob["config_hash"]
+
+
+# ------------------------------------------------------------------------- the bounce
+
+
+def _flop(**over):
+    base = {"model": {"action": "SWIM_FAST", "reparent_head": True},
+            "bounce": {"height": 0.3, "phase": 0.25}}
+    cfg = ac.resolve(base, env={})
+    return dict(cfg, **over)
+
+
+def test_the_bounce_is_a_parabola_that_sits_on_the_ground():
+    """The shape IS the point: ballistic flight leaves at full speed, decelerates into a
+    brief apex and accelerates back down, where a sine would hang at both ends and read as
+    floating. Checked as a shape, not against a table of numbers: one peak, symmetric about
+    it, and a hard floor for the rest of the cycle."""
+    cfg = _flop()
+    profile = ac.bounce_profile(cfg)
+    lifts = [z for _, z in profile]
+    assert min(lifts) == 0.0, "he must actually touch the ground"
+    # The SAMPLED peak sits a hair under the commanded height whenever the apex falls between
+    # two frames, which it usually does: at 0.3 tiles the apex is at frame 11.94 and the
+    # nearest sample is 0.29997. That is the arithmetic being honest, not a bug to round away.
+    assert max(lifts) == pytest.approx(cfg["bounce.height"], abs=1e-3)
+    assert max(lifts) <= cfg["bounce.height"], "the height is a ceiling, not a target"
+    assert all(z >= 0.0 for z in lifts), "no frame below the floor"
+    # the airborne stretch is contiguous, rises then falls, and lands with frames to spare
+    air = [i for i, z in enumerate(lifts) if z > 0]
+    assert air == list(range(air[0], air[-1] + 1)), "the flight is one arc, not two"
+    apex = lifts.index(max(lifts))
+    assert lifts[air[0]:apex] == sorted(lifts[air[0]:apex])
+    assert lifts[apex:air[-1] + 1] == sorted(lifts[apex:air[-1] + 1], reverse=True)
+    assert len(air) < len(lifts), "some of the cycle is spent lying on the ground"
+    # AND IT IS NOT A SINE: a sine of the same peak and period spends most of its time near
+    # the extremes, so its mean sits high. A parabola off the floor sits low.
+    mean = sum(lifts) / len(lifts)
+    assert mean < 0.5 * max(lifts), "mean %.3f reads as floating, not falling" % mean
+
+
+def test_airtime_follows_from_height_and_gravity_and_nothing_else():
+    """No airtime knob on purpose: gravity is one number for every jump, so saying how high
+    he gets has already said how long he hangs. Higher is longer, stronger gravity is
+    shorter, and the relationship is the textbook one."""
+    d = ac.derived(_flop())
+    assert d["bounce_airtime_seconds"] == pytest.approx(2 * math.sqrt(2 * 0.3 / 9.8))
+    assert d["bounce_airtime_frames"] == pytest.approx(d["bounce_airtime_seconds"] * 24)
+    higher = ac.derived(_flop(**{"bounce.height": 0.6}))
+    assert higher["bounce_airtime_seconds"] > d["bounce_airtime_seconds"]
+    snappier = ac.derived(_flop(**{"bounce.gravity": 20.0}))
+    assert snappier["bounce_airtime_seconds"] < d["bounce_airtime_seconds"]
+    assert snappier["bounce_peak_tiles"] == d["bounce_peak_tiles"], "same height, less hang"
+
+
+def test_the_phase_knob_moves_the_push_off_and_wraps():
+    """Where in the cycle he launches is an eyeball decision against the pose, so it is a
+    knob. It has to WRAP rather than clamp: phase 1.0 is phase 0.0, and a slider that stops
+    dead at one end of a cycle is a slider with a seam in it."""
+    at = {p: dict(ac.bounce_profile(_flop(**{"bounce.phase": p})))
+          for p in (0.0, 0.25, 0.5, 1.0, 1.25)}
+    assert at[0.0][1] == 0.0, "phase 0 launches ON frame 1, so frame 1 is contact"
+    assert at[0.25][6] == 0.0 and at[0.25][7] > 0.0, "phase 0.25 of 20 frames launches at 6"
+    assert at[0.0] == at[1.0], "a whole cycle of phase is no phase"
+    assert at[0.25] == at[1.25]
+    assert at[0.5] != at[0.25]
+
+
+def test_a_rest_pose_has_no_cycle_so_it_cannot_bounce():
+    """The lift is driven by the thrash's phase, and a standing shark has no thrash. Zero at
+    every frame, a warning that says why, and -- the part that matters -- the shipped
+    standing config cannot be lifted by a stray bounce knob."""
+    still = ac.resolve({"bounce": {"height": 0.3, "phase": 0.25}}, env={})
+    assert still["model.action"] == "rest"
+    assert [z for _, z in ac.bounce_profile(still)] == [0.0]
+    assert ac.derived(still)["bounce_lift_tiles"] == 0.0
+    assert any("never leaves the ground" in w for w in ac.warnings(still))
+
+
+def test_the_bounce_reports_what_it_costs_the_picture():
+    """MEASURED against real renders (dir 16, SWIM_FAST f12, the lift the only difference):
+    the shadow's centroid moves +19.12 px east and the body rises 14 px up-screen at 0.3
+    tiles of lift. These are the numbers that predicted it, and they are what the footer,
+    the page and the canvas budget all read."""
+    d = ac.derived(_flop(**{"model.frame": 12}))
+    assert d["bounce_lift_tiles"] == pytest.approx(0.3, abs=1e-3)      # apex at frame 11.94
+    # one tile of shadow east per tile of height at the game's own sun
+    assert d["bounce_peak_shadow_east_tiles"] == pytest.approx(0.3, abs=1e-6)
+    assert d["bounce_peak_shadow_east_tiles"] * d["shadow_px_per_tile"] == pytest.approx(19.2)
+    # and 0.707 tiles up-screen per tile of height at the game's own camera
+    up = d["bounce_lift_tiles"] * math.cos(math.radians(45))
+    assert d["bounce_lift_up_screen_tiles"] == pytest.approx(up)
+    assert d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"] == pytest.approx(13.58,
+                                                                                    abs=0.02)
+    assert d["bounce_canvas_cost_tiles"] == pytest.approx(d["bounce_peak_up_screen_tiles"])
+
+
+def test_a_bounce_that_cannot_land_inside_the_cycle_is_a_warning_not_a_pop():
+    """The lift is periodic in the clip's own cycle, so if the airtime outruns the cycle he
+    is still in the air when the next push-off comes and the loop POPS at the seam. That is
+    invisible in a still and obvious in play, which is exactly the kind of thing that has to
+    be said in words."""
+    too_high = _flop(**{"bounce.height": 2.0})
+    d = ac.derived(too_high)
+    assert d["bounce_airtime_frames"] > d["bounce_cycle_frames"]
+    assert any("POPS" in w for w in ac.warnings(too_high))
+    assert not any("POPS" in w for w in ac.warnings(_flop()))
+
+
+def test_the_rig_fix_and_the_gain_warn_from_the_schema_so_the_cli_hears_them():
+    """These used to live in tune.py, which meant `art.py --set model.action=...` rendered a
+    head welded to world space and said nothing."""
+    plain = ac.resolve({"model": {"action": "SWIM_FAST"}}, env={})
+    assert any("C.18a" in w and "reparent_head" in w for w in ac.warnings(plain))
+    fixed = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True}}, env={})
+    assert not any("C.18a" in w for w in ac.warnings(fixed))
+    hard = ac.resolve({"model": {"action": "SWIM_FAST", "pose_gain": 2.9}}, env={})
+    assert any("2.6" in w for w in ac.warnings(hard))
+    soup = ac.resolve({"model": {"rest_pose": False}}, env={})
+    assert any("SAVED" in w for w in ac.warnings(soup)), "no action and no clear is a soup"
+    # a frame the clip does not have renders clamped, so the config and the pixels disagree
+    past = ac.resolve({"model": {"action": "SWIM_FAST", "frame": 40}}, env={})
+    assert any("CLAMPS" in w and "1-20" in w for w in ac.warnings(past))
+    assert not any("CLAMPS" in w for w in ac.warnings(
+        ac.resolve({"model": {"action": "SWIM_FAST", "frame": 20}}, env={})))
+
+
+def test_a_roll_past_the_belly_up_rail_warns_and_the_flop_range_does_not():
+    """The roll at which he stops being BEACHED and starts being DEAD IN WATER is a measured
+    number off C.5's sheet B, and until this landed nothing said it -- `art.py --set
+    model.rotation=[140,0,0]` rendered a belly-up shark in silence. It is a warning and not a
+    clamp on purpose: the whole of C.5 is chotchki judging this by eye, and an edge you cannot
+    cross is an edge you have to take on faith."""
+    for roll in (80.0, 85.0, 90.0, ac.ROLL_BELLY_UP, -ac.ROLL_BELLY_UP):
+        assert not any("belly-up" in w for w in ac.warnings(
+            ac.resolve({"model": {"rotation": [roll, 0.0, 0.0]}}, env={}))), roll
+    for roll in (ac.ROLL_BELLY_UP + 1.0, 140.0, -120.0):
+        got = " ".join(ac.warnings(ac.resolve({"model": {"rotation": [roll, 0.0, 0.0]}},
+                                             env={})))
+        assert "belly-up" in got and "WATER" in got, roll

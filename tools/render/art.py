@@ -11,6 +11,13 @@
     ... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'   # try before you commit
     ... --blend /path/to/HAMMERHEAD.blend                       # or $JAMALTRON_BLEND
 
+THE FLOP (C.5) is knobs like everything else -- one clip, one frame of it, the rig fix it
+needs, and the bounce:
+
+    ... --set 'model.action="SWIM_FAST"' --set model.frame=12 \
+        --set model.reparent_head=true --set 'model.rotation=[85,0,0]' \
+        --set bounce.height=0.3 --set bounce.phase=0.25
+
 THE DESIGN CONSTRAINT IS FEEDBACK SPEED, NOT FEATURES. A 64-rotation Cycles sheet is the
 wrong loop for "make him 10% bigger and nudge the pitch": by the time it finishes you have
 forgotten what you were comparing against. So:
@@ -49,6 +56,7 @@ import time  # noqa: E402
 
 from render import artconfig as ac  # noqa: E402
 from render import factorio_camera as fc  # noqa: E402
+from render import pose  # noqa: E402
 from render import sheets  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -113,12 +121,27 @@ def run_blender(blend, config_json, which, frames, outdir, quiet=True):
     for line in proc.stdout.splitlines():
         if line.startswith("JAMALTRON_RESULT "):
             result = json.loads(line.split(" ", 1)[1])
-        elif line.startswith(("FIX ", "CHECK ", "CAM ", "SUN ", "RENDER ", "WARN ")):
+        elif line.startswith(("FIX ", "CHECK ", "CAM ", "SUN ", "RENDER ", "POSE ", "WARN ")):
             notes.append(line.rstrip())
     if not quiet:
         for n in notes:
             print("   " + n)
     return result, notes
+
+
+def warn_notes(notes):
+    """The notes that are WARNINGS. render_pass prints these however quiet the pass is.
+
+    FIX / CAM / SUN / RENDER / POSE are a running commentary and belong behind `-v`. A WARN is
+    the renderer telling you the picture is wrong, and it is worth nothing if only `-v` shows
+    it: C.5's own "the posed body reaches 0.36 tiles BELOW the ground plane" -- the one line
+    that explains a flop whose shadow comes back sliced -- landed in a list nobody printed,
+    and both the CLI and the tuner were quiet, so nobody saw it in either.
+
+    Deduped one level up, because N jobs are N Blenders and each one says it about its own
+    frames.
+    """
+    return [n for n in notes if n.startswith("WARN ")]
 
 
 def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=False):
@@ -171,8 +194,23 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
           f"{len(groups)} job{'s' if len(groups) > 1 else ''})  "
           f"{shorten(outdir)}")
     warn_if_clipped(cfg, outdir, frames, which)
-    return outdir, {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
-                    "engine": engine, "jobs": len(groups)}
+    stats = {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
+             "engine": engine, "jobs": len(groups)}
+    # THE POSED BOX, unioned over however many Blenders ran. artconfig.derived() reports the
+    # REST box off a measured constant, which is right for the standing shark and wrong the
+    # moment he thrashes -- C.17 needs the real one and so does anyone pricing the bounce.
+    boxes = [r[0]["box_tiles"] for r in results if (r[0] or {}).get("box_tiles")]
+    if boxes:
+        stats["box_tiles"] = [[min(b[k][0] for b in boxes), max(b[k][1] for b in boxes)]
+                              for k in range(3)]
+    # The renderer's own warnings, once each. -v has already printed every note per job.
+    if not verbose:
+        for w in dict.fromkeys(w for r in results for w in warn_notes(r[1])):
+            print("   " + w)
+    for r in results:
+        for m in (r[0] or {}).get("clip_mismatches", ()):
+            print("  WARN clip table vs the model: " + m)
+    return outdir, stats
 
 
 #: Knob to turn when a pass runs out of canvas, per pass.
@@ -503,7 +541,7 @@ def footer_lines(cfg, label, passes=()):
     d = ac.derived(cfg)
     rendered = "  ".join("%s %s/%d" % (name, engine, samples)
                          for name, engine, samples in passes) or "no render pass"
-    return [
+    lines = [
         "jamaltron %s  config %s  %s  [%s]"
         % (label, ac.config_hash(cfg), time.strftime("%Y-%m-%d %H:%M:%S"), rendered),
         "scale %.3f -> %.2f x %.2f tiles  offset %s  rot %s  pivot %s  "
@@ -513,6 +551,22 @@ def footer_lines(cfg, label, passes=()):
            cfg["sun.azimuth"], cfg["sun.elevation"], cfg["sun.energy"], cfg["sun.ambient"],
            cfg["render.use_subsurface"], cfg["render.use_normal_map"]),
     ]
+    # THE POSE LINE, and only when there is one. A flop sheet whose footer reads like the
+    # standing sheet's is a sheet you will misfile three weeks from now: at 132 px a rolled
+    # thrash frame and a standing frame are not always distinguishable by eye.
+    if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
+        clip = pose.clip_of(cfg["model.action"])
+        lines.append(
+            "POSE %s%s frame %d gain %.2f  reparent_head=%s  bounce %.2f tiles peak "
+            "(phase %.2f, g %.1f -> %.1f of %d frames airborne)  this frame lifted %.3f "
+            "tiles = %.1f px up-screen, %.1f px of shadow east"
+            % (cfg["model.action"], " (%s)" % clip.action if clip else "",
+               cfg["model.frame"], cfg["model.pose_gain"], cfg["model.reparent_head"],
+               cfg["bounce.height"], cfg["bounce.phase"], cfg["bounce.gravity"],
+               d["bounce_airtime_frames"], d["bounce_cycle_frames"], d["bounce_lift_tiles"],
+               d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
+               d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
+    return lines
 
 
 def finish(cfg, png, sidecar, extra):
@@ -587,6 +641,14 @@ def main(argv=None):
           % (ac.config_hash(cfg), cfg["model.scale"], d["shark_length_tiles"],
              d["shark_width_tiles"], d["shark_height_tiles"],
              cfg["model.offset"], cfg["model.rotation"]))
+    if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
+        print("  pose %s frame %d gain %.2f  reparent_head=%s  bounce peak %.2f tiles "
+              "(phase %.2f) -> this frame +%.3f tiles = %.1f px up-screen, %.1f px shadow east"
+              % (cfg["model.action"], cfg["model.frame"], cfg["model.pose_gain"],
+                 cfg["model.reparent_head"], cfg["bounce.height"], cfg["bounce.phase"],
+                 d["bounce_lift_tiles"],
+                 d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
+                 d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
     made = []
     t0 = time.time()
 
