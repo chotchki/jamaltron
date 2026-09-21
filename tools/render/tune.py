@@ -159,17 +159,33 @@ KNOBS = [
          "pitch (nose up/down)", "deg", "nose down", "nose up",
          "A few degrees of nose-up reads as swimming rather than dead-fish-on-a-stick. "
          "C.5's jump arc wants a lot more."),
+    Knob("yaw", "model.rotation", 2, -180.0, 180.0, 1.0,
+         "yaw (spin, INSIDE the roll)", "deg", "&larr; ccw", "cw &rarr;",
+         "Spins him about his OWN z BEFORE roll and pitch apply, so on a rolled shark this "
+         "swings the nose through the roll axis rather than around the screen. 180 flips him "
+         "head-for-tail in his own frame. If what you want is 'turn him round as seen from "
+         "above', use base yaw instead: on an UPRIGHT shark the two are identical, on a ROLLED "
+         "one they are not, and that difference is the whole reason both sliders exist."),
+    Knob("base_yaw", "model.base_yaw", None, -180.0, 180.0, 1.0,
+         "base yaw (spin, OUTSIDE the roll)", "deg", "&larr; ccw", "cw &rarr;",
+         "Spins the whole already-rolled assembly about WORLD z - the plain turn-him-round "
+         "knob. Default 90 is the quarter turn that points a +x nose north, so 270 faces him "
+         "the other way. Sitting outside the art rotations is what lets pitch keep meaning "
+         "nose-up whatever this is set to."),
     Knob("roll", "model.rotation", 0, -(ac.ROLL_BELLY_UP + 15.0), ac.ROLL_BELLY_UP + 15.0, 1.0,
          "roll (lays him over)", "deg", "&larr; onto one flank", "onto the other &rarr;",
          "THE beached knob: 0 is upright, &plusmn;90 is flat on a flank. Sign picks which "
          "flank, and it is worth looking at both -- the dorsal fin and the harness are not "
-         "symmetric. 80-90 IS THE CALL (chotchki, off the C.5 sheets), and the reason is the "
-         "BOUNCE: at that roll the swim's bend plane stands up into the same plane the lift "
-         "works in, so curl-up / lift-off / slam-down is ONE composed motion and the bought "
-         "clip needs no gain at all. The slider runs 15 deg PAST the 105 where sheet B says "
-         "he starts reading as dead belly-up in WATER, and warns from there on -- a limit you "
-         "cannot cross is a limit you have to take on faith, and this phase exists to replace "
-         "faith with looking. Drag it there once, see it, come back."),
+         "symmetric. 80-90 IS THE CALL (chotchki, off the C.5 sheets). THE STATED REASON WAS "
+         "WRONG AND IS STRUCK: watching the loop at 24 fps measured NO curl - the spine bows "
+         "gently, the body goes up and down, two effects at once rather than one composed "
+         "motion, and the bounce moves silhouette change only 15.0% -> 15.5%. What the bounce "
+         "actually buys is the SHADOW separating (overlap 41.8% -> 18.7%), the only height cue "
+         "in the frame. Whether ungained is enough is STILL OPEN - that is what pose_gain is for. "
+         "The slider runs 15 deg PAST the 105 where sheet B says he starts reading as dead "
+         "belly-up in WATER, and warns from there on -- a limit you cannot cross is a limit you "
+         "have to take on faith, and this phase exists to replace faith with looking. Drag it "
+         "there once, see it, come back."),
     Knob("bounce_height", "bounce.height", None, 0.0, 0.8, 0.02,
          "bounce height", "tiles", "&larr; sliding", "launched &uarr;",
          "How far off the ground the push-off throws him, in world tiles. 0 pins him to the "
@@ -196,6 +212,7 @@ KNOBS = [
 #: pasted without `action` is the standing shark.
 TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model.rotation",
              "model.action", "model.pose_gain", "model.frame", "model.reparent_head",
+             "model.base_yaw",
              "bounce.height", "bounce.phase", "bounce.gravity")
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
 assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema does not have"
