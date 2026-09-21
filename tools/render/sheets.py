@@ -81,6 +81,15 @@ LEG_MOUNTS = [
 #: base/prototypes/entity/entities.lua: body_height = 1.5 * scale * leg_scale.
 STOCK_BODY_HEIGHT_TILES = 1.5
 
+#: Alpha a pixel needs before A LEG MAY STAND ON IT. Deliberately NOT
+#: art.SPRITE_VISIBLE_ALPHA, and the difference is the question, not the number: "is there
+#: body under this mount" is a POINT SAMPLE of something load-bearing, while "how big is
+#: he" is an EXTENT and has to keep every pixel the engine draws. An alpha-2 antialiasing
+#: whisker under a mount is a leg hanging in the air, so counting it would be a tolerance
+#: pointing the wrong way -- and 8 is the number stock's own plate was validated at,
+#: 8 of 8 markers on opaque base_animation with every gap inside the 0.71 px sampling floor.
+MOUNT_OPAQUE_ALPHA = 8
+
 #: Where the SHIPPED mount ratio lives. C.13 moved Jamal's mounts inboard -- he is in a
 #: harness, not a chassis -- so the eight markers stock declares are not the eight this
 #: mod draws, and a compare sheet marking stock's ring answers a question nobody is asking
@@ -323,7 +332,7 @@ def load_sheet_frame(spec: dict, index: int, cell_px: int, px_per_tile: float,
     return frame.crop(box)
 
 
-def mount_selfcheck(spec: dict | None = None, alpha_threshold: int = 8,
+def mount_selfcheck(spec: dict | None = None, alpha_threshold: int = MOUNT_OPAQUE_ALPHA,
                     search_px: int = 6) -> dict:
     """Do the mount markers land on the stock layer the legs attach to? Measured, not eyed.
 
@@ -399,7 +408,7 @@ def selfcheck_line(res: dict) -> str:
 
 
 def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
-                   alpha_threshold: int = 8, shrink: float = 1.0) -> int:
+                   alpha_threshold: int = MOUNT_OPAQUE_ALPHA, shrink: float = 1.0) -> int:
     """How many of the eight leg mounts land on opaque pixels of OUR shark.
 
     mount_selfcheck() pointed at the other row. Stock answers "do the mounts land on
@@ -451,20 +460,45 @@ def coverage_line(samples, total: int = len(LEG_MOUNTS)) -> str:
 def load_render_frame(path, cell_px: int, render_ppt: float, px_per_tile: float,
                       origin_y: float = 0.5):
     """One of our own renders, cropped to a cell. Our canvas is centred on the origin
-    by construction, so the entity is at pixel index (res-1)/2 in both axes."""
-    return render_frame_cell(path, cell_px, render_ppt, px_per_tile, origin_y)[0]
+    by construction, so the entity is at pixel index (res-1)/2 in both axes.
+
+    The crop alone, with no alpha threshold in sight: a caller that does not want the
+    measurement must not have to invent a number to get the picture.
+    """
+    img, origin = _to_cell_scale(path, render_ppt, px_per_tile)
+    box, _ = centred_crop(origin, cell_px, origin_y)
+    return img.crop(box)
 
 
 def render_frame_cell(path, cell_px: int, render_ppt: float, px_per_tile: float,
-                      origin_y: float = 0.5, alpha_threshold: int = 8):
+                      origin_y: float, alpha_threshold: int):
     """The same crop, plus WHAT IT THREW AWAY: (cell, cut, tiles_needed).
 
     The render pass shouts when a frame runs out of RENDER canvas (art.warn_if_clipped).
     Nothing shouted when the compare CELL ran out, and a cell crop is the more dangerous
     of the two: it is the image the size and pivot decisions get made against, it looks
     like a deliberately tight framing rather than an error, and it costs no Blender time
-    to be wrong. So it is measured here, every cell, off the same alpha the packer uses.
+    to be wrong. So it is measured here, every cell.
+
+    `alpha_threshold` HAS NO DEFAULT on purpose. This asks the packer's own question --
+    did a crop cut the sprite -- and a default here is a second opinion about what counts
+    as sprite, sitting one import away from art.SPRITE_VISIBLE_ALPHA and free to drift
+    from it. Two thresholds quietly disagreeing is how C.4 shipped a clipped tail fin, so
+    every caller names the question it is asking: art.pass_alpha_floor(pass) for a raw
+    render (the shadow pass carries noise the others do not), SPRITE_VISIBLE_ALPHA
+    otherwise.
     """
+    img, origin = _to_cell_scale(path, render_ppt, px_per_tile)
+    box, _ = centred_crop(origin, cell_px, origin_y)
+    sprite = img.getchannel("A").point(
+        lambda v: 255 if v >= alpha_threshold else 0).getbbox()
+    return (img.crop(box), crop_loss(sprite, box),
+            cell_tiles_needed(sprite, origin, px_per_tile, origin_y))
+
+
+def _to_cell_scale(path, render_ppt: float, px_per_tile: float):
+    """A render resampled to the sheet's px-per-tile, with the entity origin moved with
+    it. Shared so the crop and the crop's own measurement cannot resample differently."""
     img = Image.open(path).convert("RGBA")
     origin = (fc.origin_pixel(img.width), fc.origin_pixel(img.height))
     if abs(render_ppt - px_per_tile) > 1e-6:
@@ -472,11 +506,7 @@ def render_frame_cell(path, cell_px: int, render_ppt: float, px_per_tile: float,
         img = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))),
                          Image.LANCZOS)
         origin = (origin[0] * k, origin[1] * k)
-    box, _ = centred_crop(origin, cell_px, origin_y)
-    sprite = img.getchannel("A").point(
-        lambda v: 255 if v >= alpha_threshold else 0).getbbox()
-    return (img.crop(box), crop_loss(sprite, box),
-            cell_tiles_needed(sprite, origin, px_per_tile, origin_y))
+    return img, origin
 
 
 def shadow_layer(img, strength: float = 0.55):

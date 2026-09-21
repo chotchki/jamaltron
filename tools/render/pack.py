@@ -32,9 +32,14 @@ the RenderHub carve-out licence.
 
 WHAT THE PACKER DECIDES, measured rather than chosen:
 
-  * THE FRAME BOX is the UNION of every frame's alpha bounding box, padded by `--pad`.
-    One box for the whole sheet, because Factorio gets ONE width, ONE height and ONE shift
-    for all 64 rotations. Union, not per-frame: a box that fits frame 0 clips frame 32.
+  * THE FRAME BOX is the UNION of every frame's alpha bounding box AT alpha >= 1, padded
+    by `--pad`. One box for the whole sheet, because Factorio gets ONE width, ONE height
+    and ONE shift for all 64 rotations. Union, not per-frame: a box that fits frame 0 clips
+    frame 32. And alpha >= 1 because Factorio composites with the alpha in the PNG, so
+    every non-zero pixel is drawn -- C.4 measured this box at alpha >= 8 and shipped a
+    shark whose tail fin was sliced flat at the frame edge in directions 16 and 48. The
+    faint ramp below the threshold was visible in game. art.SPRITE_VISIBLE_ALPHA is that
+    threshold, it lives in ONE place, and every extent question here asks it.
   * THE SHIFT falls out of that box. Our canvas is centred on the entity origin by
     construction (the camera looks at the world origin), so the origin sits at pixel index
     (res-1)/2 -- see factorio_camera.origin_pixel for why that is not res/2 -- and the
@@ -48,20 +53,30 @@ WHAT THE PACKER DECIDES, measured rather than chosen:
     a sheet we generated should not carry frames nothing draws. Ask for 8 (stock's own
     torso layout) on a count 8 does not divide and you get the largest divisor that fits,
     with a line on stdout saying so.
-  * CLIPPED IS FATAL. If any frame's alpha touches its canvas edge the sprite is cut, not
-    small, and it ships as a shark with a flat dorsal fin. Raise camera.canvas_tiles and
-    re-render. `--allow-clipped` exists for deliberate experiments and says so loudly.
+  * CLIPPED IS FATAL, TWICE, and the second one is the gate C.4 did not have. A frame
+    whose visible alpha touches the RENDER CANVAS edge is cut before the packer ever sees
+    it: raise camera.canvas_tiles and re-render, no box can fix that. Then, once the sheets
+    are laid out, EVERY frame is re-measured inside its own cell and must keep the margin
+    `--pad` promised; that check is on the finished pixels, so it does not care whether the
+    box math, the crop, the pad or a threshold somewhere was the thing that went wrong --
+    it is the hand measurement off a shipped PNG, run on every pack. `--allow-clipped`
+    downgrades both to notes for deliberate experiments and says so loudly.
   * STALE FRAMES ARE FATAL. Every frame directory carries art.py's own config.json; the
     pass hash in it must match the config being packed, or you are shipping pixels from
     knobs you have since moved. `--any-config` overrides, for packing somebody else's
     frames on purpose.
 
-SHADOW SHEETS GET SURGERY, and it is deliberate: RGB forced to black and alpha below
-SPRITE_ALPHA_FLOOR zeroed. Factorio draws a `draw_as_shadow` sprite as a darkening mask
-where only alpha matters (stock's spidertron-body-shadow.png is a palette PNG of pure
-black plus alpha), and a Cycles shadow catcher scatters alpha 1..7 sampling noise across
-the whole plane -- MEASURED, 9537 noise pixels on a 704px frame. Left in, that noise is a
-faint grey rectangle over every tile the shark stands near.
+SHADOW SHEETS GET SURGERY, BEFORE ANYTHING IS MEASURED, and both halves of that are
+deliberate: RGB forced to black and alpha below RENDER_NOISE_FLOOR zeroed. Factorio draws
+a `draw_as_shadow` sprite as a darkening mask where only alpha matters (stock's
+spidertron-body-shadow.png is a palette PNG of pure black plus alpha), and a Cycles shadow
+catcher scatters alpha 1..7 sampling noise across the whole plane -- MEASURED, 9537 noise
+pixels on a 704px frame. Left in, that noise is a
+faint grey rectangle over every tile the shark stands near. Doing it FIRST is what lets
+the frame box be measured at the visible threshold on this pass too: after the surgery
+there is no sub-floor alpha left to disagree about, so the pixels that get measured are
+the pixels that ship. The noise floor is a fact about the RENDERER; the visible threshold
+is a fact about the ENGINE, and the packer never measures with one and writes the other.
 
 BASE_ANIMATION: NOT WORTH RENDERING, and the number that settles it is 512/512. Stock
 needs a non-rotating under plate because its legs bolt to the corners of a machine and its
@@ -101,9 +116,10 @@ NOT stripped: the config-hash text chunk this tool writes is the provenance, and
 `--strip safe` would quietly take it. Measured savings are printed per sheet. It is off by
 default because it is seconds per sheet and the iteration loop should not pay for it.
 
-Runs on the uv side (Pillow). Imports art.py for SPRITE_ALPHA_FLOOR and the cache-directory
-naming on purpose: if this module computed its own pass directory it would eventually
-disagree with the renderer's, and pack the wrong frames without a word.
+Runs on the uv side (Pillow). Imports art.py for the alpha thresholds and the
+cache-directory naming on purpose: if this module computed its own pass directory it would
+eventually disagree with the renderer's, and pack the wrong frames without a word -- and a
+second copy of "what counts as part of the sprite" is the bug this file just fixed.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
@@ -123,7 +139,8 @@ from dataclasses import dataclass, field  # noqa: E402
 from render import artconfig as ac  # noqa: E402
 from render import factorio_camera as fc  # noqa: E402
 from render import sheets  # noqa: E402
-from render.art import REPO, SPRITE_ALPHA_FLOOR, pass_dir  # noqa: E402
+from render.art import (REPO, RENDER_NOISE_FLOOR, SPRITE_VISIBLE_ALPHA,  # noqa: E402
+                        pass_dir)
 from render.spritesheet import MAX_SHEET_SIDE, SheetLayout, plan_sheet  # noqa: E402
 
 #: Dry-run root. Gitignored, and mod-shaped so the manifest lints where it lands.
@@ -144,9 +161,21 @@ MOD_NAME = "jamaltron"
 #: contact sheet and a shipped sheet can be eyeballed against each other.
 DEFAULT_LINE_LENGTH = 8
 
-#: Pixels of margin around the union alpha box. The box is measured at
-#: SPRITE_ALPHA_FLOOR, so the 1..7 antialiasing fringe sits just outside it; one pixel
-#: keeps that fringe rather than shaving the silhouette's edge ramp.
+#: Pixels of transparent margin around the union alpha box, and it is NOT there to keep
+#: the sprite whole -- the box is measured at SPRITE_VISIBLE_ALPHA, so it already contains
+#: every pixel the engine draws, and a pad that was load-bearing would mean the box was
+#: wrong. MEASURED against the art this mod stands next to: Wube crops FLUSH. The stock
+#: spidertron torso's own 132x138 cells hold alpha>0 pixels at margin 0 on all four edges,
+#: its mask and shadow the same, so the engine's atlas evidently handles a sprite that
+#: touches its cell edge and a margin buys nothing at draw time.
+#:
+#: What it buys is a FALSIFIABLE GATE. cell_margins() re-measures every finished cell and
+#: tight_frames() requires the margin this promised; at pad 1 that check fails while the
+#: sprite is still INTACT -- one pixel from the edge, nothing lost yet -- instead of after
+#: the pixels are already gone. A gate with no slack is a post-mortem. The bill for it on
+#: the shipped body sheet is 2 px per axis: 2880x2296 without, 2896x2312 with, +1.3% of the
+#: pixels. It does not grow from there -- pixels go as the SQUARE of the box, so a margin
+#: past one pixel is paying real VRAM for detection slack a one-pixel margin already has.
 DEFAULT_PAD = 1
 
 #: How a graphics_set slot wraps its sprite(s). Read off spidertron-animations.lua's
@@ -332,12 +361,19 @@ def check_pass_hash(cfg, target: Target, directory: pathlib.Path, *, any_config:
 # ---------------------------------------------------------------------- the geometry
 
 
-def union_box(images, floor: int = SPRITE_ALPHA_FLOOR):
+def union_box(images, floor: int = SPRITE_VISIBLE_ALPHA):
     """Union of every frame's alpha bounding box. One box for the whole sheet.
+
+    THE DEFAULT IS THE VISIBLE THRESHOLD, and every caller here takes it: a box measured
+    at anything higher is a box that cuts pixels the engine draws. Pass a different floor
+    only for a pass whose sub-floor alpha has already been ZEROED in the pixels (the shadow
+    surgery) or to demonstrate the difference in a test -- never to make a subject fit.
 
     Returns (box, per_frame) so a caller can report WHICH frame is widest -- when the box
     is bigger than expected the answer is always one rotation, and naming it saves opening
-    64 files.
+    64 files. `per_frame` is measured at the SAME threshold as the box, and the refusals
+    below consume it, so no gate can ever be reading a different mask from the box it is
+    guarding.
     """
     per_frame, box = [], None
     for index, img in images:
@@ -352,7 +388,12 @@ def union_box(images, floor: int = SPRITE_ALPHA_FLOOR):
 
 
 def clipped_frames(per_frame, canvas):
-    """Frames whose alpha touches the canvas edge. See the module docstring: fatal."""
+    """Frames whose alpha touches the RENDER canvas edge. See the module docstring: fatal.
+
+    Canvas, not frame box: this is the damage no box can undo, because the pixels were
+    never rendered. Whether the BOX then held everything is a separate question, asked
+    after the fact and on the finished cells, by cell_margins() and tight_frames().
+    """
     width, height = canvas
     return [i for i, b in per_frame
             if b is not None and (b[0] <= 0 or b[1] <= 0 or b[2] >= width or b[3] >= height)]
@@ -363,6 +404,68 @@ def pad_box(box, pad: int, canvas):
     width, height = canvas
     return (max(0, box[0] - pad), max(0, box[1] - pad),
             min(width, box[2] + pad), min(height, box[3] + pad))
+
+
+#: Edge order for every margin tuple and every message that prints one.
+EDGES = ("L", "T", "R", "B")
+
+
+def cell_margins(sheet_images, layout, *, floor: int = SPRITE_VISIBLE_ALPHA):
+    """Per frame, the transparent margin inside its own cell of the finished sheet(s).
+
+    Measured on the LAID-OUT pixels -- the same buffers that are about to be saved -- and
+    not on the frames or the box arithmetic that produced them, which is the entire point:
+    box math, `--pad`, the crop, the cell placement and any threshold anybody picked along
+    the way all land in these pixels, and a margin measured here cannot be fooled by a
+    mistake upstream of it. It is the measurement you would make by hand on the shipped
+    PNG when something looks sliced, done on every pack instead.
+
+    Returns (worst, per_frame): `worst` is edge -> (px, frame index) over every frame, and
+    `per_frame` is [(index, (left, top, right, bottom) or None), ...] with None for an
+    empty cell (a reducer may legitimately leave one, and an empty cell clips nothing).
+    """
+    worst: dict = {}
+    per_frame = []
+    for file_index, sheet in enumerate(sheet_images):
+        alpha = sheet.getchannel("A")
+        first = file_index * layout.frames_per_file
+        for index in range(first, min(first + layout.frames_per_file, layout.frame_count)):
+            slot = index - first
+            cell = alpha.crop(sheets.frame_box(slot, layout.frame_width,
+                                               layout.frame_height, layout.line_length))
+            box = cell.point(lambda v: 255 if v >= floor else 0).getbbox()
+            if box is None:
+                per_frame.append((index, None))
+                continue
+            margins = (box[0], box[1], layout.frame_width - box[2],
+                       layout.frame_height - box[3])
+            per_frame.append((index, margins))
+            for edge, value in zip(EDGES, margins):
+                if edge not in worst or value < worst[edge][0]:
+                    worst[edge] = (value, index)
+    return worst, per_frame
+
+
+def margin_line(worst: dict, layout, floor: int) -> str:
+    """The margin measurement as one line, for stdout and for the sheet's notes."""
+    if not worst:
+        return "every cell is empty at alpha >= %d; nothing to measure" % floor
+    return ("tightest margin inside the %dx%d cell at alpha >= %d: %s (over %d frame(s))"
+            % (layout.frame_width, layout.frame_height, floor,
+               "  ".join("%s%d px (frame %d)" % (edge, worst[edge][0], worst[edge][1])
+                         for edge in EDGES if edge in worst),
+               layout.frame_count))
+
+
+def tight_frames(per_frame, want: int):
+    """Frames whose visible pixels sit closer to their cell edge than `want`.
+
+    At `want` 0 this is vacuous by construction -- the cells were cropped out of the box,
+    so nothing can lie outside one -- and that is the honest reason DEFAULT_PAD is 1: the
+    pad is the slack that makes this check able to fail BEFORE a pixel is lost.
+    """
+    return [(index, margins) for index, margins in per_frame
+            if margins is not None and min(margins) < want]
 
 
 def sheet_shift(box, canvas, px_per_tile: float):
@@ -478,7 +581,10 @@ def reflection_blob(images, cfg, px_per_tile: float, floor: int):
     The canvas GROWS by the blur's own reach first. Blurring in place would push alpha into
     the canvas edge, and the packer's clipped-frames check would then correctly refuse a
     sheet that is not actually cut -- fixing that by loosening the check would blind it to
-    the real thing.
+    the real thing. The margin matters more now that the box is measured at the visible
+    threshold: a Gaussian's skirt runs out to alpha 1, and ALL of it is inside the box. On
+    the shipped render that skirt is what takes the blob from 330x190 to 378x293 px, 193 KiB
+    on one frame -- the honest price of not slicing a soft edge into a hard rectangle.
     """
     from PIL import Image, ImageFilter
 
@@ -511,6 +617,10 @@ def reflection_blob(images, cfg, px_per_tile: float, floor: int):
 
 def recentre_on_origin(alpha, floor: int):
     """Slide a blob so its alpha centroid lands on the canvas's own origin pixel.
+
+    `floor` is the visible threshold, i.e. every non-zero pixel is mass. The blob is the
+    MEAN of 64 clean body frames, so there is no noise here to exclude, and excluding the
+    faint skirt would put the centroid somewhere the blob is not.
 
     The render canvas is centred on the entity, but the SHARK is not -- model.offset lifts
     him and the 45-degree camera turns that lift into up-screen pixels, so his mean alpha
@@ -553,6 +663,10 @@ class Packed:
     paths: list[pathlib.Path]
     box: tuple
     layout: SheetLayout
+    #: edge -> (px, frame index): the tightest transparent margin inside a cell, measured
+    #: off the finished sheet. Zero on any edge means a clipped sprite, so this travels
+    #: with the result rather than only appearing in a line of stdout.
+    margins: dict = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     source: pathlib.Path | None = None
 
@@ -562,10 +676,17 @@ class Packed:
 
 def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
                 line_length: int = DEFAULT_LINE_LENGTH, pad: int = DEFAULT_PAD,
-                max_side: int = MAX_SHEET_SIDE, floor: int = SPRITE_ALPHA_FLOOR,
+                max_side: int = MAX_SHEET_SIDE, visible: int = SPRITE_VISIBLE_ALPHA,
+                noise_floor: int = RENDER_NOISE_FLOOR,
                 preview: bool = False, explicit_dir=None, allow_clipped: bool = False,
                 any_config: bool = False) -> Packed | None:
-    """Frames -> sheet PNG(s) + the sprite dict. None when the target has no frames yet."""
+    """Frames -> sheet PNG(s) + the sprite dict. None when the target has no frames yet.
+
+    TWO THRESHOLDS, ONE JOB EACH. `visible` is what the engine draws, so it measures every
+    extent and guards every refusal. `noise_floor` is what Cycles scattered, so it only
+    ever DELETES pixels -- the shadow surgery -- and it runs before anything is measured,
+    which is why the two can never disagree about a pixel that ships.
+    """
     from PIL import Image
 
     directory = frames_dir(cfg, target, preview=preview, explicit=explicit_dir)
@@ -603,25 +724,30 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
 
     notes = []
     if target.draw_as_shadow:
-        images = [(i, blacken(img, floor)) for i, img in images]
-        notes.append(f"shadow surgery: RGB forced to black, alpha < {floor} zeroed")
+        # FIRST, before any measurement: a raw shadow-catcher frame is 1..7 noise from edge
+        # to edge, and this is what removes it from the PIXELS rather than hiding it behind
+        # a measurement threshold. Everything after this point measures what will ship.
+        images = [(i, blacken(img, noise_floor)) for i, img in images]
+        notes.append(f"shadow surgery: RGB forced to black, alpha < {noise_floor} zeroed "
+                     f"BEFORE the box is measured, so the box sees what ships")
     if target.reduce:
         if target.reduce not in REDUCERS:
             raise PackError(f"{target.id}: no reducer named {target.reduce!r}; known: "
                             f"{', '.join(sorted(REDUCERS))}")
-        images, note = REDUCERS[target.reduce](images, cfg, ppt, floor)
+        images, note = REDUCERS[target.reduce](images, cfg, ppt, visible)
         frames = [i for i, _ in images]
         canvas = images[0][1].size      # a reducer may grow the canvas; see reflection_blob
         notes.append(note)
 
-    box, per_frame = union_box(images, floor)
+    box, per_frame = union_box(images, visible)
     if box is None:
-        raise PackError(f"{target.id}: every frame is empty at alpha >= {floor}")
+        raise PackError(f"{target.id}: every frame is empty at alpha >= {visible}")
     clipped = clipped_frames(per_frame, canvas)
     if clipped:
         knob = ("camera.shadow_canvas_tiles" if target.pass_name == "shadow"
                 else "camera.canvas_tiles")
-        message = (f"{target.id}: {len(clipped)} frame(s) touch the canvas edge "
+        message = (f"{target.id}: {len(clipped)} frame(s) touch the canvas edge at "
+                   f"alpha >= {visible} "
                    f"({', '.join(str(i) for i in clipped[:8])}"
                    f"{'...' if len(clipped) > 8 else ''}). The sprite is CUT, not small. "
                    f"Raise {knob} (now {cfg[knob]:.2f}) and re-render.")
@@ -640,12 +766,36 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
     except ValueError as exc:      # spritesheet.py's own guards, as a packer error
         raise PackError(f"{target.id}: {exc}") from None
 
+    # Laid out in memory and MEASURED BEFORE IT IS SAVED. A sheet that fails the margin
+    # check is never written at all, so a failed pack cannot leave a clipped PNG in a tree
+    # somebody then commits.
+    built = build_sheets([img for _, img in images], box, layout)
+    worst, per_cell = cell_margins(built, layout, floor=visible)
+    notes.append(margin_line(worst, layout, visible))
+    tight = tight_frames(per_cell, pad)
+    if tight:
+        shown = ", ".join(
+            "%d %s" % (index, " ".join("%s%d" % pair for pair in zip(EDGES, margins)))
+            for index, margins in tight[:6])
+        message = (
+            f"{target.id}: {len(tight)} frame(s) have visible pixels closer than the "
+            f"{pad} px `--pad` promised to their own cell edge ({shown}"
+            f"{'...' if len(tight) > 6 else ''}). Measured on the finished cells, so the "
+            f"sprite is being CUT by the frame box itself -- not by the render canvas. The "
+            f"box comes off the union at alpha >= {visible}; if that union is right this "
+            f"cannot happen, so read it as box arithmetic, a crop or a threshold, not as "
+            f"something to fix with a bigger --pad.")
+        if not allow_clipped:
+            raise PackError(message)
+        notes.append("CLIPPED BY THE BOX, packed anyway on --allow-clipped: " + message)
+
     graphics = out_root / GRAPHICS_DIR
     graphics.mkdir(parents=True, exist_ok=True)
     stems = ([target.stem] if layout.file_count == 1
              else [f"{target.stem}-{n + 1}" for n in range(layout.file_count)])
     paths = [graphics / f"{stem}.png" for stem in stems]
-    write_sheets([img for _, img in images], box, layout, paths)
+    for sheet, path in zip(built, paths):
+        sheet.save(path)
 
     scale = fc.NOMINAL_PX_PER_TILE / ppt
     fields = sprite_fields(target, [f"__{mod_name}__/{GRAPHICS_DIR}/{p.name}" for p in paths],
@@ -655,7 +805,7 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
             "sheet": target.id, "frames": frames, "source": str(directory),
             "sprite": fields}))
     return Packed(target=target, fields=fields, frames=frames, paths=paths, box=box,
-                  layout=layout, notes=notes, source=directory)
+                  layout=layout, margins=worst, notes=notes, source=directory)
 
 
 def blacken(img, floor: int):
@@ -667,22 +817,26 @@ def blacken(img, floor: int):
     return out
 
 
-def write_sheets(images, box, layout, paths):
-    """Crop every frame to `box` and paste it into its cell. No compositing: `paste`
-    copies alpha verbatim, `alpha_composite` would blend the sprite against the sheet's
-    own transparency and eat the edge ramp."""
+def build_sheets(images, box, layout):
+    """Crop every frame to `box` and paste it into its cell. Returns the sheet(s).
+
+    No compositing: `paste` copies alpha verbatim, `alpha_composite` would blend the sprite
+    against the sheet's own transparency and eat the edge ramp. Returns rather than saves so
+    the caller can MEASURE the finished cells before any of them reaches the disk.
+    """
     from PIL import Image
     per_file = layout.frames_per_file
-    for index, path in enumerate(paths):
-        size = layout.sheet_size(index)
-        sheet = Image.new("RGBA", size, (0, 0, 0, 0))
+    built = []
+    for index in range(layout.file_count):
+        sheet = Image.new("RGBA", layout.sheet_size(index), (0, 0, 0, 0))
         first = index * per_file
         for n in range(first, min(first + per_file, layout.frame_count)):
             slot = n - first
             col, row = slot % layout.line_length, slot // layout.line_length
             sheet.paste(images[n].crop(box),
                         (col * layout.frame_width, row * layout.frame_height))
-        sheet.save(path)
+        built.append(sheet)
+    return built
 
 
 # ------------------------------------------------------------------------ emitting
@@ -937,7 +1091,9 @@ def build_parser():
                    help=f"frames per row (default {DEFAULT_LINE_LENGTH}, stock's own torso "
                         f"layout); reduced to a divisor of the frame count if it is not one")
     k.add_argument("--pad", type=int, default=DEFAULT_PAD,
-                   help=f"px of margin around the union alpha box (default {DEFAULT_PAD})")
+                   help=f"px of transparent margin around the union alpha box, and the "
+                        f"margin every finished cell is then checked against "
+                        f"(default {DEFAULT_PAD})")
     k.add_argument("--max-side", type=int, default=MAX_SHEET_SIDE,
                    help=f"per-sheet px ceiling (default {MAX_SHEET_SIDE})")
     k.add_argument("--targets", default=None,
@@ -949,7 +1105,8 @@ def build_parser():
     h.add_argument("--no-verify", action="store_true",
                    help="skip the --strict lint of the manifest we just wrote")
     h.add_argument("--allow-clipped", action="store_true",
-                   help="pack frames whose alpha touches the canvas edge (they are CUT)")
+                   help="pack frames whose visible alpha touches the render canvas edge, "
+                        "or whose finished cells lose the --pad margin (they are CUT)")
     h.add_argument("--any-config", action="store_true",
                    help="pack frames whose pass hash does not match the config")
     return p

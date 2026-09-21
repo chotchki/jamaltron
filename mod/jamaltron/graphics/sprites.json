@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_by": "tools/render/pack.py",
-  "generated_at": "2026-09-20T16:04:57",
+  "generated_at": "2026-09-20T17:01:31",
   "config_hash": "83d6be794998",
   "mod": "jamaltron",
   "mod_roots": {
@@ -27,7 +27,7 @@
     {
       "id": "body",
       "filename": "__jamaltron__/graphics/jamaltron-body.png",
-      "width": 360,
+      "width": 362,
       "height": 289,
       "line_length": 8,
       "direction_count": 64,
@@ -71,14 +71,14 @@
     {
       "id": "reflection",
       "filename": "__jamaltron__/graphics/jamaltron-body-water-reflection.png",
-      "width": 332,
-      "height": 192,
+      "width": 380,
+      "height": 295,
       "line_length": 1,
       "variation_count": 1,
       "scale": 0.5,
       "shift": [
         0.0,
-        -0.09375
+        -0.2265625
       ]
     }
   ]

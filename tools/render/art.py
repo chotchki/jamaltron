@@ -179,27 +179,59 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
 CANVAS_KNOB = {"body": "camera.canvas_tiles", "shadow": "camera.shadow_canvas_tiles"}
 
 
-#: Alpha a pixel needs before it counts as part of the sprite. Same 8 sheets.py samples
-#: mounts at, and NOT 1: a Cycles shadow-catcher scatters alpha 1..7 sampling noise over
-#: the entire plane, so a threshold of 1 reports every shadow frame as clipped and the
-#: warning is worthless inside one run. MEASURED on a 704 px shadow frame: bbox at alpha>=1
-#: is the whole canvas, at alpha>=8 it is (271,318)-(513,386).
-SPRITE_ALPHA_FLOOR = 8
+#: Alpha at which a pixel IS PART OF THE SPRITE, because Factorio DRAWS it: the engine
+#: composites with the alpha in the PNG, so an alpha-1 pixel is a faint pixel, not an
+#: absent one. Every question of the form "how big is he" or "did a crop cut him" -- the
+#: packer's frame box, the refusals around it, the compare cell's own crop check -- is
+#: asked at THIS number.
+#:
+#: It used to be 8, and that is exactly how C.4 shipped a shark with his tail fin sliced
+#: off: the fin tip's antialiasing ramp does not clear alpha 8, so it was measured OUT of
+#: the box that was supposed to contain it, and the gate meant to catch a cut sprite was
+#: reading the same thresholded mask and therefore agreed that nothing was wrong. The
+#: faint pixels were visible in game. He was clipped at the frame edge in dir 16 and 48.
+SPRITE_VISIBLE_ALPHA = 1
+
+#: Alpha below which a Cycles SHADOW-CATCHER frame is SAMPLING NOISE rather than shadow.
+#: NOT a claim about what is visible -- see above -- but about what the renderer scattered:
+#: MEASURED on a 704 px shadow frame, the alpha>=1 bbox is the whole canvas (9537 noise
+#: pixels) while the alpha>=8 bbox is (271,318)-(513,386), which is the shadow. pack.py
+#: ZEROES everything under this in the shadow sheets it writes, and it does so BEFORE it
+#: measures them, which is what makes both thresholds agree about the pixels that ship.
+RENDER_NOISE_FLOOR = 8
+
+#: Per PASS, what counts as sprite in a RAW render. Body and mask are transparent-film
+#: renders whose alpha IS the subject's own coverage -- MEASURED on the shipped 64-frame
+#: body pass, the alpha>=1 union is one pixel wider per side than the alpha>=8 one and
+#: there is no stray alpha anywhere else on the canvas -- so the visible threshold is the
+#: honest one there. A raw shadow frame is noise edge to edge, so asking the visible
+#: question of one reports every frame clipped, every run, and the warning stops working.
+PASS_ALPHA_FLOOR = {"shadow": RENDER_NOISE_FLOOR}
 
 
-def warn_if_clipped(cfg, outdir, frames, which, floor: int = SPRITE_ALPHA_FLOOR):
+def pass_alpha_floor(which: str) -> int:
+    """What counts as sprite in a raw `which`-pass frame. One lookup, so no caller picks
+    the noise floor for a body frame by accident -- which is the bug this fixes."""
+    return PASS_ALPHA_FLOOR.get(which, SPRITE_VISIBLE_ALPHA)
+
+
+def warn_if_clipped(cfg, outdir, frames, which, floor: int | None = None):
     """Shout when the render ran out of canvas. Measured off the alpha, every run.
 
     A clipped frame does not look broken, it looks like a shark with a flat dorsal fin,
-    and you will spend twenty minutes on the LIGHTING before you notice the canvas. The
-    shipped 6-tile body canvas holds the shipped scale 0.81 with 0.20 tiles to spare at
-    the SIDES (frames 16 and 48, the broadside pair) and starts cutting at 0.87 -- one
-    nudge of the scale slider away, which is why this runs on every pass.
+    and you will spend twenty minutes on the LIGHTING before you notice the canvas. At the
+    VISIBLE threshold (the default, per pass) the shipped 6-tile body canvas holds scale
+    0.81 with 12 px -- 0.19 tiles -- to spare at the SIDES, frames 16 and 48, the broadside
+    pair. Scaled off that margin the first cut lands just under 0.86. Read at alpha >= 8
+    the same canvas looked good to 0.87, because that reading hands you a pixel of margin
+    per side that is not actually empty. Either way it is one nudge of the scale slider,
+    which is why this runs on every pass.
 
     Runs on cached frames too: the second run at a too-big scale is the one where you have
     forgotten, and a warning that only fires on a cache miss is a warning you never see.
     """
     from PIL import Image
+    floor = pass_alpha_floor(which) if floor is None else floor
     clipped = []
     for i in frames:
         p = outdir / f"frame_{i:03d}.png"
@@ -294,7 +326,7 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
                                     cfg["compare.origin_y"])
         frame, cut, need = sheets.render_frame_cell(
             bodydir / f"frame_{i:03d}.png", cell, ppt, d["sprite_px_per_tile"],
-            cfg["compare.origin_y"], SPRITE_ALPHA_FLOOR)
+            cfg["compare.origin_y"], pass_alpha_floor(which))
         cuts.append(("%02d" % i, cut))
         needs.append(need)
         bg.alpha_composite(frame)
@@ -382,7 +414,7 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
         label = "%02d %s" % (i, ac.compass(i, cfg["rotations.count"]))
         jam_body, cut, need = sheets.render_frame_cell(
             bodydir / f"frame_{i:03d}.png", cell, d["body_px_per_tile"], ppt, oy,
-            SPRITE_ALPHA_FLOOR)
+            SPRITE_VISIBLE_ALPHA)
         cuts.append((label, cut))
         needs.append(need)
         coverage.append((label, sheets.mount_coverage(jam_body, ppt, oy, shrink=shrink)))

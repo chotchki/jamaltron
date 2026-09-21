@@ -128,13 +128,27 @@ def test_union_box_is_the_union_not_the_first_frame():
     assert [b for _, b in per_frame] == [(10, 10, 20, 20), (40, 30, 60, 50)]
 
 
-def test_union_box_ignores_subthreshold_alpha():
-    """Cycles scatters alpha 1..7 sampling noise across the whole shadow plane. At floor 1
-    the box is the canvas; at the shipped floor it is the shadow."""
+def test_the_box_keeps_the_faint_fringe_the_engine_still_draws():
+    """THE FIN. An antialiased edge ramp is 1..7 alpha and Factorio composites every bit of
+    it, so the box has to contain it. Measuring at 8 -- which is what C.4 shipped -- puts
+    the ramp OUTSIDE the box that is supposed to hold the sprite, and the crop shaves it."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    img.paste((200, 80, 80, 255), (20, 20, 30, 30))
+    img.paste((200, 80, 80, 3), (30, 24, 36, 26))          # the fin tip's own ramp
+    assert pack.union_box([(0, img)])[0] == (20, 20, 36, 30)
+    assert pack.union_box([(0, img)], floor=8)[0] == (20, 20, 30, 30)
+    assert pack.union_box.__defaults__ == (pack.SPRITE_VISIBLE_ALPHA,)
+
+
+def test_a_shadow_frame_is_denoised_in_the_pixels_not_by_the_threshold():
+    """Cycles scatters alpha 1..7 over the whole shadow plane, so at the visible threshold a
+    RAW shadow frame's box is the canvas. The packer does not answer that with a higher
+    threshold -- it ZEROES the noise first, and then one threshold governs everything."""
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 3))
     img.paste((0, 0, 0, 255), (20, 20, 30, 30))
-    assert pack.union_box([(0, img)], floor=1)[0] == (0, 0, 64, 64)
-    assert pack.union_box([(0, img)], floor=pack.SPRITE_ALPHA_FLOOR)[0] == (20, 20, 30, 30)
+    assert pack.union_box([(0, img)])[0] == (0, 0, 64, 64)
+    clean = pack.blacken(img, pack.RENDER_NOISE_FLOOR)
+    assert pack.union_box([(0, clean)])[0] == (20, 20, 30, 30)
 
 
 def test_empty_frames_do_not_move_the_box():
@@ -156,6 +170,65 @@ def test_clipped_frames_flags_every_edge(box, expect):
 
 def test_pad_is_clamped_to_the_canvas():
     assert pack.pad_box((0, 5, 60, 64), 2, (64, 64)) == (0, 3, 62, 64)
+
+
+# ------------------------------------------------------------------ the finished cells
+
+
+def _sheet_of(cells, frame_w, frame_h, line_length):
+    """A hand-laid sheet: `cells` is [(x0,y0,x1,y1) or None] per frame, cell-relative."""
+    layout = plan_sheet(len(cells), frame_w, frame_h, line_length=line_length)
+    sheet = Image.new("RGBA", (line_length * frame_w,
+                              layout.lines_in_file(0) * frame_h), (0, 0, 0, 0))
+    for index, box in enumerate(cells):
+        if box is None:
+            continue
+        col, row = index % line_length, index // line_length
+        sheet.paste((255, 255, 255, 255),
+                    (col * frame_w + box[0], row * frame_h + box[1],
+                     col * frame_w + box[2], row * frame_h + box[3]))
+    return [sheet], layout
+
+
+def test_cell_margins_measures_every_edge_of_every_cell():
+    """The margin is per CELL, so it has to survive the grid: frame 3 sits in another
+    column and frame 5 on another row, and a reader of the whole sheet's bbox sees neither."""
+    cells = [(5, 5, 15, 15)] * 8
+    cells[3] = (1, 4, 19, 16)        # tight on the left, in column 3
+    cells[5] = (4, 2, 16, 18)        # tight on the top, in row 1
+    sheets_, layout = _sheet_of(cells, 20, 20, 4)
+    worst, per_frame = pack.cell_margins(sheets_, layout)
+    assert worst["L"] == (1, 3) and worst["T"] == (2, 5)
+    assert worst["R"] == (1, 3) and worst["B"] == (2, 5)
+    assert per_frame[0] == (0, (5, 5, 5, 5))
+    assert len(per_frame) == 8
+
+
+def test_an_empty_cell_clips_nothing():
+    sheets_, layout = _sheet_of([(5, 5, 15, 15), None], 20, 20, 2)
+    worst, per_frame = pack.cell_margins(sheets_, layout)
+    assert per_frame[1] == (1, None)
+    assert pack.tight_frames(per_frame, 1) == []
+    assert worst["L"] == (5, 0)
+
+
+def test_tight_frames_names_the_frames_that_lost_their_margin():
+    sheets_, layout = _sheet_of([(1, 1, 19, 19), (0, 5, 15, 15)], 20, 20, 2)
+    _, per_frame = pack.cell_margins(sheets_, layout)
+    assert [i for i, _ in pack.tight_frames(per_frame, 1)] == [1]
+    assert [i for i, _ in pack.tight_frames(per_frame, 2)] == [0, 1]
+    # pad 0 makes the check vacuous, which is the honest reason DEFAULT_PAD is 1
+    assert pack.tight_frames(per_frame, 0) == []
+
+
+def test_a_faint_cell_edge_pixel_is_measured_like_any_other():
+    """Measured at the visible threshold, so the gate cannot be fooled by the same faint
+    alpha that fooled the box. The 3 here is the fin tip's own ramp."""
+    sheets_, layout = _sheet_of([(5, 5, 15, 15)], 20, 20, 1)
+    sheets_[0].putpixel((0, 10), (255, 255, 255, 3))
+    worst, per_frame = pack.cell_margins(sheets_, layout)
+    assert worst["L"] == (0, 0)
+    assert [i for i, _ in pack.tight_frames(per_frame, 1)] == [0]
 
 
 def _blob(box, canvas=64):
@@ -368,6 +441,96 @@ def test_clipped_frames_are_fatal_unless_allowed(tmp_path):
     item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out2", mod_name="jamaltron",
                             explicit_dir=frames, allow_clipped=True)
     assert any("CLIPPED" in n for n in item.notes)
+
+
+def write_finned_frames(directory: pathlib.Path, cfg, body, fin, *, canvas=64, count=4):
+    """An opaque body plus a FAINT alpha-3 fringe: the tail fin's antialiasing ramp.
+
+    Alpha 3 is the whole fixture. Factorio composites it, so it is part of the sprite; the
+    old alpha >= 8 reading could not see it at all, which is how C.4's sheets passed their
+    own gate with the fin sliced off at the frame edge.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(count):
+        img = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+        img.paste((200, 80, 80, 255), body)
+        img.paste((200, 80, 80, 3), fin)
+        img.save(directory / f"frame_{index:03d}.png")
+    (directory / "config.json").write_text(json.dumps(ac.stamp(cfg, {"pass": "body"})))
+    return directory
+
+
+def test_a_faint_fringe_at_the_canvas_edge_is_refused(tmp_path):
+    """THE REGRESSION TEST. The render ran out of canvas for pixels the engine still draws.
+
+    At the old alpha >= 8 reading this frame is 12 px clear of the edge and packs without a
+    word -- asserted below, because that is the failure being fixed, not a hypothetical.
+    """
+    cfg = make_cfg(**{"rotations.count": 4})
+    frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (0, 30, 12, 34))
+
+    images = [(i, Image.open(frames / f"frame_{i:03d}.png").convert("RGBA"))
+              for i in range(4)]
+    _, at_the_old_floor = pack.union_box(images, floor=pack.RENDER_NOISE_FLOOR)
+    assert pack.clipped_frames(at_the_old_floor, (64, 64)) == [], \
+        "the fixture has to be one the OLD gate waved through, or it proves nothing"
+
+    with pytest.raises(pack.PackError, match="touch the canvas edge at alpha >= 1"):
+        pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
+                         explicit_dir=frames)
+    assert not list((tmp_path / "out" / pack.GRAPHICS_DIR).glob("*.png")), \
+        "a refused pack must not leave a clipped sheet on disk"
+
+
+def test_a_faint_fringe_inside_the_canvas_is_kept_by_the_frame_box(tmp_path):
+    """C.4's actual defect: the CANVAS had 12 px to spare, so the canvas check had nothing
+    to say, and the fin was cut by the FRAME BOX instead. The box has to hold the ramp."""
+    cfg = make_cfg(**{"rotations.count": 4})
+    frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (52, 30, 58, 34))
+    item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
+                            explicit_dir=frames)
+    assert item.box == (11, 19, 59, 45)          # union at alpha >= 1, plus the 1 px pad
+    assert (item.fields["width"], item.fields["height"]) == (48, 26)
+    images = [(i, Image.open(frames / f"frame_{i:03d}.png").convert("RGBA"))
+              for i in range(4)]
+    shaved = pack.union_box(images, floor=pack.RENDER_NOISE_FLOOR)[0]
+    assert shaved[2] - shaved[0] == 40, "the old reading was 6 px narrower: the fin tip"
+    assert {edge: px for edge, (px, _) in item.margins.items()} == {"L": 1, "T": 1,
+                                                                   "R": 1, "B": 1}
+
+
+def test_the_finished_cells_are_checked_even_when_the_box_is_wrong(tmp_path, monkeypatch):
+    """THE GATE THAT WAS MISSING, and the one thing it must not lean on is the box being
+    right -- a gate that shares its input with the thing it guards is how a clipped sheet
+    passed. Derive the box the way C.4 did, at the noise floor, and the refusal still comes,
+    because it is measured off the cells that were about to be written.
+    """
+    cfg = make_cfg(**{"rotations.count": 4})
+    frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (52, 30, 58, 34))
+    honest = pack.union_box
+    monkeypatch.setattr(pack, "union_box",
+                        lambda images, floor=None: honest(images, pack.RENDER_NOISE_FLOOR))
+
+    with pytest.raises(pack.PackError, match="closer than the 1 px"):
+        pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
+                         explicit_dir=frames)
+    assert not list((tmp_path / "out" / pack.GRAPHICS_DIR).glob("*.png"))
+
+    item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out2", mod_name="jamaltron",
+                            explicit_dir=frames, allow_clipped=True)
+    assert any("CLIPPED BY THE BOX" in note for note in item.notes)
+    assert item.margins["R"][0] == 0
+
+
+def test_every_pack_reports_its_tightest_margin(tmp_path):
+    """The measurement goes in the notes on every run, clipped or not. Finding the sliced
+    fin took opening the shipped PNG in a script; the tool should just hand you the number."""
+    cfg = make_cfg(**{"rotations.count": 4})
+    frames = write_frames(tmp_path / "f", cfg, ring(4, (20, 18, 44, 40)))
+    item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
+                            explicit_dir=frames)
+    assert any("tightest margin inside the 26x24 cell at alpha >= 1" in note
+               for note in item.notes)
 
 
 def test_mismatched_canvases_are_refused(tmp_path):
@@ -738,3 +901,47 @@ def test_water_reflection_wraps_one_sprite_under_pictures_not_a_list():
                                            paths=[], box=(0, 0, 1, 1), layout=layout)])
     assert "water_reflection = {pictures = sprites.reflection}," in text
     assert "{pictures = {sprites" not in text
+
+
+# ------------------------------------------------------------- the sheets we committed
+
+
+def committed_sprites():
+    """The promoted manifest's entries, or [] when nothing has been promoted yet."""
+    manifest = pack.REPO / pack.PROMOTE_OUT / pack.GRAPHICS_DIR / pack.MANIFEST_NAME
+    if not manifest.is_file():
+        return []
+    blob = json.loads(manifest.read_text())
+    return [(entry["id"], manifest.parent, entry) for entry in blob["sprites"]]
+
+
+@pytest.mark.parametrize("sprite_id,graphics,entry", committed_sprites(),
+                         ids=[row[0] for row in committed_sprites()])
+def test_the_committed_sheets_keep_a_transparent_margin(sprite_id, graphics, entry):
+    """THE SHIPPED ARTIFACT, measured. Every frame of every sheet in the repo, alpha > 0,
+    against its own cell -- which is the hand measurement that found the sliced tail fin.
+
+    This runs where the other sprite gate cannot: tools/lint_sprites.py is stdlib-only and
+    reads sizes out of the 24-byte IHDR, so it can check that a sheet is the size the
+    prototype claims and never that the sprite inside it is whole. Here there is Pillow and
+    the sheets are committed, so CI gets to look at the alpha of what actually ships.
+    """
+    sheet = Image.open(graphics / entry["filename"].split("/")[-1]).convert("RGBA")
+    alpha = sheet.getchannel("A")
+    width, height, line_length = entry["width"], entry["height"], entry["line_length"]
+    count = (entry.get("direction_count") or entry.get("variation_count")
+             or entry.get("frame_count") or 1)
+    worst = {}
+    for index in range(count):
+        box = alpha.crop(sheets.frame_box(index, width, height, line_length)).getbbox()
+        if box is None:
+            continue
+        for edge, value in zip(pack.EDGES, (box[0], box[1], width - box[2],
+                                            height - box[3])):
+            if edge not in worst or value < worst[edge][0]:
+                worst[edge] = (value, index, box)
+    assert worst, f"{sprite_id}: every one of {count} cells is empty"
+    tightest = min(worst.items(), key=lambda kv: kv[1][0])
+    assert tightest[1][0] >= pack.DEFAULT_PAD, (
+        f"{sprite_id} is CLIPPED on the {tightest[0]} edge of frame {tightest[1][1]} "
+        f"(bbox {tightest[1][2]} in a {width}x{height} cell): re-pack it")

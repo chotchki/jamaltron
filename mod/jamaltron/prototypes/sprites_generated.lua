@@ -6,14 +6,14 @@
 -- beside the sheets is these same tables plus an id, which is what
 -- tools/lint_sprites.py checks against the real PNGs.
 --
--- config 83d6be794998   packed 2026-09-20 16:04:57
+-- config 83d6be794998   packed 2026-09-20 17:01:31
 
 local sprites = {}
 
 sprites.body =
 {
   filename = "__jamaltron__/graphics/jamaltron-body.png",
-  width = 360,
+  width = 362,
   height = 289,
   line_length = 8,
   direction_count = 64,
@@ -51,12 +51,12 @@ sprites.shadow =
 sprites.reflection =
 {
   filename = "__jamaltron__/graphics/jamaltron-body-water-reflection.png",
-  width = 332,
-  height = 192,
+  width = 380,
+  height = 295,
   line_length = 1,
   variation_count = 1,
   scale = 0.5,
-  shift = {0, -0.09375}
+  shift = {0, -0.2265625}
 }
 
 -- The slots as the entity prototype wants them. graphics_set[slot] = value,
