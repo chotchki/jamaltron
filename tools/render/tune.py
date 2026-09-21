@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Sliders for the five knobs you actually tune by eye. Local page, no dependency.
+"""Sliders for the knobs you actually tune by eye, and a PLAY button for the flop. Local
+page, no dependency.
 
     uv run --directory tools python render/tune.py            # opens a browser
     uv run --directory tools python render/tune.py --set model.girth=1.3
@@ -41,6 +42,33 @@ THROWAWAY BUT NOT DISPOSABLE: C.5 needs the same loop for the flop poses, so the
 list is data (KNOBS) and not markup. Add a row, and the TOML export, the reset button and
 the round-trip all pick it up -- TOML_KEYS asserts at import that a new slider cannot
 silently fall out of the export.
+
+C.5 ARRIVED, AND IT BROUGHT A THIRD HASH PROBLEM. The flop needs three things the standing
+shark never did: pick one of the five shipped clips, scrub a frame of it, and PLAY it,
+because a flop is a MOTION and a still frame of one cannot be judged -- frame 7 of a thrash
+and frame 7 of a shark swimming sideways are the same picture. Two of those three are not
+knobs (see THE TWO KNOBS THAT SHOULD EXIST, below), so render/pose.py bakes the pose into a
+temp .blend and this page points `model.blend` at it. Consequence, stated out loud because
+it is the kind of thing a tool lies about: in a POSED state the `tuner` hash is not known
+until the bake has happened, so the header shows it only after a render, and the `paste`
+hash is the hash of the REST config those five lines describe. The pose is in the picture
+and NOT in that hash. The export says so in the block itself.
+
+MEASURED for the flop loop, same machine, a 10-frame loop from cold:
+  * the bake is NOT the cost. All ten poses bake in ONE Blender launch, 0.7 s for the set,
+    charged to the first frame. Scrub the frame slider by hand instead and each frame pays
+    its own 0.4-0.5 s launch, which is the entire reason PLAY prefetches.
+  * broadside (3 directions): 15.1 s to fill, 1.51 s a frame. Full wheel (8): 18.1 s, 1.81 s.
+  * re-ticking PLAY after a fill: 0.13 s a frame from the server, and ZERO in the browser,
+    which is where it actually plays -- the frames are object URLs by then.
+  * 256 px is NOT faster than 384 px, same as 4 rotations was not faster than 8. This loop
+    is Blender LAUNCH-bound at both ends and the pixels are free.
+  * so BROADSIDE IS NOT A SPEED KNOB. It is 17% cheaper, which is nothing; it is there
+    because those are the three directions that answer the question, and eight all-round
+    views of a beached shark include five that cannot show you a roll.
+  * a knob move during playback stops the loop, re-renders the frame you are on as a still,
+    and refills afterwards -- dragging roll against a flopping shark would be 10 renders a
+    tick, which is the tool feeling broken rather than slow.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
@@ -66,6 +94,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E40
 
 from render import art  # noqa: E402
 from render import artconfig as ac  # noqa: E402
+from render import pose  # noqa: E402
 from render import sheets  # noqa: E402
 
 
@@ -86,8 +115,8 @@ class Knob:
     hint: str
 
 
-#: The five knobs you tune by eye, in the order they matter. Ranges bracket the shipped
-#: values wide enough to find the answer and narrow enough that a drag is not a lottery.
+#: The knobs you tune by eye, in the order they matter. Ranges bracket the shipped values
+#: wide enough to find the answer and narrow enough that a drag is not a lottery.
 KNOBS = [
     Knob("pivot_x", "model.pivot", 0, -2.0, 0.5, 0.02,
          "rotation axis, fore/aft", "BU", "&larr; TAIL", "NOSE &rarr;",
@@ -113,6 +142,15 @@ KNOBS = [
          "pitch (nose up/down)", "deg", "nose down", "nose up",
          "A few degrees of nose-up reads as swimming rather than dead-fish-on-a-stick. "
          "C.5's jump arc wants a lot more."),
+    Knob("roll", "model.rotation", 0, -90.0, 90.0, 1.0,
+         "roll (lays him over)", "deg", "&larr; onto one flank", "onto the other &rarr;",
+         "THE beached knob: 0 is upright, &plusmn;90 is flat on a flank. Sign picks which "
+         "flank, and it is worth looking at both -- the dorsal fin and the harness are not "
+         "symmetric. MEASURED AND COUNTER-INTUITIVE (C.5): 90 does not turn the swim into a "
+         "flop, it KILLS it. At the broadside directions the swim's bend plane is his "
+         "transverse plane, and 90 stands that plane perpendicular to the screen, so the "
+         "thrash foreshortens into depth and every frame looks the same. 25-35 with the "
+         "pose gain up is what reads as an animal in distress."),
 ]
 
 #: Keys the TOML export writes. Every KNOBS entry must land in one of these or the export
@@ -126,7 +164,48 @@ assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_
 #: 384 px), shadow -> compare.show_shadow plus whether the Cycles pass runs at all.
 ROTATION_CHOICES = (4, 8)
 RES_CHOICES = (0, 256)
-DEFAULT_OPTS = {"rotations": 8, "res": 0, "shadow": False}
+DEFAULT_OPTS = {"rotations": 8, "res": 0, "shadow": False, "view": "wheel"}
+
+# ----------------------------------------------------------------------------- the pose
+#
+# TODO(C.5) THE TWO KNOBS THAT SHOULD EXIST. Selecting a clip and amplifying it want to be
+# `model.action` (str, one of pose.CLIPS' ids or "rest") and `model.pose_gain` (float, 1.0 =
+# as bought) in artconfig.SCHEMA with ("body", "shadow", "mask") dependencies, read in
+# render_jamal.main() right where `model.rest_pose` is read today. Until they land, this page
+# bakes the pose into a temp .blend (render/pose.py) and points `model.blend` at it: same
+# pixels, same cache, same provenance stamp, and nothing added to the schema.
+#
+# They are held back DELIBERATELY. artconfig.py was clean when this landed, so the file
+# -ownership guard is not what stopped it -- `pose_gain` is the knob that decides whether the
+# bought animation ships AT ALL (at gain 1.0 the swim is too polite to read as a flop), and
+# that is chotchki's call to make off the pictures this page produces, not the tuner's to
+# pre-empt by writing a schema entry. The whole cost of the seam is one 0.4 s Blender launch
+# per pose and two commented lines in the TOML export.
+
+#: Which of the wheel's directions the BROADSIDE view renders: 3/16, 4/16 and 5/16 of the
+#: way round, which is E and E +- 22.5 deg at the shipped rotations.count of 64.
+#:
+#: Fractions of the wheel rather than literal indices, so this still means "broadside" if
+#: rotations.count ever moves off 64. A beached shark only READS as beached from the side:
+#: nose-on, the roll is invisible and the thrash is all in screen depth, so five of the
+#: wheel's eight views cannot answer the question being asked. NOT a speed knob -- MEASURED,
+#: three directions is 17% off a fill, because the loop is Blender launch-bound.
+BROADSIDE_SIXTEENTHS = (3, 4, 5)
+VIEW_CHOICES = ("wheel", "broadside")
+
+#: PLAY's frame stride. 1 plays every frame of the clip; 6 over a 20-frame cycle is 4 frames,
+#: which is where a flop stops being motion and becomes a slideshow.
+STRIDE_MIN, STRIDE_MAX = 1, 6
+
+#: The pose the page boots with: none. The committed config is the STANDING shark and the
+#: shipped sprites came off it, so the tool has to open on exactly that and never surprise
+#: you into tuning a pose you did not ask for.
+DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2, "prefetch": False}
+
+#: What the header shows instead of a tuner hash while a pose is selected. NOT a hash and
+#: deliberately unmistakable for one: the posed hash is over a .blend that gets baked at
+#: render time, so quoting a number here would be a guess dressed as provenance.
+PENDING_HASH = "pending bake"
 
 #: The model's own rest-pose box in tiles at scale 1, read OUT of artconfig.derived()
 #: rather than copied from it, so the page's live dimensions cannot drift from the
@@ -187,7 +266,118 @@ def apply_opts(cfg: dict, opts: dict) -> dict:
     cfg["compare.rotations"] = choice("rotations", ROTATION_CHOICES)
     cfg["render.resolution_px"] = choice("res", RES_CHOICES)
     cfg["compare.show_shadow"] = bool(opts.get("shadow", False))
+    if view_of(opts) == "broadside":
+        # The COUNT has to follow the view or the hash claims eight cells for a three-cell
+        # sheet. Which three is not expressible as a knob (there is no "directions" knob,
+        # only a count), so the page and the terminal both name them; see view_frames.
+        cfg["compare.rotations"] = len(BROADSIDE_SIXTEENTHS)
     return cfg
+
+
+def view_of(opts: dict) -> str:
+    """"wheel" or "broadside", falling back rather than raising -- same rule as apply_opts."""
+    want = str(opts.get("view") or DEFAULT_OPTS["view"])
+    return want if want in VIEW_CHOICES else DEFAULT_OPTS["view"]
+
+
+def view_frames(cfg: dict, opts: dict) -> list[int]:
+    """Which directions to render. The wheel's even spacing, or three broadside ones.
+
+    ac.frame_indices() always starts at index 0 -- NORTH, nose-on -- which is the one
+    direction a rolled-over shark tells you nothing from. Broadside asks for the three
+    directions the flop actually reads in, which is also 3 renders instead of 8.
+    """
+    if view_of(opts) != "broadside":
+        return ac.frame_indices(cfg, cfg["compare.rotations"])
+    total = cfg["rotations.count"]
+    return sorted({int(round(total * s / 16.0)) % total for s in BROADSIDE_SIXTEENTHS})
+
+
+def normalize_pose(state: dict | None) -> dict:
+    """The pose controls, clamped to what the model can actually do.
+
+    Falls back, never raises, for the reason apply_opts' `choice` does: the page can only
+    send what is in its own selects, so anything else is a stale tab or a hand-rolled POST,
+    and neither deserves a stack trace. An unknown clip id is REST -- the standing shark --
+    because that is the one fallback that cannot render something misleading.
+    """
+    state = state if isinstance(state, dict) else {}
+    clip_id = str(state.get("clip") or pose.REST)
+    if clip_id != pose.REST and pose.clip_of(clip_id) is None:
+        clip_id = pose.REST
+    try:
+        stride = min(max(int(state.get("stride", DEFAULT_POSE["stride"])),
+                         STRIDE_MIN), STRIDE_MAX)
+    except (TypeError, ValueError):
+        stride = DEFAULT_POSE["stride"]
+    return {"clip": clip_id,
+            "frame": pose.clamp_frame(clip_id, state.get("frame", 1)),
+            "gain": pose.clamp_gain(state.get("gain", 1.0)),
+            "stride": stride,
+            "prefetch": bool(state.get("prefetch", False))}
+
+
+def posed(cfg: dict, p: dict):
+    """cfg -> (a cfg that renders the pose, the Baked record). REST returns cfg untouched.
+
+    THREE KNOBS MOVE TOGETHER and they have to. `model.blend` becomes the baked file;
+    `model.rest_pose` goes FALSE, because true clears the pose that was just baked in and
+    you would tune the standing shark while the page said SWIM_FAST; `model.frame` goes to
+    the pose's own frame, which changes no pixel (the baked file has no animation left) and
+    is the only place the stamped config gets to record WHICH frame you were looking at.
+
+    PREFETCH is what makes the loop cheap: the whole strided loop bakes in the one Blender
+    launch this render already pays for, so the other nine frames cost 0.06 s each instead
+    of 0.41 s each.
+    """
+    if p["clip"] == pose.REST:
+        return cfg, None
+    frames = [p["frame"]]
+    if p["prefetch"]:
+        frames += pose.loop_frames(p["clip"], p["stride"])
+    baked = pose.ensure(cfg, p["clip"], frames, p["gain"])
+    cfg = {key: (list(v) if isinstance(v, list) else v) for key, v in cfg.items()}
+    cfg["model.blend"] = str(baked.paths[p["frame"]])
+    cfg["model.rest_pose"] = False
+    cfg["model.frame"] = p["frame"]
+    return cfg, baked
+
+
+def pose_report(p: dict) -> dict:
+    """The pose as the page reads it: the clip's real range, the loop it implies, and how
+    long that loop runs. Every duration is a frame count over pose.FPS, so a number on the
+    page cannot drift from the frames it is counting."""
+    c = pose.clip_of(p["clip"])
+    loop = pose.loop_frames(p["clip"], p["stride"])
+    return {"clip": p["clip"], "frame": p["frame"], "gain": p["gain"], "stride": p["stride"],
+            "posed": p["clip"] != pose.REST,
+            "action": c.action if c else "",
+            "lo": c.lo if c else 1, "hi": c.hi if c else 1,
+            "loop": loop, "loop_ms": pose.loop_ms(p["stride"]),
+            "loop_seconds": round(len(loop) * p["stride"] / pose.FPS, 3)}
+
+
+def pose_warnings(cfg: dict, p: dict, committed: dict, baked=None) -> list[str]:
+    """What is legal, posed, and will bite. The pivot one is the whole reason C.5 has a
+    tuning task at all."""
+    if p["clip"] == pose.REST:
+        return []
+    out = []
+    if list(cfg["model.pivot"]) == list(committed["model.pivot"]):
+        out.append(
+            "model.pivot %s is the REST pose's axis, tuned by eye against the STRAIGHT "
+            "shark (C.17). A posed one does not spin about the same point -- this pivot is "
+            "not wrong yet, it is UNVERIFIED for the flop, and the frames will orbit the "
+            "cell if it is off. Find the flop's own, the same way: watch the nose across "
+            "the columns, not one frame."
+            % (", ".join("%.4g" % v for v in cfg["model.pivot"])))
+    if p["gain"] > pose.GAIN_SAFE:
+        out.append(
+            "pose gain %.2f is past the %.1fx the rig was MEASURED to survive. Above it, "
+            "check the neck and the tail tip for mesh tearing before you believe the frame"
+            % (p["gain"], pose.GAIN_SAFE))
+    out += ["pose table vs the model: " + m for m in (baked.mismatches if baked else [])]
+    return out
 
 
 def _num(v: float) -> str:
@@ -244,7 +434,43 @@ def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
     return committed, start, note, pinned
 
 
-def toml_block(cfg: dict, paste_hash: str, note: str = "") -> str:
+def pose_lines(p: dict, tuner_hash: str = "") -> list[str]:
+    """The pose, as TOML that is COMMENTED OUT on purpose, plus why.
+
+    The two keys do not exist in artconfig.SCHEMA yet (see THE TWO KNOBS THAT SHOULD EXIST),
+    and an unknown knob is fatal there -- correctly, because a knob that silently does
+    nothing wastes a morning. So the block names them exactly, spells the values you found,
+    and says what to delete when they land. A paste that errors would be worse than a paste
+    that is inert, and a paste that SILENTLY rendered the rest shark would be worse than
+    both: `rest_pose = false` alone does not select this clip, it unmutes all five at once.
+    """
+    if p["clip"] == pose.REST:
+        return []
+    c = pose.clip_of(p["clip"])
+    lines = [
+        "",
+        "# ---- THE POSE, WHICH THIS FILE CANNOT SAY YET -----------------------------------",
+        "# `action` and `pose_gain` are NOT knobs in artconfig.SCHEMA; tune.py baked them into",
+        "# a temp .blend instead. Uncommenting them as they stand is a fatal `unknown knob`,",
+        "# and `rest_pose = false` on its own does NOT select this clip -- it unmutes all five",
+        "# NLA tracks at once. TODO(C.5): land model.action + model.pose_gain, then drop the #.",
+        '# action = "%s"   # %s, frame %d of %d-%d @ %d fps (%.2f s cycle)'
+        % (c.id, c.action, p["frame"], c.lo, c.hi, pose.FPS, c.seconds),
+        "# pose_gain = %s" % _num(p["gain"]),
+        "# rest_pose = false   # the bake needs this; true CLEARS the pose it baked",
+        "# frame = %d" % p["frame"],
+    ]
+    if tuner_hash:
+        lines.append(
+            "# the `config` hash above is the hash of THESE LINES, which are the rest shark."
+            "\n#   the posed image's own hash is %s and it is not reproducible from this file"
+            "\n#   until the knobs land, because the pose lives in the .blend's content digest."
+            % tuner_hash)
+    return lines
+
+
+def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None,
+               tuner_hash: str = "") -> str:
     """The lines to paste into render/jamaltron.toml. Nothing else, no reformatting of
     the file's comments, and NEVER `model.blend` -- that path is machine-local and
     gitignored, and pasting it would break the config for everyone else.
@@ -264,6 +490,7 @@ def toml_block(cfg: dict, paste_hash: str, note: str = "") -> str:
     head.append("[model]")
     for key in TOML_KEYS:
         head.append("%s = %s" % (key.split(".", 1)[1], _toml_value(cfg[key])))
+    head += pose_lines(normalize_pose(p), tuner_hash)
     return "\n".join(head) + "\n"
 
 
@@ -294,21 +521,30 @@ class Tuner:
 
     # -- the cheap path: numbers and text, no Blender ---------------------------------
 
-    def quote(self, values: dict, opts: dict) -> dict:
+    def quote(self, values: dict, opts: dict, p: dict | None = None) -> dict:
         """Everything a slider move can answer without rendering: hashes, the derived
-        dimensions, the TOML to paste, and the standing knob warnings."""
+        dimensions, the TOML to paste, and the standing knob warnings.
+
+        ONE THING IT CANNOT ANSWER in a posed state: the tuner hash. That hash is over a
+        .blend that has not been baked yet, and quote() runs on every tick of every slider --
+        baking here would put a Blender launch behind a drag. It reports PENDING_HASH and the
+        render, which bakes anyway, fills the real one in.
+        """
+        p = normalize_pose(p)
         paste_cfg = apply_values(self.committed, values)
         cfg = apply_opts(paste_cfg, opts)
         paste_hash = ac.config_hash(paste_cfg)
         d = ac.derived(cfg)
         return {
-            "tuner_hash": ac.config_hash(cfg),
+            "tuner_hash": PENDING_HASH if p["clip"] != pose.REST else ac.config_hash(cfg),
             "paste_hash": paste_hash,
             "derived": {key: d[key] for key in
                         ("shark_length_tiles", "shark_width_tiles", "shark_height_tiles",
                          "body_resolution_px", "body_px_per_tile")},
-            "toml": toml_block(paste_cfg, paste_hash, self.note),
-            "warnings": ac.warnings(cfg),
+            "toml": toml_block(paste_cfg, paste_hash, self.note, p),
+            "pose": pose_report(p),
+            "view": {"name": view_of(opts), "frames": view_frames(cfg, opts)},
+            "warnings": ac.warnings(cfg) + pose_warnings(cfg, p, self.committed),
         }
 
     # -- the expensive path ------------------------------------------------------------
@@ -321,7 +557,8 @@ class Tuner:
         with self.seq_lock:
             return seq < self.latest_seq.get(session, 0)
 
-    def render(self, seq: int, values: dict, opts: dict, session: str = "") -> dict:
+    def render(self, seq: int, values: dict, opts: dict, session: str = "",
+               p: dict | None = None) -> dict:
         """Render one compare sheet. Never raises -- a bad knob has to come back as text
         on the page, because a tuner that dies on a value you were curious about is worse
         than no tuner.
@@ -339,19 +576,27 @@ class Tuner:
         with self.render_lock:
             if self.superseded(session, seq):
                 return {"seq": seq, "superseded": True}
-            return self._render_locked(seq, values, opts)
+            return self._render_locked(seq, values, opts, p)
 
-    def _render_locked(self, seq: int, values: dict, opts: dict) -> dict:
+    def _render_locked(self, seq: int, values: dict, opts: dict, p: dict | None = None) -> dict:
         t0 = time.time()
         quote = None
         buf = io.StringIO()
         try:
-            quote = self.quote(values, opts)
+            quote = self.quote(values, opts, p)
+            p = normalize_pose(p)
             cfg = apply_opts(apply_values(self.committed, values), opts)
-            frames = ac.frame_indices(cfg, cfg["compare.rotations"])
+            frames = view_frames(cfg, opts)
             # stdout AND stderr: art.py reports through the first and blender's own
             # failure text goes to the second, and the failure text is the half you need.
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                cfg, baked = posed(cfg, p)
+                if baked is not None:
+                    print("  pose    %s@%d gain %.2f  %d baked / %d cached in %.2fs  %s"
+                          % (p["clip"], p["frame"], p["gain"], len(baked.baked),
+                             len(baked.cached), baked.seconds, baked.paths[p["frame"]].name))
+                    if baked.log:
+                        print("  " + baked.log.replace("\n", "\n  "))
                 bodydir, _ = art.render_pass(cfg, "body", frames,
                                              cfg["render.preview_samples"], jobs=self.jobs)
                 passes = [("body", cfg["render.engine"], cfg["render.preview_samples"])]
@@ -372,12 +617,26 @@ class Tuner:
                 "image": "/sheet?f=" + pathlib.Path(png).name,
                 "seconds": round(time.time() - t0, 2),
                 "frames": frames,
+                # The hash of what is ON SCREEN, now that the pose has been baked and the
+                # digest of the baked file is knowable. quote() could only say "pending".
+                "tuner_hash": ac.config_hash(cfg),
+                "warnings": ac.warnings(cfg) + pose_warnings(cfg, p, self.committed, baked),
+                "bake": ({"seconds": baked.seconds, "baked": baked.baked,
+                          "cached": baked.cached, "box_bu": baked.box_bu.get(p["frame"], []),
+                          "mismatches": baked.mismatches}
+                         if baked is not None else None),
                 "coverage_line": cov.get("line", ""),
                 "coverage": cov.get("per_frame", []),
                 "selfcheck": sheets.selfcheck_line(blob.get("mount_selfcheck", {"ran": False,
                                                             "why": "not in sidecar"})),
                 "log": buf.getvalue(),
             })
+            if baked is not None:
+                # Re-issued with the real hash, which quote() did not have: the export's own
+                # caveat line names the posed hash, so writing it before the bake would name
+                # the wrong one.
+                out["toml"] = toml_block(apply_values(self.committed, values),
+                                         out["paste_hash"], self.note, p, out["tuner_hash"])
         except (Exception, SystemExit) as exc:                 # SystemExit: art.py's own
             out = dict(quote or {})                            # blender-failed path
             out.update({
@@ -390,8 +649,12 @@ class Tuner:
         # The terminal is the other half of the tool: it gets the harness's own report,
         # the timing, and the TOML, so a value found here is one copy-paste OR one scroll
         # -back away from being committed.
-        sys.stdout.write("\n[tune #%d seq %d] %s in %.2fs\n%s"
-                         % (self.renders, seq, "ok" if out.get("ok") else "FAILED",
+        rep = out.get("pose") or {}
+        sys.stdout.write("\n[tune #%d seq %d%s] %s in %.2fs\n%s"
+                         % (self.renders, seq,
+                            (" %s f%d x%.2f" % (rep["clip"], rep["frame"], rep["gain"]))
+                            if rep.get("posed") else "",
+                            "ok" if out.get("ok") else "FAILED",
                             out["seconds"], out.get("log", "")))
         if out.get("ok"):
             sys.stdout.write("  %s\n" % out.get("coverage_line", ""))
@@ -463,7 +726,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise TypeError("expected a JSON object, got %s" % type(body).__name__)
             values = body.get("values") or {}
             opts = body.get("opts") or {}
-            for name, obj in (("values", values), ("opts", opts)):
+            pose_state = body.get("pose") or {}
+            for name, obj in (("values", values), ("opts", opts), ("pose", pose_state)):
                 if not isinstance(obj, dict):
                     raise TypeError("`%s` must be a JSON object, got %s"
                                     % (name, type(obj).__name__))
@@ -471,15 +735,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "bad request body: %s" % exc}, 400)
         try:
             if path == "/quote":
-                return self._json(self.tuner.quote(values, opts))
+                return self._json(self.tuner.quote(values, opts, pose_state))
             if path == "/toml":
-                q = self.tuner.quote(values, opts)
+                q = self.tuner.quote(values, opts, pose_state)
                 sys.stdout.write("\n" + q["toml"] + "\n")
                 sys.stdout.flush()
                 return self._json({"toml": q["toml"]})
             if path == "/render":
                 return self._json(self.tuner.render(int(body.get("seq") or 0), values, opts,
-                                                    str(body.get("session") or "")))
+                                                    str(body.get("session") or ""),
+                                                    pose_state))
         except (Exception, SystemExit) as exc:
             # Even the cheap paths report as text. The server does not get to die because
             # a slider sent something the schema hated.
@@ -567,6 +832,39 @@ PAGE = r"""<!doctype html>
 </header>
 <div class="wrap">
   <div class="col">
+    <div class="panel">
+      <div class="opts">
+        <label>clip <select id="clip"></select></label>
+        <label><input type="checkbox" id="play"> <b>PLAY</b>
+          <span class="dim" id="playing"></span></label>
+        <label>stride <select id="stride"></select></label>
+        <label>view <select id="view"></select></label>
+      </div>
+      <div class="dim" id="clipnote" style="margin-top:7px"></div>
+      <div class="k" id="k_frame" style="margin-top:12px">
+        <label><span class="name">frame <button class="why" data-k="frame">?</button></span>
+          <span class="val"><input type="number" id="n_frame" step="1">
+            <span class="dim" id="frameof"></span></span></label>
+        <input type="range" id="r_frame" step="1">
+        <div class="ends"><span id="framelo">-</span>
+          <span class="hot">no knob for this yet</span><span id="framehi">-</span></div>
+        <div class="hint">Which frame of the selected clip, at 24 fps. A STILL cannot tell a
+          flop from a shark swimming sideways -- frame 7 of either is the same picture -- so
+          scrub it, then hit PLAY and judge the motion.</div>
+      </div>
+      <div class="k" id="k_gain">
+        <label><span class="name">pose gain <button class="why" data-k="gain">?</button></span>
+          <span class="val"><input type="number" id="n_gain"><span class="dim">x</span></span></label>
+        <input type="range" id="r_gain">
+        <div class="ends"><span>as bought</span>
+          <span class="hot">no knob for this yet</span><span>thrashing &rarr;</span></div>
+        <div class="hint">Every bone's rotation pushed away from rest by this factor, baked
+          per frame. 1.0 is the clip as the seller shipped it, and at 1.0 the swim is too
+          POLITE to read as a flop. MEASURED: the rig survives 2.6x with no mesh tearing --
+          past that, check the neck and the tail tip before you believe the frame.</div>
+      </div>
+      <div class="dim" id="posenote"></div>
+    </div>
     <div class="panel" id="knobs"></div>
     <div class="panel">
       <div class="opts">
@@ -608,10 +906,11 @@ const BOOT = __BOOT__;
 const $ = id => document.getElementById(id);
 const values = Object.assign({}, BOOT.start);
 const opts = Object.assign({}, BOOT.opts);
+const posest = Object.assign({}, BOOT.pose);
 // One id per page LOAD. Superseding is scoped to it, so a refresh starts a fresh count
 // instead of sitting forever behind the previous page's high-water mark.
 const SESSION = Math.random().toString(36).slice(2) + "-" + Date.now().toString(36);
-let seq = 0, applied = 0, inflight = false, pending = false, tStart = 0;
+let seq = 0, applied = 0, inflight = false, pending = false, tStart = 0, lastBox = "";
 
 // ---- sliders -------------------------------------------------------------------------
 $("knobs").innerHTML = BOOT.knobs.map(k => `
@@ -629,6 +928,58 @@ $("rotations").innerHTML = BOOT.rotation_choices.map(r =>
 $("res").innerHTML = BOOT.res_choices.map(r =>
   `<option value="${r}">${r === 0 ? "384 (native)" : r + " (fast)"}</option>`).join("");
 
+// ---- the pose controls ---------------------------------------------------------------
+$("clip").innerHTML = [`<option value="${BOOT.rest}">rest pose (as shipped)</option>`].concat(
+  BOOT.clips.map(c => `<option value="${c.id}">${c.id} &mdash; ${c.span}f, ${
+    c.seconds.toFixed(2)}s</option>`)).join("");
+$("stride").innerHTML = BOOT.strides.map(s =>
+  `<option value="${s}">${s}</option>`).join("");
+$("view").innerHTML = BOOT.view_choices.map(v =>
+  `<option value="${v}">${v === "wheel" ? "wheel (all round)"
+                                        : "broadside (the 3 that show a roll)"}</option>`).join("");
+$("r_gain").min = $("n_gain").min = BOOT.gain.min;
+$("r_gain").max = $("n_gain").max = BOOT.gain.max;
+$("r_gain").step = $("n_gain").step = 0.05;
+
+const clipOf = id => BOOT.clips.find(c => c.id === id) || null;
+
+function rangeFrame() {
+  // The frame slider's range is the CLIP's, not a constant: 20 frames of SWIM_FAST and 78 of
+  // SWIM_SLOW are the same slider, and a range left over from the last clip would scrub past
+  // the end and silently hold the last pose.
+  const c = clipOf(posest.clip), lo = c ? c.lo : 1, hi = c ? c.hi : 1;
+  posest.frame = Math.min(Math.max(posest.frame, lo), hi);
+  for (const el of [$("r_frame"), $("n_frame")]) {
+    el.min = lo; el.max = hi; el.value = posest.frame; el.disabled = !c;
+  }
+  $("framelo").textContent = "f" + lo;
+  $("framehi").textContent = "f" + hi;
+  $("frameof").textContent = c ? "of " + hi : "(rest)";
+  $("play").disabled = !c;
+  $("stride").disabled = !c;
+  $("r_gain").disabled = $("n_gain").disabled = !c;
+  $("clipnote").innerHTML = c
+    ? `<span class="hot">${c.action}</span> &middot; bones ${c.bones}<br>${c.note}`
+    : "The shipped standing shark: no action, no bake, rest pose. Pick a clip to flop him.";
+  paintPose();
+}
+
+function paintPose() {
+  $("r_gain").value = $("n_gain").value = posest.gain;
+  $("stride").value = posest.stride;
+  $("clip").value = posest.clip;
+  const c = clipOf(posest.clip);
+  const n = c ? loopFrames().length : 0;
+  const warn = posest.gain > BOOT.gain.safe ? " <span class=\"bad\">past the measured 2.6x"
+                                              + " -- check the neck for tearing</span>" : "";
+  $("posenote").innerHTML = c
+    ? `loop <span class="num">${n}</span> frames at stride ${posest.stride} = <span
+       class="num">${(n * posest.stride / BOOT.fps).toFixed(2)}</span>s per cycle, ${
+       (1000 * posest.stride / BOOT.fps).toFixed(0)}ms a frame &middot; gain <span
+       class="num">${posest.gain.toFixed(2)}</span>x${warn}${lastBox}`
+    : "";
+}
+
 for (const k of BOOT.knobs) {
   const r = $("r_" + k.id), n = $("n_" + k.id);
   const push = (v, from) => {
@@ -637,7 +988,7 @@ for (const k of BOOT.knobs) {
     values[k.id] = v;
     if (from !== "r") r.value = v;
     if (from !== "n") n.value = v;
-    quote(); schedule();
+    touched(); quote(); schedule();
   };
   r.addEventListener("input", () => push(r.value, "r"));
   n.addEventListener("change", () => push(n.value, "n"));
@@ -649,14 +1000,137 @@ function paintKnobs() {
   for (const k of BOOT.knobs) { $("r_" + k.id).value = values[k.id];
                                 $("n_" + k.id).value = values[k.id]; }
   $("rotations").value = opts.rotations; $("res").value = opts.res;
-  $("shadow").checked = opts.shadow;
+  $("shadow").checked = opts.shadow; $("view").value = opts.view;
 }
-$("rotations").onchange = e => { opts.rotations = +e.target.value; quote(); render(); };
-$("res").onchange = e => { opts.res = +e.target.value; quote(); render(); };
-$("shadow").onchange = e => { opts.shadow = e.target.checked; quote(); render(); };
+$("rotations").onchange = e => { opts.rotations = +e.target.value; touched(); quote(); render(); };
+$("res").onchange = e => { opts.res = +e.target.value; touched(); quote(); render(); };
+$("shadow").onchange = e => { opts.shadow = e.target.checked; touched(); quote(); render(); };
+$("view").onchange = e => { opts.view = e.target.value; touched(); quote(); render(); };
 $("rerender").onclick = () => render();
-$("reset").onclick = () => { Object.assign(values, BOOT.committed); paintKnobs();
+// Reset means the COMMITTED config, and the committed config is the standing shark -- so it
+// drops the pose too. Leaving a clip selected would put you back on sliders that belong to a
+// pose you just threw away.
+$("reset").onclick = () => { Object.assign(values, BOOT.committed);
+                             Object.assign(posest, BOOT.pose);
+                             touched(); paintKnobs(); rangeFrame();
                              quote(); render(); };
+
+// ---- the pose ------------------------------------------------------------------------
+$("clip").onchange = e => {
+  posest.clip = e.target.value;
+  stopPlay(true); touched(); rangeFrame(); quote(); render();
+};
+for (const [id, key, lo, hi] of [["frame", "frame", null, null],
+                                 ["gain", "gain", BOOT.gain.min, BOOT.gain.max]]) {
+  const r = $("r_" + id), n = $("n_" + id);
+  const push = (v, from) => {
+    v = parseFloat(v);
+    if (!isFinite(v)) return;
+    const min = lo === null ? +r.min : lo, max = hi === null ? +r.max : hi;
+    v = Math.min(Math.max(v, min), max);
+    posest[key] = id === "frame" ? Math.round(v) : v;
+    if (from !== "r") r.value = posest[key];
+    if (from !== "n") n.value = posest[key];
+    touched(); paintPose(); quote(); schedule();
+  };
+  r.addEventListener("input", () => push(r.value, "r"));
+  n.addEventListener("change", () => push(n.value, "n"));
+}
+$("stride").onchange = e => {
+  posest.stride = +e.target.value; paintPose(); quote();
+  if ($("play").checked) { stopPlay(false); startPlay(); }     // same frames, new tempo
+};
+// Unticking says so out loud: a fill that is mid-flight only notices on its next answer
+// (Blender is not interruptible), and until then the status line would still read "caching
+// frame 2/10" at a page that has stopped.
+$("play").onchange = e => { if (e.target.checked) startPlay();
+                            else { stopPlay(false); setStatus("play stopped"); } };
+
+// ---- the flop loop: render every frame once, then play it out of memory ----------------
+//
+// The renders are the cost (0.8 s a frame broadside, 2 s on the full wheel) and they are
+// paid ONCE per set of knob values. After that the frames are object URLs in this page and
+// the loop is a setInterval swapping img.src -- no network, no server, no Blender. That is
+// the difference between watching a flop and waiting for one.
+const blobs = new Map();
+let playing = false, fillGen = 0, loopTimer = null;
+
+function loopFrames() {
+  const c = clipOf(posest.clip);
+  if (!c) return [];
+  const out = [];
+  for (let f = c.lo; f <= c.hi; f += posest.stride) out.push(f);
+  return out;
+}
+// The cache key is every input that moves a pixel. Anything else and a roll change would
+// replay the old flop.
+const poseKey = frame => JSON.stringify([values, opts, posest.clip, posest.gain, frame]);
+
+function dropBlobs() {
+  for (const url of blobs.values()) URL.revokeObjectURL(url);
+  blobs.clear();
+}
+function stopLoop() { if (loopTimer) clearInterval(loopTimer); loopTimer = null;
+                      $("playing").textContent = ""; }
+function stopPlay(uncheck) { playing = false; fillGen++; stopLoop();
+                             if (uncheck) $("play").checked = false; }
+// Any knob move invalidates every cached frame: they were rendered at the old values. The
+// loop stops and the page falls back to stills, which is what makes dragging usable -- a
+// refill per slider tick would be ten renders a tick.
+function touched() { if (playing) stopPlay(false); dropBlobs(); }
+
+async function startPlay() {
+  const frames = loopFrames();
+  if (frames.length < 2) { stopPlay(true); setStatus("nothing to play in a rest pose"); return; }
+  playing = true;
+  const gen = ++fillGen;
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i], key = poseKey(f);
+    if (gen !== fillGen) return;                       // superseded by a knob move
+    if (blobs.has(key)) continue;
+    setStatus(`caching flop frame ${i + 1}/${frames.length} (f${f})`);
+    let res;
+    const t0 = performance.now();
+    try {
+      res = await post("/render", {seq: ++seq, session: SESSION,
+                                   pose: Object.assign({}, posest, {frame: f, prefetch: true})});
+    } catch (e) { fail("server unreachable: " + e); stopPlay(true); return; }
+    if (gen !== fillGen) return;
+    if (res.error || res.superseded || !res.ok) {
+      fail(res.error || "render failed while caching f" + f); stopPlay(true); return;
+    }
+    apply(res, (performance.now() - t0) / 1000);   // show it as it lands: the fill IS the flop
+    try {
+      const blob = await fetch(res.image + "&t=" + Date.now()).then(r => r.blob());
+      // Checked AGAIN, because a knob can move while the bytes are arriving. The key
+      // carries the values it was rendered at, so a late arrival could never be SHOWN at
+      // the wrong ones -- it would just sit in the map as an object URL nobody reads.
+      if (gen !== fillGen) return;
+      blobs.set(key, URL.createObjectURL(blob));
+    } catch (e) { /* no blob: runLoop just plays the frames that did cache */ }
+  }
+  if (gen !== fillGen) return;
+  runLoop(frames, gen);
+}
+
+function runLoop(frames, gen) {
+  stopLoop();
+  const have = frames.filter(f => blobs.has(poseKey(f)));
+  if (have.length < 2) { setStatus(`only ${have.length} frame(s) cached, cannot loop`, true);
+                         return; }
+  const ms = 1000 * posest.stride / BOOT.fps;
+  let i = 0;
+  setStatus(`playing ${have.length} frames, ${(have.length * posest.stride / BOOT.fps)
+             .toFixed(2)}s cycle, from cache`);
+  loopTimer = setInterval(() => {
+    if (gen !== fillGen) { stopLoop(); return; }
+    const f = have[i++ % have.length];
+    const img = $("img");
+    img.classList.remove("stale");
+    img.src = blobs.get(poseKey(f));
+    $("playing").textContent = "f" + f;
+  }, ms);
+}
 $("copy").onclick = () => {
   // Copy SYNCHRONOUSLY from the DOM inside the click, before any await -- Safari drops a
   // clipboard write that happens after one. The POST is only the terminal echo.
@@ -685,7 +1159,8 @@ function dims() {
 // ---- transport ------------------------------------------------------------------------
 function post(path, extra) {
   return fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
-                      body: JSON.stringify(Object.assign({values, opts}, extra || {}))})
+                      body: JSON.stringify(Object.assign({values, opts, pose: posest},
+                                                        extra || {}))})
          .then(r => r.json());
 }
 let quoteBusy = false, quoteAgain = false;
@@ -728,6 +1203,9 @@ function render() {
   }).finally(() => {
     inflight = false;
     if (pending) { pending = false; render(); }
+    // PLAY stays ticked across a knob drag: the still lands first (fast feedback), then the
+    // loop refills behind it. Ticking it off is the only thing that stops that.
+    else if ($("play").checked && !playing) startPlay();
   });
 }
 function apply(res, rtt) {
@@ -746,10 +1224,22 @@ function apply(res, rtt) {
       `<td>${c[0]}</td>`).join("") + "</tr><tr>" + (res.coverage || []).map(c =>
       `<td class="${c[1] === 0 ? "bad" : "num"}">${c[1]}/8</td>`).join("") + "</tr>";
   $("shotinfo").textContent =
-    `seq ${res.seq} | ${res.frames.length} rotations @ ${res.derived.body_resolution_px}px `
-    + `(${res.derived.body_px_per_tile.toFixed(1)} px/tile) | server ${res.seconds}s, `
+    `seq ${res.seq} | ${res.frames.length} ${res.view ? res.view.name : "wheel"} dirs `
+    + `${(res.frames || []).join(",")} @ ${res.derived.body_resolution_px}px `
+    + `(${res.derived.body_px_per_tile.toFixed(1)} px/tile) | server ${res.seconds}s`
+    + `${res.bake ? " (bake " + res.bake.seconds + "s)" : ""}, `
     + `round trip ${rtt.toFixed(2)}s | ${res.selfcheck.startsWith("mount self-check PASS")
        ? "selfcheck PASS" : res.selfcheck}`;
+  // The POSED box, measured at bake time. artconfig.derived() reports the REST box from a
+  // constant -- correct for the standing shark, and wrong the moment he thrashes -- so say
+  // both and let the frame-box question be asked of the right one.
+  if (res.bake && (res.bake.box_bu || []).length === 3) {
+    const b = res.bake.box_bu, r0 = BOOT.model_bu, across = b[1] / r0[1];
+    lastBox = `<br>posed box <span class="num">${b.map(v => v.toFixed(2)).join(" &times; ")
+      }</span> BU vs rest ${r0.map(v => v.toFixed(2)).join(" &times; ")} &mdash; <span class="${
+      across > 1.25 ? "hot" : "num"}">${(across * 100 - 100).toFixed(0)}%</span> wider across.`;
+  } else if (!(res.pose && res.pose.posed)) { lastBox = ""; }
+  paintPose();
   setStatus(`ok in ${rtt.toFixed(2)}s`);
 }
 function showWarn(list) {
@@ -768,7 +1258,7 @@ function setStatus(t, bad) { $("status").className = "status" + (bad ? " bad" : 
                              $("status").textContent = t; }
 function flash(t, bad) { setStatus(t, bad); }
 
-paintKnobs(); quote(); render();
+paintKnobs(); rangeFrame(); quote(); render();
 </script>
 """
 
@@ -784,9 +1274,21 @@ def page(tuner: Tuner) -> str:
         "opts": DEFAULT_OPTS,
         "rotation_choices": list(ROTATION_CHOICES),
         "res_choices": list(RES_CHOICES),
+        "view_choices": list(VIEW_CHOICES),
         "model_bu": MODEL_BU,
         "mount_half_width": MOUNT_HALF_WIDTH,
         "mount_span_y": list(MOUNT_SPAN_Y),
+        # The pose half. The clip table is pose.CLIPS itself, not a copy of it, so the
+        # select, the frame slider's range and every duration on the page all come off the
+        # same five records the bake verifies against the model.
+        "pose": DEFAULT_POSE,
+        "rest": pose.REST,
+        "fps": pose.FPS,
+        "clips": [{"id": c.id, "action": c.action, "lo": c.lo, "hi": c.hi, "span": c.span,
+                   "seconds": round(c.seconds, 3), "bones": c.bones, "note": c.note}
+                  for c in pose.CLIPS],
+        "gain": {"min": pose.GAIN_MIN, "max": pose.GAIN_MAX, "safe": pose.GAIN_SAFE},
+        "strides": list(range(STRIDE_MIN, STRIDE_MAX + 1)),
     }
     return PAGE.replace("__BOOT__", json.dumps(boot))
 
@@ -851,8 +1353,11 @@ def main(argv=None):
     print("jamaltron tuner on %s   jobs=%d  shadow OFF by default (Cycles is the 12-15s)\n"
           "  frames and sheets land in %s (gitignored). Every distinct value is its own\n"
           "  cache dir: ~2.8 MB per change, ~13 MB with the shadow on. A long session is\n"
-          "  hundreds of MB you can delete whenever. Ctrl-C to stop."
-          % (url, tuner.jobs, art.out_root(committed)))
+          "  hundreds of MB you can delete whenever. Ctrl-C to stop.\n"
+          "  POSED frames bake a temp .blend into %s (%.0f MB there now, pruned at %d files).\n"
+          "  That is OUTSIDE the repo on purpose -- a baked pose is still the licensed model."
+          % (url, tuner.jobs, art.out_root(committed), pose.cache_root(),
+             pose.cache_bytes() / 1e6, pose.CACHE_MAX))
     if not args.no_open:
         threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     try:

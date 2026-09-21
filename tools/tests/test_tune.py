@@ -254,3 +254,175 @@ def test_post_refuses_a_body_that_is_not_an_object():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---------------------------------------------------------------------------- C.5: poses
+#
+# The flop half of the page, still with no Blender in the loop. The seam being pinned here
+# is that `model.action` and `model.pose_gain` DO NOT EXIST in the schema yet: what the page
+# tunes is baked into a temp .blend, and what it exports has to say so rather than emitting
+# two keys that would be a fatal `unknown knob` in the file they are pasted into.
+
+
+def test_pose_falls_back_instead_of_rendering_something_misleading():
+    """A stale tab or a hand-rolled POST gets the REST shark, not a stack trace and not a
+    clip nobody asked for. Same rule apply_opts' `choice` follows."""
+    junk = tune.normalize_pose({"clip": "../../etc/passwd", "frame": "x", "gain": [2],
+                                "stride": None})
+    assert junk == {"clip": tune.pose.REST, "frame": 1, "gain": 1.0,
+                    "stride": tune.DEFAULT_POSE["stride"], "prefetch": False}
+    assert tune.normalize_pose(None)["clip"] == tune.pose.REST
+    assert tune.normalize_pose("not a dict")["clip"] == tune.pose.REST
+    got = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 999, "gain": 99, "stride": 99})
+    assert got == {"clip": "SWIM_FAST", "frame": 20, "gain": tune.pose.GAIN_MAX,
+                   "stride": tune.STRIDE_MAX, "prefetch": False}
+
+
+def test_roll_is_rotation_zero_and_pitch_is_rotation_one():
+    """Swap these two and every flop is tuned against the wrong axis while the page reads
+    right. The order of model.rotation is [roll, pitch, yaw]."""
+    by_id = {k.id: k for k in tune.KNOBS}
+    assert (by_id["roll"].key, by_id["roll"].index) == ("model.rotation", 0)
+    assert (by_id["pitch"].key, by_id["pitch"].index) == ("model.rotation", 1)
+    assert by_id["roll"].lo <= -90.0 and by_id["roll"].hi >= 90.0, "must reach both flanks"
+
+
+def test_the_roll_slider_writes_the_knob_the_renderer_reads():
+    cfg = tune.apply_values(ac.load(), {"roll": 35.0, "pitch": -4.0})
+    assert cfg["model.rotation"] == [35.0, -4.0, 0.0]
+
+
+def test_broadside_is_three_directions_around_east():
+    """The only directions a beached shark reads from. Nose-on (index 0, which is where
+    ac.frame_indices always starts) tells you nothing about a roll."""
+    cfg = tune.apply_opts(ac.load(), {"view": "broadside"})
+    frames = tune.view_frames(cfg, {"view": "broadside"})
+    assert frames == [12, 16, 20], frames
+    assert [ac.compass(f, cfg["rotations.count"]) for f in frames] == ["ENE", "E", "ESE"]
+    # and the count knob follows the view, or the hash claims eight cells for a three-cell
+    # sheet
+    assert cfg["compare.rotations"] == 3
+    assert tune.view_frames(ac.load(), {"view": "wheel"}) == ac.frame_indices(ac.load(), 8)
+    assert tune.view_of({"view": "sideways"}) == "wheel", "unknown view falls back"
+
+
+def test_a_posed_quote_does_not_guess_a_hash_it_cannot_know():
+    """The posed hash is over a .blend that has not been baked yet. Quoting a number here
+    would be provenance invented on the spot -- so it says so, unmistakably."""
+    cfg = ac.load()
+    tuner = tune.Tuner(cfg, cfg, jobs=1)
+    rest = tuner.quote(tune.values_of(cfg), {}, {"clip": tune.pose.REST})
+    posed = tuner.quote(tune.values_of(cfg), {}, {"clip": "SWIM_FAST", "frame": 7,
+                                                  "gain": 2.0})
+    assert len(rest["tuner_hash"]) == 12 and int(rest["tuner_hash"], 16) >= 0
+    assert posed["tuner_hash"] == tune.PENDING_HASH
+    assert " " in tune.PENDING_HASH, "must not be mistakable for a hash"
+    # the paste hash is knowable in both states: it is the hash of the five exported lines
+    assert posed["paste_hash"] == rest["paste_hash"]
+
+
+def test_a_posed_quote_warns_that_the_rest_pivot_is_unverified():
+    """C.17: the shipped pivot was tuned by eye against the STRAIGHT shark. Inheriting it
+    for a flop is the mistake this whole tuning task exists to prevent."""
+    cfg = ac.load()
+    tuner = tune.Tuner(cfg, cfg, jobs=1)
+    values = tune.values_of(cfg)
+    assert tuner.quote(values, {}, {"clip": tune.pose.REST})["warnings"] == []
+    posed = tuner.quote(values, {}, {"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
+    assert any("pivot" in w and "C.17" in w for w in posed["warnings"])
+    # move it off the committed value and the warning goes: it is about INHERITING the
+    # number, not about the number
+    moved = tuner.quote(dict(values, pivot_x=-0.9), {},
+                        {"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
+    assert not any("pivot" in w for w in moved["warnings"])
+    hard = tuner.quote(dict(values, pivot_x=-0.9), {},
+                       {"clip": "SWIM_FAST", "frame": 7, "gain": 2.9})
+    assert any("2.6" in w for w in hard["warnings"]), "past the measured safe gain"
+
+
+def test_the_posed_export_comments_out_the_knobs_that_do_not_exist():
+    """`action = "SWIM_FAST"` pasted into jamaltron.toml is a fatal unknown knob, and
+    `rest_pose = false` on its own renders a DIFFERENT picture (it unmutes all five NLA
+    tracks at once). So the block names them, spells the values, and stays commented."""
+    cfg = ac.load(env={})
+    p = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
+    text = tune.toml_block(cfg, "deadbeef", "", p, "cafef00dbeef")
+    assert "action" in text and "pose_gain" in text and "SWIM_FAST" in text
+    for line in text.splitlines():
+        if line.startswith("#"):
+            continue
+        assert "action" not in line and "pose_gain" not in line and "rest_pose" not in line
+    parsed = tomllib.loads(text)
+    assert set(parsed["model"]) == {k.split(".", 1)[1] for k in tune.TOML_KEYS}
+    ac.resolve(parsed, env={})            # would raise on an unknown knob
+    assert "cafef00dbeef" in text, "the posed image's own hash has to be findable"
+    assert "TODO(C.5)" in text, "say what makes the block live"
+
+
+def test_a_rest_export_is_unchanged_by_the_pose_half():
+    """The standing shark already shipped. Selecting no pose has to produce exactly the
+    block it produced before any of this existed."""
+    cfg = ac.load(env={})
+    assert tune.toml_block(cfg, "deadbeef") == tune.toml_block(
+        cfg, "deadbeef", "", {"clip": tune.pose.REST}, "cafef00d")
+
+
+def test_the_posed_export_still_round_trips_and_leaks_no_local_path():
+    cfg = ac.load(env={})
+    tuned = tune.apply_values(cfg, {"roll": 30.0, "pivot_x": -0.62})
+    p = tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0})
+    text = tune.toml_block(tuned, ac.config_hash(tuned), "", p, "cafef00dbeef")
+    full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(text)), env={})
+    assert ac.config_hash(full) == ac.config_hash(tuned)
+    assert "HAMMERHEAD" not in text and str(tune.pose.cache_root()) not in text
+
+
+def test_posing_moves_three_knobs_together_or_none(monkeypatch, tmp_path):
+    """`model.blend`, `model.rest_pose` and `model.frame` are one change. Set the blend and
+    leave rest_pose true and the renderer CLEARS the pose it was handed: you would be tuning
+    the standing shark while the page said SWIM_FAST, at the pose's own hash."""
+    baked_file = tmp_path / "SWIM_FAST_f007.blend"
+    baked_file.write_bytes(b"not really a blend")
+    calls = []
+
+    def fake_ensure(cfg, clip_id, frames, gain, **kw):
+        calls.append((clip_id, sorted(set(frames)), gain))
+        return tune.pose.Baked(clip_id=clip_id, gain=gain, paths={7: baked_file})
+
+    monkeypatch.setattr(tune.pose, "ensure", fake_ensure)
+    cfg = ac.load(env={})
+    out, baked = tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7,
+                                                      "gain": 2.0}))
+    assert out["model.blend"] == str(baked_file)
+    assert out["model.rest_pose"] is False
+    assert out["model.frame"] == 7
+    assert baked is not None
+    assert cfg["model.rest_pose"] is True, "the committed config must not be mutated"
+    assert calls == [("SWIM_FAST", [7], 2.0)], "no prefetch unless asked"
+
+    # ... and with prefetch on, the whole loop bakes in the one launch this render pays for
+    calls.clear()
+    tune.posed(cfg, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 7, "gain": 2.0,
+                                         "stride": 2, "prefetch": True}))
+    assert calls[0][1] == sorted(set([7] + tune.pose.loop_frames("SWIM_FAST", 2)))
+
+
+def test_rest_never_bakes_and_never_touches_the_config():
+    cfg = ac.load(env={})
+    out, baked = tune.posed(cfg, tune.normalize_pose({"clip": tune.pose.REST}))
+    assert out is cfg and baked is None
+
+
+def test_the_page_boots_with_the_clip_table_itself():
+    """The select, the frame slider's range and every duration on the page come off
+    pose.CLIPS, not a copy of it -- a copy is a table that rots."""
+    import json
+    cfg = ac.load()
+    boot = json.loads(tune.page(tune.Tuner(cfg, cfg, jobs=1))
+                      .split("const BOOT = ", 1)[1].split(";\n", 1)[0])
+    assert [c["id"] for c in boot["clips"]] == [c.id for c in tune.pose.CLIPS]
+    for got, want in zip(boot["clips"], tune.pose.CLIPS):
+        assert (got["lo"], got["hi"], got["action"]) == (want.lo, want.hi, want.action)
+    assert boot["pose"]["clip"] == tune.pose.REST, "the page opens on the shipped shark"
+    assert boot["fps"] == tune.pose.FPS
+    assert boot["gain"]["safe"] == tune.pose.GAIN_SAFE

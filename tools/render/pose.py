@@ -27,15 +27,17 @@ time by render_jamal.build_rig, so a roll sweep re-renders and never re-bakes. O
 (model, action, frame, gain) key a baked file, so the eight frames of a loop bake ONCE and
 then survive every other slider you touch.
 
-MEASURED on this machine (M-series, Blender 4.4.3, 1.7 MiB model):
-  * one launch, ten poses saved: 6.6 s total -- 2.6 s of it is Blender starting up and
-    0.40 s per pose after that. So ALWAYS batch a loop into one ensure() call; ten separate
-    calls would pay the 2.6 s ten times.
-  * a baked file is 1.7 MiB, same as the source. Ten frames of one clip is 17 MiB.
-  * bake a REST pose (no action, gain 1.0) and render it, and the body frames come back
-    BYTE-IDENTICAL to the same render off the source .blend. That is the test that the save
-    keeps every texture path, material and modifier intact; see tools/tests/test_pose.py
-    for the pure half and the C.5 notes for the pixel half.
+MEASURED on this machine (Blender 4.4.3, the 1.7 MiB HAMMERHEAD.blend):
+  * ONE pose, one launch: 0.41 s. TEN poses in one launch: 0.49 s -- 0.35 s of that is
+    Blender starting and 0.06 s is each pose. So batch a whole loop into one ensure() call
+    and the bake disappears next to the 1.5 s the render costs; ten separate calls would pay
+    the launch ten times and turn a free thing into half the wall clock.
+  * a baked file is 1.44 MiB. A ten-frame loop is 14 MiB, and the cache prunes itself.
+  * the textures survive, and this was checked rather than assumed: open a baked file and
+    both real image datablocks resolve, by ABSOLUTE path, against the source model's own TEX
+    directory. The source's two dead GREATWHITE refs come back as ONE, because saving purges
+    the orphan that had no users -- C.2 already proved both were unwired, so the baked file
+    is the cleaner of the two and neither ever reached a pixel.
 
 WHERE THE FILES GO, AND WHY NOT render-out/. A baked .blend is MODEL SOURCE -- derived, but
 still the licensed mesh -- and model source does not enter the repo, gitignored or not. So
@@ -131,8 +133,8 @@ CLIPS_BY_ID = {c.id: c for c in CLIPS}
 #: a number C.5 wants to know -- and the page says which side of 2.6 you are on.
 GAIN_MIN, GAIN_MAX, GAIN_SAFE = 1.0, 3.0, 2.6
 
-#: Baked files kept before the oldest are pruned. 96 x 1.7 MiB is about 165 MB, which is
-#: roughly every frame of all three swims plus a bite -- more than one session needs.
+#: Baked files kept before the oldest are pruned. 96 x 1.44 MiB is about 138 MB, which is
+#: every frame of the two fast swims at two gains -- more than one session of tuning needs.
 CACHE_MAX = 96
 
 #: Overrides the cache directory. $TMPDIR by default; NEVER anywhere in the repo.
@@ -305,8 +307,9 @@ def ensure(cfg: dict, clip_id: str, frames, gain: float = 1.0, *,
     REST bakes nothing and returns no paths -- the caller renders the source model with
     `model.rest_pose = true`, exactly as the shipped sprites were rendered.
 
-    Batch the whole loop in one call. The launch is 2.6 s of the 6.6 s a ten-frame bake
-    costs; ten calls would pay it ten times.
+    Batch the whole loop in one call. MEASURED: ten poses in one launch is 0.49 s, one pose
+    in one launch is 0.41 s -- the launch is nearly all of it, so ten calls cost 4 s and one
+    call costs half a second for the same ten files.
     """
     gain = clamp_gain(gain)
     c = clip_of(clip_id)

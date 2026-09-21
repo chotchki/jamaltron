@@ -64,7 +64,7 @@ where you are moving one number by 0.1 and looking again:
 uv run --directory tools python render/tune.py            # opens a browser at 127.0.0.1:8765
 ```
 
-Five sliders - pivot fore/aft, height, girth, scale, pitch - driving the SAME
+Six sliders - pivot fore/aft, height, girth, scale, pitch, roll - driving the SAME
 `ac.load -> art.render_pass -> art.compare_sheet` path the CLI drives, so a value found
 there is the same value here: same cache, same sheet, same coverage count, same hash. The
 page shows the shark's dimensions and the leg-mount coverage as you drag, and a **copy
@@ -82,6 +82,31 @@ simultaneous Blenders thrash the Metal context. Do not go looking for speed ther
 It is a local tool and it acts like one: stdlib `http.server`, one file, no dependency, and
 it binds 127.0.0.1 only. A render that fails leaves the last good image up and puts the
 error on the page - a tuner that dies on a value you were curious about is worse than none.
+
+### Flopping him (C.5)
+
+The same page picks one of the model's **five shipped clips** (SWIM_FAST / SWIM_MEDIUM /
+SWIM_SLOW / BITE_01 / BITE_02, or the rest pose), scrubs a frame of it, amplifies it with
+**pose gain**, and **PLAYS** the loop. Play is the point: a flop is a MOTION, and frame 7 of
+a thrash and frame 7 of a shark swimming sideways are the same picture. The loop renders
+once and then plays out of the browser's own memory, so the second cycle is free.
+
+MEASURED, ten frames from cold: **15.1 s** to fill broadside (1.51 s a frame), 18.1 s on the
+full wheel, and **0.13 s a frame** to re-tick PLAY afterwards - zero in the browser, which is
+where it plays. All ten poses bake in ONE Blender launch (0.7 s for the set), so scrubbing
+the frame slider by hand is the slow way: that pays a launch per frame. 256 px is **not**
+faster than 384 - this loop is Blender *launch*-bound at both ends, exactly like `--jobs`.
+The **broadside** view is not a speed knob either (17%, i.e. nothing); it is there because a
+beached shark only reads as beached from the side - nose-on, the roll is invisible and the
+thrash is all in screen depth, so five of the wheel's eight views cannot answer the question.
+
+There is no `model.action` or `model.pose_gain` knob in `artconfig.SCHEMA` yet, which is
+deliberate (gain is the knob that decides whether the bought animation ships at all).
+`render/pose.py` bakes the selected pose into a temp `.blend` under `$TMPDIR` instead, and
+`model.blend` points at it - same cache, same hashes, same provenance, because the config
+hashes the model by CONTENT. The TOML export names both missing knobs in a commented block
+rather than emitting two keys that would be a fatal `unknown knob` in the file they land in.
+A baked pose is still the licensed mesh, so it never goes anywhere near the repo.
 
 ## Shipping a sheet
 
@@ -190,6 +215,7 @@ is the promise the word provenance was making.
 | `uv run --directory tools python render/factorio_camera.py` | print the camera and sun constants |
 | `uv run --directory tools python render/factorio_camera.py --verify` | re-derive both constants off the installed game's own sprites |
 | `Blender -b MODEL.blend --python tools/render/model_inspect.py -- --out report.json` | dump mesh, rig, clips and materials from a model |
+| `Blender -b MODEL.blend --python tools/render/pose.py -- --jobs jobs.json` | bake one action/frame/gain per job into a temp `.blend`. Driven by `pose.ensure()`, never by hand |
 
 The C.10 art harness, all from the repo root (`--set` takes TOML values, repeatable):
 
@@ -204,8 +230,9 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
-| `uv run --directory tools python render/tune.py` | **the slider UI.** five knobs, live coverage count, copy-TOML button; shadow off by default |
+| `uv run --directory tools python render/tune.py` | **the slider UI.** six knobs, the five shipped clips with a PLAY loop, live coverage count, copy-TOML button; shadow off by default |
 | `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
+| `$JAMALTRON_POSE_CACHE=DIR` | where baked poses go (default `$TMPDIR/jamaltron-pose`, pruned at 96 files). Never inside the repo |
 
 The C.7 packer, also from the repo root:
 
