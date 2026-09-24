@@ -225,9 +225,6 @@ TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model
              "model.reparent_head", "model.ground_contact",
              "model.base_yaw",
              "bounce.height", "bounce.phase", "bounce.gravity")
-#: The three TOML_KEYS that posed() writes from the page's pose controls rather than taking
-#: from the config -- which is why a --set of one does not survive to the export.
-POSE_KEYS = ("model.action", "model.frame", "model.pose_gain")
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
 assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema does not have"
 
@@ -409,6 +406,14 @@ def view_frames(cfg: dict, opts: dict) -> list[int]:
     return sorted({int(round(total * s / 16.0)) % total for s in BROADSIDE_SIXTEENTHS})
 
 
+def pose_of(cfg: dict) -> dict:
+    """The pose controls a config implies -- what the page boots with. For the committed
+    standing config that is exactly DEFAULT_POSE, which is what keeps the page opening on
+    the shipped shark; a --set of a pose key moves it, which is what --set is for."""
+    return normalize_pose({"clip": cfg["model.action"], "frame": cfg["model.frame"],
+                           "gain": cfg["model.pose_gain"], "stride": DEFAULT_POSE["stride"]})
+
+
 def normalize_pose(state: dict | None) -> dict:
     """The pose controls, clamped to what the model can actually do.
 
@@ -571,13 +576,11 @@ def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
         # The header hash is computed WITH these, because the render was. Say so, or the
         # block reads as "paste this, get this hash" and the hash comes back different.
         # Worded to read the same in the terminal at startup and as a comment in the block.
-        # ...but only the ones the export really lacks. The rig checkboxes and gravity ARE
-        # written out, straight from this config, and telling someone to add one by hand is
-        # how a paste ends up declaring it twice. The three POSE keys are the exception that
-        # stays in the note: posed() overwrites them from the page's own pose controls, so a
-        # --set of those does not reach the export (C.28).
-        missing = {key: value for key, value in extra.items()
-                   if key not in TOML_KEYS or key in POSE_KEYS}
+        # ...but only the ones the export really lacks. Everything in TOML_KEYS IS written
+        # out -- the rig checkboxes and gravity straight from this config, the pose keys via
+        # the pose controls, which boot off it (pose_of, C.28) -- and telling someone to add
+        # one by hand is how a paste ends up declaring it twice.
+        missing = {key: value for key, value in extra.items() if key not in TOML_KEYS}
         if missing:
             note = ("also --set, in every render and in the hash but NOT in the exported "
                     "[model] lines (add them by hand or the pasted hash will differ): "
@@ -1492,7 +1495,10 @@ def page(tuner: Tuner) -> str:
         # The pose half. The clip table is pose.CLIPS itself, not a copy of it, so the
         # select, the frame slider's range and every duration on the page all come off the
         # same five records every posed render re-checks against the model.
-        "pose": DEFAULT_POSE,
+        # The pose controls boot off the CONFIG, same rule as the knob checkboxes (C.28):
+        # they used to boot off DEFAULT_POSE, and posed() writes them over the config's own
+        # action/frame/gain, so `--set model.action=...` rendered the standing shark.
+        "pose": pose_of(tuner.committed),
         "flop": FLOP_PRESET,
         "rest": pose.REST,
         "fps": pose.FPS,

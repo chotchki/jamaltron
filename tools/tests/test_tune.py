@@ -584,7 +584,10 @@ def test_a_set_the_sliders_do_not_own_is_still_checked_by_the_schema():
         seed_of({"model.frame": "twelve"})          # type, same path
     # the valid ones still land, note and all
     committed, _, note, _ = seed_of({"model.action": "SWIM_FAST"})
-    assert committed["model.action"] == "SWIM_FAST" and "model.action=SWIM_FAST" in note
+    assert committed["model.action"] == "SWIM_FAST"
+    # ...and NOT in the "add by hand" note any more: the pose controls boot off the config
+    # (C.28), so the export already carries it
+    assert "model.action" not in note
 
 
 def test_the_renders_own_warnings_reach_the_warning_box():
@@ -685,3 +688,22 @@ def test_seed_only_tells_you_to_add_what_the_export_really_lacks():
     _, _, note, _ = tune.seed(committed, {"model.ground_contact": True,
                                           "camera.canvas_tiles": 8.0})
     assert "camera.canvas_tiles=8.0" in note and "ground_contact" not in note
+
+
+def test_a_set_pose_boots_the_page_on_that_pose_and_reaches_the_export():
+    """C.28: `tune.py --set 'model.action="SWIM_FAST"'` used to boot the pose controls on
+    REST, and posed() writes the controls over the config -- so the --set rendered the
+    standing shark and exported `action = "rest"`. The controls boot off the config now,
+    and the committed standing config still boots on exactly DEFAULT_POSE."""
+    import json
+    cfg = ac.load(env={})
+    assert tune.pose_of(cfg) == tune.DEFAULT_POSE, "the page still opens on the shipped shark"
+    committed, _, _, _ = tune.seed(cfg, {"model.action": "SWIM_FAST", "model.frame": 12,
+                                         "model.pose_gain": 1.5})
+    tuner = tune.Tuner(committed, committed, jobs=1)
+    boot = json.loads(tune.page(tuner).split("const BOOT = ", 1)[1].split(";\n", 1)[0])
+    assert boot["pose"] == {"clip": "SWIM_FAST", "frame": 12, "gain": 1.5,
+                            "stride": tune.DEFAULT_POSE["stride"]}
+    q = tuner.quote(tune.values_of(committed), {}, boot["pose"])
+    assert 'action = "SWIM_FAST"' in q["toml"] and "frame = 12" in q["toml"]
+    assert "pose_gain = 1.5" in q["toml"]
