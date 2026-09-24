@@ -1031,6 +1031,7 @@ def test_a_new_knob_at_its_default_is_not_in_any_hash():
 @pytest.mark.parametrize("key,value", [
     ("model.action", "SWIM_FAST"),
     ("model.pose_gain", 2.0),
+    ("model.phase_lock", 1.0),
     ("model.reparent_head", True),
     ("bounce.height", 0.3),
     ("bounce.phase", 0.25),
@@ -1197,3 +1198,21 @@ def test_a_roll_past_the_belly_up_rail_warns_and_the_flop_range_does_not():
         got = " ".join(ac.warnings(ac.resolve({"model": {"rotation": [roll, 0.0, 0.0]}},
                                              env={})))
         assert "belly-up" in got and "WATER" in got, roll
+
+
+def test_phase_lock_says_when_it_cannot_do_anything():
+    """A knob that silently does nothing wastes a morning. Rest has no clip and a bite has no
+    wave, so either one with a lock set is a config that only moved the hash."""
+    base = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True}}, env={})
+    assert not [w for w in ac.warnings(dict(base, **{"model.phase_lock": 1.0}))
+                if "phase_lock" in w]
+    rest = [w for w in ac.warnings(dict(base, **{"model.action": "rest",
+                                                 "model.phase_lock": 1.0}))
+            if "phase_lock" in w]
+    assert len(rest) == 1 and "rest" in rest[0]
+    bite = [w for w in ac.warnings(dict(base, **{"model.action": "BITE_01",
+                                                 "model.phase_lock": 0.5}))
+            if "phase_lock" in w]
+    assert len(bite) == 1 and "BITE_01" in bite[0] and "NOTHING" in bite[0]
+    for off_rail in (1.5, -0.25):
+        assert any("0..1" in w for w in ac.warnings(dict(base, **{"model.phase_lock": off_rail})))

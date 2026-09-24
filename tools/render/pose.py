@@ -29,6 +29,7 @@ bones actually move.
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 
 #: The scene's own frame rate, read off the .blend by C.2. Every duration on the page is
@@ -53,6 +54,9 @@ class Clip:
     hi: int
     bones: str
     note: str
+    #: A TRAVELLING WAVE down one bone chain, which is what `model.phase_lock` needs to have
+    #: a lag to cancel. The bites are not: they are a one-shot on HEAD/JAW/fins.
+    wave: bool = False
 
     @property
     def span(self) -> int:
@@ -77,13 +81,15 @@ class Clip:
 CLIPS = (
     Clip("SWIM_FAST", "ArmatureAction.002", 1, 20, "SPINE_01..07 + TAIL",
          "20-frame loop, 0.83 s. THE flop candidate. At roll 80-90 its bend plane stands "
-         "up into the same plane as the bounce, so curl-up and lift-off are ONE motion."),
+         "up into the same plane as the bounce, so curl-up and lift-off are ONE motion.",
+         wave=True),
     Clip("SWIM_MEDIUM", "ArmatureAction.004", 1, 40, "SPINE_01..07 + TAIL",
          "40-frame loop, 1.67 s. The same sweep as FAST at half the speed -- reads as "
-         "labouring rather than panicking."),
+         "labouring rather than panicking.", wave=True),
     Clip("SWIM_SLOW", "SWIM_SLOW.001", 1, 78, "SPINE_01..07 + TAIL",
          "78-frame loop, 3.3 s. The same sweep again at a quarter the speed. Too slow to "
-         "read as distress on its own; useful as the tail end of a flop that is giving up."),
+         "read as distress on its own; useful as the tail end of a flop that is giving up.",
+         wave=True),
     Clip("BITE_02", "ArmatureAction.005", 1, 50, "HEAD, JAW, FIN_LEFT, FIN_RIGHT",
          "50 frames, no loop, and MEASURED USELESS: 24 cells that are all the same picture, "
          "a 2 px jaw. Kept in the table so the table describes the model, not our taste."),
@@ -155,6 +161,106 @@ def loop_frames(clip_id: str, stride: int = 1) -> list:
 def loop_ms(stride: int = 1) -> float:
     """Milliseconds a strided frame is held so the loop plays at the clip's own tempo."""
     return 1000.0 * max(1, int(stride)) / FPS
+
+
+# ------------------------------------------------------------------------ phase lock
+#
+# THE SWIM IS A TRAVELLING WAVE AND A FLOP IS A STANDING ONE (chotchki, C.5). Same bones,
+# same keyframes, different phase relationship: in the swim each joint bends a fixed lag
+# behind the one in front, so the bend runs nose to tail and reads as propulsion; in a flop
+# every joint bends the same way at once, the body curls, then snaps the other way.
+#
+# MEASURED on the bought model, SWIM_FAST, fundamental of each joint's bend angle:
+#
+#     joint     SPINE_01  _02   _03   _04   _05   _06   _07   TAIL
+#     lag (fr)    0.00   1.50  2.99  4.49  5.49  6.99  8.50  10.00     of a 20-frame cycle
+#     amp (deg)   2.99   1.52  3.75  4.56  8.09 10.54  8.26  10.82
+#
+# Neighbour steps are 1.0-1.5 frames (0.05-0.075 of the cycle; SPINE_04 -> _05 is the 1.0),
+# and MEDIUM and SLOW carry the same lags as the same FRACTIONS of their cycle, so the knob is
+# one number that means the same thing on all three. Nose-to-tail is exactly
+# half a period, which is why the 09-20 spike found a front/back split at k = half a period
+# measures WORSE than cancelling each joint's own lag: the wave is rear-loaded 3:1, so any
+# two-group split has a seam at the split bone and needs its k re-tuned against the
+# amplitude profile. Per joint it is one knob with no seam and no k.
+#
+# THE TAIL KEEPS ITS TIMING. Every other joint is pulled into step with it, not the other way
+# round: the tail is the biggest single swing and the thing the eye tracks, so the loop's
+# loudest motion stays on the frames it had. PEAK WHOLE-BODY CURL STILL MOVES, measured on
+# FAST: max at f18 at lock 0, f19 at 0.5, f1 at 1 (a 2-3 frame shift). [bounce] launches on
+# peak curl, so bounce.phase is re-found after the lock moves, not inherited.
+
+#: The slider's rail. 0 is the clip as bought; 1 is every joint in step with the tail. The
+#: schema does not clamp (it clamps nothing) and warnings() says what lies past either end.
+LOCK_MIN, LOCK_MAX = 0.0, 1.0
+
+
+def fundamental(signal) -> tuple:
+    """(amplitude, phase) of the first harmonic of ONE cycle sampled evenly.
+
+    Phase convention: a signal A*cos(2*pi*k/n + phi) comes back as (A, phi), so a joint that
+    bends L frames later than another comes back with its phase 2*pi*L/n SMALLER.
+    """
+    n = len(signal)
+    if n < 2:
+        return 0.0, 0.0
+    w = 2.0 * math.pi / n
+    re = sum(s * math.cos(w * k) for k, s in enumerate(signal))
+    im = -sum(s * math.sin(w * k) for k, s in enumerate(signal))
+    return 2.0 * math.hypot(re, im) / n, math.atan2(im, re)
+
+
+def wave_lags(signals, span: int) -> list:
+    """Each joint's lag in frames behind the FIRST, unwrapped down the chain.
+
+    `signals` is one signed bend-angle series per joint, in chain order (root first), each
+    `span` samples of one cycle. UNWRAPPED is the point: phase is only known modulo a cycle,
+    and nose-to-tail on these clips is EXACTLY half of one, so wrapping each joint on its own
+    puts the tail at +10 or -10 on a coin flip of float noise. Neighbours are 1.0-1.5 frames
+    apart on FAST (3 on MEDIUM, ~6 of 78 on SLOW), far inside half a cycle, so each step is
+    taken as the representative nearest zero and summed down the chain, which is where the
+    physics says the lag accumulates. On the real rig this is not hypothetical: SPINE_01's
+    phase sits ON atan2's cut (-3.063, then +2.749 for SPINE_02), and the raw step would be
+    -18.5 frames.
+
+    A joint with no measurable swing has no phase worth reading; it inherits its
+    neighbour's lag rather than injecting noise into everything behind it.
+    """
+    lags = []
+    prev_phase = None
+    for sig in signals:
+        amp, ph = fundamental(sig)
+        if not lags:
+            lags.append(0.0)
+            prev_phase = ph
+            continue
+        if amp < 1e-6:
+            lags.append(lags[-1])
+            continue
+        step = (prev_phase - ph) / (2.0 * math.pi) * span
+        step = (step + span / 2.0) % span - span / 2.0
+        lags.append(lags[-1] + step)
+        prev_phase = ph
+    return lags
+
+
+def lock_offsets(lags, lock: float) -> list:
+    """Per-joint time offset, in frames, that pulls each joint `lock` of the way into step
+    with the LAST joint of the chain (the tail). Sample joint i at frame + offset[i].
+
+    Why that is the sign: joint i reads the wave (lag_tail - lag_i) frames AHEAD of the tail,
+    so sampling it that many frames EARLIER lands it on the tail's phase. The tail's own
+    offset is always 0 -- see the block above for why it is the tail that holds still.
+    """
+    if not lags:
+        return []
+    ref = lags[-1]
+    return [-float(lock) * (ref - lag) + 0.0 for lag in lags]        # + 0.0: no -0.0 in a log
+
+
+def wrap_time(t: float, lo: int, span: int) -> float:
+    """A time inside one cycle, [lo, lo + span). Fractional on purpose: the lags are."""
+    return lo + (t - lo) % span
 
 
 def verify_clips(actions: dict) -> list:

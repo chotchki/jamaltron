@@ -27,9 +27,11 @@ WHAT IT FIXES BEFORE IT RENDERS (all three are C.2 findings, all three are silen
 
 AND WHAT IT POSES. `model.action` picks one of the five shipped clips (or `rest`),
 `model.frame` picks a frame of it and `model.pose_gain` amplifies every bone's rotation
-about rest. `bounce.*` adds a per-frame ballistic lift on top, which the shadow pass turns
-into real shadow separation for free. All of it is ordinary knobs, so the cache keys and the
-provenance stamps cover a flop frame exactly as they cover a standing one.
+about rest. `model.phase_lock` takes the swim's travelling wave toward a standing one --
+every spine joint pulled into step with the tail, which is the flop's curl-and-snap rather
+than propulsion. `bounce.*` adds a per-frame ballistic lift on top, which the shadow pass
+turns into real shadow separation for free. All of it is ordinary knobs, so the cache keys
+and the provenance stamps cover a flop frame exactly as they cover a standing one.
 
 ENGINE, measured rather than assumed: the body pass defaults to EEVEE Next and the
 shadow pass is Cycles and has no choice. Only Cycles honours `is_shadow_catcher`; EEVEE
@@ -208,8 +210,10 @@ def apply_action(cfg, obj):
     direction while gain was still an open question. Dropping the action first is what makes
     the pose survive the `scene.frame_set` the render does later.
 
-    Returns a note for the log: which action, which frame, how many bones moved. Zero bones
-    moved is a failure, not a quiet success -- it means the action evaluated to nothing.
+    Returns (note, wave): the note is the log line -- which action, which frame, how many
+    bones moved -- and `wave` is what `model.phase_lock` did, None when it is 0 (see
+    phase_locked for its keys). Zero bones moved is a failure, not a quiet success -- it
+    means the action evaluated to nothing.
     """
     if obj is None or obj.type != "ARMATURE":
         raise SystemExit("model.action=%s needs model.object to be the ARMATURE; %r is %s"
@@ -226,6 +230,7 @@ def apply_action(cfg, obj):
                          % (clip.id, clip.action, [a.name for a in bpy.data.actions]))
     frame = pose.clamp_frame(clip.id, cfg["model.frame"])
     gain = float(cfg["model.pose_gain"])
+    lock = float(cfg["model.phase_lock"])
 
     obj.data.pose_position = "POSE"
     ad = obj.animation_data or obj.animation_data_create()
@@ -235,10 +240,16 @@ def apply_action(cfg, obj):
     clear_pose(obj)
 
     assign_action(obj, act)
-    bpy.context.scene.frame_set(frame)
-    bpy.context.view_layer.update()
-
-    baked = {pb.name: pb.matrix_basis.copy() for pb in obj.pose.bones}
+    baked = _bake_at(obj, clip, frame)
+    wave = None
+    if lock and clip.wave:
+        # Only the joints the wave runs through move off `frame`; everything else -- HEAD
+        # after the reparent, the fins, the jaw -- stays exactly where the plain path put it.
+        baked, wave = phase_locked(obj, clip, frame, lock, baked)
+    elif lock:
+        wave = {"skipped": True,
+                "note": "phase_lock %.2f SKIPPED: %s is not a wave, so there is no lag to "
+                        "cancel -- the knob moved the hash and nothing else" % (lock, clip.id)}
     ad.action = None
     posed = []
     for pb in obj.pose.bones:
@@ -258,7 +269,136 @@ def apply_action(cfg, obj):
     return ("%s (%s) frame %d of %d-%d, gain %.2f, on a CLEARED pose (so model.rest_pose "
             "stops meaning anything) -- %d bones posed: %s"
             % (clip.id, clip.action, frame, clip.lo, clip.hi, gain, len(posed),
-               ", ".join(sorted(posed))))
+               ", ".join(sorted(posed)))), wave
+
+
+def _bake_at(obj, clip, t: float) -> dict:
+    """Every bone's basis with the assigned action evaluated at time `t` of `clip`, which
+    may be FRACTIONAL and may sit anywhere in [lo, lo + span).
+
+    THE SEAM IS THE REASON THIS IS NOT ONE frame_set. drop_stale_final_keyframes() removed
+    the final key, and the curves extrapolate CONSTANT, so Blender evaluates everything in
+    (hi, hi + 1) as a frozen copy of hi -- MEASURED, the TAIL reads 10.178 deg at 20.00,
+    20.25, 20.50, 20.75 and 21.00, then 10.993 at frame 1. A joint shifted into that last
+    frame would hold still for a frame and pop, once per loop. So that interval is bridged by
+    hand, hi -> lo: the loop plays lo after hi, so that is the step a shifted joint has to
+    make to stay on the loop it is part of.
+
+    WHAT THE BRIDGE IS NOT, measured by review: it is not the bought curve. The dropped key
+    was never an exact copy of lo (up to 1.0 deg off it, SWIM_FAST SPINE_06), and linear/slerp
+    against the bought Bezier across that frame is off by up to 0.47 deg (2.2% of that joint's
+    swing) on FAST, 0.18 on MEDIUM, 0.73 on SLOW. And SWIM_SLOW is worse than one frame: it is
+    MEDIUM retimed 2x with its first key left at frame 1, so its true period is 80 and the
+    table's 78 squeezes two frames of motion into this one -- a hitch the bought loop already
+    plays at 78 -> 1, which a lock spreads across joints instead of adding (PLAN C.26).
+    """
+    t = pose.wrap_time(t, clip.lo, clip.span)
+    if t <= clip.hi:
+        whole = int(math.floor(t))
+        bpy.context.scene.frame_set(whole, subframe=t - whole)
+        bpy.context.view_layer.update()
+        return {pb.name: pb.matrix_basis.copy() for pb in obj.pose.bones}
+    w = t - clip.hi
+    a, b = _bake_at(obj, clip, clip.hi), _bake_at(obj, clip, clip.lo)
+    out = {}
+    for name, ma in a.items():
+        la, ra, sa = ma.decompose()
+        lb, rb, sb = b[name].decompose()
+        out[name] = (mathutils.Matrix.Translation(la.lerp(lb, w))
+                     @ ra.slerp(rb, w).to_matrix().to_4x4()
+                     @ mathutils.Matrix.Diagonal(sa.lerp(sb, w)).to_4x4())
+    return out
+
+
+def wave_chain(obj, samples: dict) -> list:
+    """The joints the clip moves, root first -- or [] if they are not ONE parent chain.
+
+    Chain order is what makes the lags mean anything (they accumulate joint to joint), and
+    it is read off the rig rather than off bone names. A clip whose moving bones branch has
+    no single "down the body" to measure along, so it is refused rather than guessed at.
+    """
+    moving = {name for name in samples[next(iter(samples))]
+              if any(m[name].to_quaternion().angle > 1e-6 for m in samples.values())}
+    bones = obj.data.bones
+    chain = sorted(moving, key=lambda n: len(bones[n].parent_recursive))
+    for prev, name in zip(chain, chain[1:]):
+        if bones[name].parent is None or bones[name].parent.name != prev:
+            return []
+    return chain
+
+
+def bend_signals(obj, chain: list, samples: dict) -> list:
+    """One SIGNED bend angle per joint per frame, in radians.
+
+    Each joint's rotation over the cycle is (nearly) about one axis -- MEASURED 0.99-1.00 of
+    local x on every spine joint -- so the signal is the rotation vector projected on that
+    joint's dominant axis. THE SIGN IS THE TRAP: an axis and its negative are the same axis,
+    and picking the wrong one reads as half a cycle of lag. So every axis is compared in
+    ARMATURE space and flipped to agree with the joint in front of it, which is what "bends
+    the same way" means physically; comparing bone-local axes would be fooled by any change
+    of bone roll along the chain.
+    """
+    frames = sorted(samples)
+    out, prev_axis = [], None
+    for name in chain:
+        vecs = []
+        for f in frames:
+            axis, angle = samples[f][name].to_quaternion().to_axis_angle()
+            vecs.append(mathutils.Vector(axis) * angle)
+        mean = sum(vecs, mathutils.Vector()) / len(vecs)
+        centred = [v - mean for v in vecs]
+        cov = mathutils.Matrix([[sum(v[i] * v[j] for v in centred) for j in range(3)]
+                                for i in range(3)])
+        axis = mathutils.Vector((1.0, 1.0, 1.0))
+        for _ in range(64):                       # power iteration: 3x3, converges fast
+            nxt = cov @ axis
+            if nxt.length < 1e-12:
+                break
+            axis = nxt.normalized()
+        arm_axis = obj.data.bones[name].matrix_local.to_3x3() @ axis
+        if prev_axis is not None and arm_axis.dot(prev_axis) < 0.0:
+            axis, arm_axis = -axis, -arm_axis
+        prev_axis = arm_axis
+        out.append([v.dot(axis) for v in vecs])
+    return out
+
+
+def phase_locked(obj, clip, frame: int, lock: float, baked: dict) -> tuple:
+    """`baked` with every wave joint re-sampled `lock` of the way into step with the tail.
+
+    THE KNOB C.5's STANDING WAVE NEEDED (chotchki: a beached fish bends head and tail the
+    SAME way at once, so the body curls into a U and snaps back, where the swim runs its bend
+    nose to tail). Same bones, same keyframes, different phase relationship -- so this reads
+    the clip's own lag per joint and plays each joint from its own offset. See pose.py's
+    phase-lock block for the measured lags and why the TAIL is the joint that holds still.
+
+    MEASURED, NOT ASSUMED: the lags come off the clip every render, from the fundamental of
+    each joint's bend over one cycle. They come back as data (chain / lags / offsets) as well
+    as a note, and main() puts both where the harness keeps them: a `FIX phase_lock` line for
+    `-v` and the tuner's log, and the JAMALTRON_RESULT the pass reports. A skip is a WARN,
+    because a skipped lock has moved the hash and no pixel.
+    """
+    samples = {f: _bake_at(obj, clip, f) for f in range(clip.lo, clip.hi + 1)}
+    chain = wave_chain(obj, samples)
+    if len(chain) < 2:
+        return baked, {"skipped": True,
+                       "note": "phase_lock %.2f SKIPPED: %s moves no single bone chain to run "
+                               "a wave down -- the knob moved the hash and nothing else"
+                               % (lock, clip.id)}
+    lags = pose.wave_lags(bend_signals(obj, chain, samples), clip.span)
+    offsets = pose.lock_offsets(lags, lock)
+    out = dict(baked)
+    by_time = {}
+    for name, off in zip(chain, offsets):
+        t = round(pose.wrap_time(frame + off, clip.lo, clip.span), 6)
+        if t not in by_time:
+            by_time[t] = _bake_at(obj, clip, t)
+        out[name] = by_time[t][name]
+    return out, {"skipped": False, "chain": chain,
+                 "lags": [round(v, 4) for v in lags], "offsets": [round(v, 4) for v in offsets],
+                 "note": "phase_lock %.2f down %s: lag %s frames -> offset %s"
+                         % (lock, "/".join(chain), "/".join("%.2f" % v for v in lags),
+                            "/".join("%+.2f" % v for v in offsets))}
 
 
 def assign_action(obj, act):
@@ -729,8 +869,15 @@ def main():
     # parents under the result.
     if cfg["model.reparent_head"]:
         print("FIX head reparent:", reparent_head(rig))
+    wave = None
     if posed:
-        print("FIX pose:", apply_action(cfg, rig))
+        note, wave = apply_action(cfg, rig)
+        print("FIX pose:", note)
+        if wave is not None:
+            # Its OWN line, with a prefix art.run_blender keeps: an indented continuation of
+            # the pose note is dropped by that filter, and this is the only record of what the
+            # lags were. A skip is a WARN, which the harness prints however quiet the pass is.
+            print(("WARN " if wave["skipped"] else "FIX ") + wave["note"])
     print("FIX removed shipped cams/lights:", strip_scene(scene))
     print("CHECK unresolvable images:", json.dumps(dead_image_check()))
     print("FIX materials:", tune_materials(cfg))
@@ -788,10 +935,11 @@ def main():
              final / canvas, frames))
 
     if posed or d["bounce_lift_tiles"]:
-        print("POSE action=%s gain=%.2f frame=%d  reparent_head=%s  bounce lift %.3f tiles "
-              "(peak %.3f, %.1f of %d frames airborne, %.3f tiles up-screen, %.3f tiles of "
-              "shadow east at peak)"
-              % (cfg["model.action"], cfg["model.pose_gain"], cfg["model.frame"],
+        print("POSE action=%s gain=%.2f phase_lock=%.2f frame=%d  reparent_head=%s  bounce "
+              "lift %.3f tiles (peak %.3f, %.1f of %d frames airborne, %.3f tiles up-screen, "
+              "%.3f tiles of shadow east at peak)"
+              % (cfg["model.action"], cfg["model.pose_gain"], cfg["model.phase_lock"],
+                 cfg["model.frame"],
                  cfg["model.reparent_head"], d["bounce_lift_tiles"], d["bounce_peak_tiles"],
                  d["bounce_airtime_frames"], d["bounce_cycle_frames"],
                  d["bounce_lift_up_screen_tiles"], d["bounce_peak_shadow_east_tiles"]))
@@ -835,6 +983,9 @@ def main():
         "blender": bpy.app.version_string,
         # What the pose and the bounce actually did, so a cached frame's own report says so.
         "action": cfg["model.action"], "pose_gain": cfg["model.pose_gain"],
+        "phase_lock": cfg["model.phase_lock"],
+        "wave": ({k: wave[k] for k in ("chain", "lags", "offsets")}
+                 if wave and not wave["skipped"] else None),
         "model_frame": cfg["model.frame"], "reparent_head": cfg["model.reparent_head"],
         "bounce_lift_tiles": round(d["bounce_lift_tiles"], 5),
         # WHICH clip table this was checked against, so a report three weeks old still says.

@@ -142,3 +142,113 @@ def test_pose_imports_no_sibling_and_needs_no_blender():
                      if line.startswith(("import ", "from ")))
     assert "bpy" not in body and "mathutils" not in body
     assert "render" not in body, "pose.py must not import a sibling; artconfig imports IT"
+
+
+# ------------------------------------------------------------------------ phase lock
+
+import math  # noqa: E402
+
+#: SWIM_FAST as MEASURED off the bought model (render_jamal's own sampler, 2026-09-23):
+#: per-joint lag in frames of a 20-frame cycle and fundamental amplitude in degrees.
+MEASURED_LAGS = [0.00, 1.50, 2.99, 4.49, 5.49, 6.99, 8.50, 10.00]
+MEASURED_AMPS = [2.99, 1.52, 3.75, 4.56, 8.09, 10.54, 8.26, 10.82]
+
+
+def _travelling(lags, amps, span, phi=0.7, t0=0.0):
+    """One cycle of a wave that reaches joint i `lags[i]` frames after the first."""
+    return [[math.radians(a) * math.cos(2 * math.pi * (k + t0 - lag) / span + phi)
+             for k in range(span)] for a, lag in zip(amps, lags)]
+
+
+def test_fundamental_reads_back_the_amplitude_and_phase_it_was_given():
+    for n in (20, 40, 78):
+        sig = [1.7 * math.cos(2 * math.pi * k / n + 0.9) + 0.3 for k in range(n)]
+        amp, ph = pose.fundamental(sig)
+        assert abs(amp - 1.7) < 1e-9 and abs(ph - 0.9) < 1e-9, n     # the DC is not in it
+    assert pose.fundamental([]) == (0.0, 0.0)
+
+
+def test_wave_lags_recovers_the_measured_swim():
+    for span in (20, 40, 78):
+        scale = span / 20.0
+        lags = [lag * scale for lag in MEASURED_LAGS]
+        got = pose.wave_lags(_travelling(lags, MEASURED_AMPS, span), span)
+        assert all(abs(g - w) < 1e-6 for g, w in zip(got, lags)), (span, got)
+
+
+def test_wave_lags_survive_the_atan2_cut_wherever_the_cycle_starts():
+    """The neighbour-step wrap is the line that decides the answer ON THE REAL RIG: SPINE_01's
+    fundamental phase sits right on atan2's +-pi cut (MEASURED -3.063 then +2.749 for
+    SPINE_02 on FAST, -3.142 on MEDIUM, +3.139 on SLOW), so the raw first step comes out
+    -18.5 frames instead of +1.5 and every lag behind it is garbage. A synthetic wave at one
+    comfortable phase never crosses the cut and cannot catch that -- so sweep the start phase
+    round the whole circle, the cut included."""
+    for i in range(64):
+        phi = -math.pi + 2 * math.pi * i / 64
+        for span in (20, 40, 78):
+            lags = [lag * span / 20.0 for lag in MEASURED_LAGS]
+            got = pose.wave_lags(_travelling(lags, MEASURED_AMPS, span, phi=phi), span)
+            assert all(abs(g - w) < 1e-6 for g, w in zip(got, lags)), (phi, span, got)
+
+
+def test_the_tail_at_exactly_half_a_cycle_is_not_a_coin_flip():
+    """Nose-to-tail on these clips is EXACTLY half a period, so the tail's lag is +10 or -10
+    depending on which side of the wrap float noise lands. Wrapped per joint, that flips the
+    tail's offset by a whole half-cycle and the lock pulls it to the wrong side. Unwrapped
+    down the chain it cannot: neighbour steps are 1.0-1.5 frames."""
+    for nudge in (-1e-7, 0.0, 1e-7):
+        lags = MEASURED_LAGS[:-1] + [10.0 + nudge]
+        got = pose.wave_lags(_travelling(lags, MEASURED_AMPS, 20), 20)
+        assert abs(got[-1] - (10.0 + nudge)) < 1e-6, (nudge, got)
+
+
+def test_a_joint_that_does_not_move_inherits_its_neighbours_lag():
+    """No swing, no phase worth reading -- and a garbage phase would shift every joint
+    behind it, because the lags accumulate down the chain."""
+    sig = _travelling([0.0, 1.5, 3.0], [5.0, 5.0, 5.0], 20)
+    sig[1] = [0.0] * 20
+    got = pose.wave_lags(sig, 20)
+    assert got[1] == got[0] == 0.0
+    assert abs(got[2] - 3.0) < 1e-6
+
+
+def test_lock_offsets_hold_the_tail_still_and_pull_the_rest_in():
+    assert pose.lock_offsets(MEASURED_LAGS, 0.0) == [0.0] * 8
+    full = pose.lock_offsets(MEASURED_LAGS, 1.0)
+    assert full[-1] == 0.0 and str(full[-1]) == "0.0", "the tail holds; and no -0.0 in a log"
+    assert abs(full[0] + 10.0) < 1e-9, "the nose is sampled half a cycle EARLIER"
+    half = pose.lock_offsets(MEASURED_LAGS, 0.5)
+    assert all(abs(h - f / 2) < 1e-12 for h, f in zip(half, full))
+    assert pose.lock_offsets([], 1.0) == []
+
+
+def test_lock_one_turns_the_travelling_wave_into_a_standing_one():
+    """THE property, end to end: play each joint from its offset and every joint's
+    fundamental lands on the tail's phase. Lock 0.5 lands them halfway."""
+    span = 20
+    offsets = pose.lock_offsets(MEASURED_LAGS, 1.0)
+    locked = [_travelling([lag], [amp], span, t0=off)[0]
+              for lag, amp, off in zip(MEASURED_LAGS, MEASURED_AMPS, offsets)]
+    assert all(abs(lag) < 1e-6 for lag in pose.wave_lags(locked, span)), \
+        pose.wave_lags(locked, span)
+    offsets = pose.lock_offsets(MEASURED_LAGS, 0.5)
+    halfway = [_travelling([lag], [amp], span, t0=off)[0]
+               for lag, amp, off in zip(MEASURED_LAGS, MEASURED_AMPS, offsets)]
+    got = pose.wave_lags(halfway, span)
+    assert all(abs(g - lag / 2) < 1e-6 for g, lag in zip(got, MEASURED_LAGS)), got
+
+
+def test_wrap_time_keeps_a_shifted_joint_inside_one_cycle():
+    assert pose.wrap_time(20.5, 1, 20) == 20.5, "the seam interval (hi, hi+1) is IN the cycle"
+    assert pose.wrap_time(21.0, 1, 20) == 1.0
+    assert pose.wrap_time(-9.0, 1, 20) == 11.0          # frame 1 minus ten frames
+    assert pose.wrap_time(1.0 - 10.0, 1, 20) == 11.0
+    for t in (-37.25, -1.0, 0.0, 1.0, 19.99, 20.0, 20.999, 41.5):
+        w = pose.wrap_time(t, 1, 20)
+        assert 1 <= w < 21 and abs(((w - t) / 20) - round((w - t) / 20)) < 1e-9, t
+
+
+def test_only_the_swims_carry_a_wave_to_lock():
+    waves = {c.id for c in pose.CLIPS if c.wave}
+    assert waves == {"SWIM_FAST", "SWIM_MEDIUM", "SWIM_SLOW"}
+    assert pose.LOCK_MIN == 0.0 and pose.LOCK_MAX == 1.0

@@ -103,6 +103,7 @@ SCHEMA: dict[str, tuple] = {
     # ---- C.5's flop: which clip, how hard, and the rig fix it needs ---------------
     "model.action":               (str,          pose.REST, ("body", "shadow", "mask")),
     "model.pose_gain":            (float,              1.0, ("body", "shadow", "mask")),
+    "model.phase_lock":           (float,              0.0, ("body", "shadow", "mask")),
     "model.reparent_head":        (bool,             False, ("body", "shadow", "mask")),
     # ---- C.5's bounce: the lift that makes the shadow separate --------------------
     "bounce.height":              (float,              0.0, ("body", "shadow", "mask")),
@@ -194,7 +195,7 @@ ENUMS = {
 #: anything else, which is what keeps a posed or bouncing render from colliding with a
 #: standing one. test_art_harness.py pins both halves, and a new entry here MUST be a
 #: provable no-op at its default -- if it is not, it does not belong in this tuple.
-ADDITIVE = ("model.action", "model.pose_gain", "model.reparent_head",
+ADDITIVE = ("model.action", "model.pose_gain", "model.phase_lock", "model.reparent_head",
             "bounce.height", "bounce.phase", "bounce.gravity")
 
 #: Where `model.rotation[0]` stops reading as BEACHED, in degrees of roll either way.
@@ -594,6 +595,24 @@ def warnings(cfg: dict) -> list[str]:
                 "frame the clip has"
                 % (cfg["model.frame"], cfg["model.action"], lo, hi,
                    min(max(cfg["model.frame"], lo), hi)))
+    lock = cfg["model.phase_lock"]
+    if lock:
+        clip = pose.clip_of(cfg["model.action"])
+        if clip is None:
+            out.append(
+                "model.phase_lock %.2f with model.action=rest locks nothing: there is no clip, "
+                "so there is no wave to take the lag out of. Pick a swim or set it to 0" % lock)
+        elif not clip.wave:
+            out.append(
+                "model.phase_lock %.2f does NOTHING on %s: a bite is a one-shot on "
+                "HEAD/JAW/fins, not a wave running down the spine, so there is no per-joint "
+                "lag to cancel. It only moves the hash. Pick a swim or set it to 0"
+                % (lock, clip.id))
+        if not pose.LOCK_MIN <= lock <= pose.LOCK_MAX:
+            out.append(
+                "model.phase_lock %.2f is off the 0..1 rail: past 1 the lag OVERSHOOTS and the "
+                "wave runs backwards, tail to nose; below 0 it stretches the swim's own lag. "
+                "Legal, and neither one is a flop" % lock)
     if cfg["model.pose_gain"] > pose.GAIN_SAFE:
         out.append(
             "model.pose_gain %.2f is past the %.1fx the rig was MEASURED to survive. Above "

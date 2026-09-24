@@ -556,13 +556,17 @@ def footer_lines(cfg, label, passes=()):
     # thrash frame and a standing frame are not always distinguishable by eye.
     if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
         clip = pose.clip_of(cfg["model.action"])
+        # TWO lines, not one: the draw does not wrap, and at one line the broadside sheet (the
+        # flop preset's, 1250 px) cut the shadow-east figure -- the one number the bounce is for.
         lines.append(
-            "POSE %s%s frame %d gain %.2f  reparent_head=%s  bounce %.2f tiles peak "
-            "(phase %.2f, g %.1f -> %.1f of %d frames airborne)  this frame lifted %.3f "
-            "tiles = %.1f px up-screen, %.1f px of shadow east"
+            "POSE %s%s frame %d gain %.2f phase_lock %.2f  reparent_head=%s"
             % (cfg["model.action"], " (%s)" % clip.action if clip else "",
-               cfg["model.frame"], cfg["model.pose_gain"], cfg["model.reparent_head"],
-               cfg["bounce.height"], cfg["bounce.phase"], cfg["bounce.gravity"],
+               cfg["model.frame"], cfg["model.pose_gain"], cfg["model.phase_lock"],
+               cfg["model.reparent_head"]))
+        lines.append(
+            "BOUNCE %.2f tiles peak (phase %.2f, g %.1f -> %.1f of %d frames airborne)  this "
+            "frame lifted %.3f tiles = %.1f px up-screen, %.1f px of shadow east"
+            % (cfg["bounce.height"], cfg["bounce.phase"], cfg["bounce.gravity"],
                d["bounce_airtime_frames"], d["bounce_cycle_frames"], d["bounce_lift_tiles"],
                d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
                d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
@@ -642,10 +646,12 @@ def main(argv=None):
              d["shark_width_tiles"], d["shark_height_tiles"],
              cfg["model.offset"], cfg["model.rotation"]))
     if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
-        print("  pose %s frame %d gain %.2f  reparent_head=%s  bounce peak %.2f tiles "
-              "(phase %.2f) -> this frame +%.3f tiles = %.1f px up-screen, %.1f px shadow east"
+        print("  pose %s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  bounce peak "
+              "%.2f tiles (phase %.2f) -> this frame +%.3f tiles = %.1f px up-screen, %.1f px "
+              "shadow east"
               % (cfg["model.action"], cfg["model.frame"], cfg["model.pose_gain"],
-                 cfg["model.reparent_head"], cfg["bounce.height"], cfg["bounce.phase"],
+                 cfg["model.phase_lock"], cfg["model.reparent_head"], cfg["bounce.height"],
+                 cfg["bounce.phase"],
                  d["bounce_lift_tiles"],
                  d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
                  d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))

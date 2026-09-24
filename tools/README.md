@@ -64,8 +64,8 @@ where you are moving one number by 0.1 and looking again:
 uv run --directory tools python render/tune.py            # opens a browser at 127.0.0.1:8765
 ```
 
-Eight sliders - pivot fore/aft, height, girth, scale, pitch, roll, bounce height and bounce
-phase - driving the SAME
+Eleven sliders - pivot fore/aft, height, girth, scale, pitch, yaw, base yaw, roll, phase lock,
+bounce height and bounce phase - driving the SAME
 `ac.load -> art.render_pass -> art.compare_sheet` path the CLI drives, so a value found
 there is the same value here: same cache, same sheet, same coverage count, same hash. The
 page shows the shark's dimensions and the leg-mount coverage as you drag, and a **copy
@@ -100,9 +100,10 @@ i.e. nothing); it is there because a beached shark only reads as beached from th
 nose-on, the roll is invisible and the thrash is all in screen depth, so five of the wheel's
 eight views cannot answer the question.
 
-**flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, gain 1.0, bounce 0.3,
-HEAD reparented, broadside - and it leaves scale, girth, pivot and pitch where you have them,
-because half the time those are mid-tuning. The page still OPENS on the committed standing
+**flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, yaw 180, gain 1.0, bounce
+0.3, HEAD reparented, broadside - and it leaves scale, girth, pivot, pitch and phase lock where
+you have them, because half the time those are mid-tuning. Yaw 180 is chotchki's framing call
+of 2026-09-23. The page still OPENS on the committed standing
 config (the header's `paste` hash reads `83d6be794998` on arrival, which is the live proof the
 flop work has not touched the art that ships), so 85 is a button and not a boot value.
 
@@ -135,6 +136,7 @@ uv run --directory tools python render/art.py --compare \
 | `model.action` | which of the five clips, or `"rest"` for the standing shark. A misspelled id is a fatal `not one of` - the enum IS `render/pose.py`'s table |
 | `model.frame` | which frame of that clip, clamped to its range |
 | `model.pose_gain` | every bone's rotation scaled away from rest. **1.0 ships**: at roll 80-90 the bounce carries the thrash. The rig survives 2.6x, measured |
+| `model.phase_lock` | 0 is the swim's TRAVELLING wave as bought, 1 plays every spine joint in step with the tail - the standing wave a beached fish makes. See below |
 | `model.reparent_head` | C.18a rig fix, applied in memory - HEAD ships as a ROOT bone, so the snout is welded to world space until this is on |
 | `bounce.height` / `.phase` / `.gravity` | the ballistic lift: how high, where in the cycle he pushes off, and the `g` that fixes the airtime |
 
@@ -144,6 +146,57 @@ picture it is showing you, pose included (it used to say `pending bake`, because
 lived in a temp `.blend` that did not exist until a render ran). And they are **hash-neutral
 at their defaults** - `ac.ADDITIVE` - so adding them did not move the `83d6be794998` the
 shipped sheets carry; move one off its default and it is in the hash like anything else.
+
+### The curl: phase lock
+
+chotchki's standing-wave call. The swims are a TRAVELLING wave - each spine joint bends a fixed
+lag behind the one in front, so the bend runs nose to tail and reads as propulsion - and a
+beached fish makes a STANDING one, the whole body curling one way at once. Same bones, same
+keyframes, different phase relationship, so `model.phase_lock` re-times each joint instead of
+authoring anything. The renderer measures the lags off the clip every run (fundamental of each
+joint's bend over one cycle, sign-matched in armature space, unwrapped down the chain).
+
+MEASURED on the bought model, SWIM_FAST, and the same fractions of the cycle on MEDIUM and SLOW:
+
+| joint | SPINE_01 | 02 | 03 | 04 | 05 | 06 | 07 | TAIL |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lag, frames of 20 | 0.00 | 1.50 | 2.99 | 4.49 | 5.49 | 6.99 | 8.50 | 10.00 |
+| swing, deg | 2.99 | 1.52 | 3.75 | 4.56 | 8.09 | 10.54 | 8.26 | 10.82 |
+
+And the lock was checked by re-measuring its OWN output: at 1.0 every joint's lag comes back
+0.00 +-0.01 and every joint correlates with the tail at >= 0.998 (travelling, SPINE_01 sits at
+-0.993). At 0 the pose is bit-identical to the pre-knob renderer over 30 poses, so it is
+hash-neutral AND pixel-neutral. The loop still wraps at the clip's own length, which needed a
+hand-bridged seam: once the stale final key is dropped the curves extrapolate CONSTANT, so a
+joint shifted into (20, 21) would freeze for a frame and pop. At lock 1 the f20 -> f1 step is
+under the largest interior step on every joint. At lock 0 it is NOT on SPINE_04/05 (1.49 vs
+1.38 deg, 2.64 vs 2.45) - that is the bought clip's own seam, because the "stale" key was up to
+1.0 deg off frame 1 rather than a copy of it, and lock 0 is the bought clip bit for bit.
+SWIM_SLOW has a real hitch there: its true period is 80, not 78 (PLAN C.26).
+
+The lock also MOVES PEAK CURL - SWIM_FAST's whole-body curl peaks at f18 at lock 0, f19 at 0.5,
+f1 at 1 - and `[bounce]` launches on peak curl, so re-find `bounce.phase` after moving the lock.
+The tail keeps its own timing; that is not the same thing.
+
+The lags and offsets land in the render's own output as a `FIX phase_lock ...` line (`art.py
+-v`, the tuner's harness log) and in the pass's JAMALTRON_RESULT; a lock that could not apply
+(a bite, or a clip with no single bone chain) is a `WARN`, because it moved the hash and no
+pixel.
+
+**HONEST LIMIT, and it is the next job, not a bug.** Lock 1 is a coherent curl - 50.8 deg peak
+nose to tail against 32.8 travelling - but it reads as a big TAIL FLICK and not a U. Two
+reasons, both measured: the wave is rear-loaded 3:1 (the front four joints carry 12.8 deg of
+it), and SPINE_01 is a root bone at the nose, so the curl hinges at his head and the front never
+leaves the floor. And he is BURIED, which the lock makes worse but did not start. Measured at
+roll 85 on the landing frames (lift 0), lowest point of the posed body: **-0.455 tiles at lock
+0** - `offset` z 0.5 was tuned for the STANDING shark - then -0.804 at 0.5 and **-0.950 at 1**,
+because the half of the cycle that curls DOWN drives the tail into the floor. A real fish on
+its side cannot curl into the ground; the ground turns that half into an arch. Note the
+render's own WARN only sees the frames it drew, so a still off a mid-air frame reports -0.043
+while the landing ten frames later is ten times deeper. So a U needs the two things the 09-20
+spike already named: counter-rotating the body by half its curl each frame (both ends rise
+together), and per-frame ground contact so the lowest point sits on z=0 with the bounce on
+top.
 
 ### What the bounce is for
 
@@ -283,7 +336,7 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
-| `uv run --directory tools python render/tune.py` | **the slider UI.** eight knobs, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix toggle, live coverage count, copy-TOML button; shadow off by default |
+| `uv run --directory tools python render/tune.py` | **the slider UI.** eleven sliders, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix toggle, live coverage count, copy-TOML button; shadow off by default |
 | `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
 
 The C.7 packer, also from the repo root:

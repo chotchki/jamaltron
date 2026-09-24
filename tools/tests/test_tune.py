@@ -526,6 +526,8 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
     assert set(tune.FLOP_PRESET["pose"]) == set(tune.DEFAULT_POSE), "pose keys must match"
     assert set(tune.FLOP_PRESET["opts"]) <= set(tune.DEFAULT_OPTS) | {"reparent"}
     assert tune.FLOP_PRESET["values"]["roll"] == 85.0
+    assert tune.FLOP_PRESET["values"]["yaw"] == 180.0, "chotchki's framing, 2026-09-23"
+    assert "phase_lock" not in tune.FLOP_PRESET["values"], "not decided; the preset is"
     assert tune.FLOP_PRESET["pose"]["gain"] == 1.0, "ungained IS the call at this roll"
     assert tune.FLOP_PRESET["pose"]["clip"] == "SWIM_FAST"
     assert tune.FLOP_PRESET["opts"]["reparent"] is True
@@ -534,7 +536,7 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
     p = tune.normalize_pose(tune.FLOP_PRESET["pose"])
     out = tune.apply_opts(tune.posed(tune.apply_values(cfg, tune.FLOP_PRESET["values"]), p),
                           dict(tune.DEFAULT_OPTS, **tune.FLOP_PRESET["opts"]))
-    assert out["model.rotation"][0] == 85.0
+    assert out["model.rotation"][0] == 85.0 and out["model.rotation"][2] == 180.0
     assert out["model.action"] == "SWIM_FAST" and out["model.pose_gain"] == 1.0
     assert out["bounce.height"] == 0.3
     assert out["model.reparent_head"] is True
@@ -606,3 +608,23 @@ def test_a_warning_from_blender_is_not_hidden_behind_verbose():
     notes = ["FIX nla muted: 5", "POSE action=SWIM_FAST gain=1.00",
              "WARN the posed body reaches 0.283 tiles BELOW the ground plane (z=0)"]
     assert art.warn_notes(notes) == [notes[-1]]
+
+
+def test_the_phase_lock_slider_writes_the_knob_and_survives_the_paste():
+    """The standing-wave knob is judged by eye like the bounce, so it is a slider -- and a
+    lock found by dragging has to come out of the export or the flop you watched is not the
+    flop you pasted."""
+    by_id = {k.id: k for k in tune.KNOBS}
+    lock = by_id["phase_lock"]
+    assert (lock.lo, lock.hi) == (0.0, 1.0), "0 must be reachable: it is the swim as bought"
+    cfg = ac.load(env={})
+    tuned = tune.apply_values(cfg, {"roll": 85.0, "yaw": 180.0, "phase_lock": 0.75,
+                                    "bounce_height": 0.3})
+    assert tuned["model.phase_lock"] == 0.75
+    posed = tune.posed(tuned, tune.normalize_pose({"clip": "SWIM_FAST", "frame": 19}))
+    text = tune.toml_block(posed, ac.config_hash(posed))
+    assert "phase_lock = 0.75" in text
+    full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(text)), env={})
+    assert ac.config_hash(full) == ac.config_hash(posed)
+    assert ac.pass_hash(posed, "body") != ac.pass_hash(
+        tune.apply_values(posed, {"phase_lock": 0.0}), "body"), "a lock move must re-render"

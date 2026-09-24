@@ -186,6 +186,15 @@ KNOBS = [
          "belly-up in WATER, and warns from there on -- a limit you cannot cross is a limit you "
          "have to take on faith, and this phase exists to replace faith with looking. Drag it "
          "there once, see it, come back."),
+    Knob("phase_lock", "model.phase_lock", None, pose.LOCK_MIN, pose.LOCK_MAX, 0.05,
+         "phase lock (swim &rarr; flop)", "x", "&larr; swimming", "one curl &rarr;",
+         "Takes the swim's TRAVELLING wave toward a STANDING one. 0 is the clip as bought: each "
+         "spine joint bends a frame or so behind the one in front, so the bend runs nose to "
+         "tail and reads as propulsion. 1 plays every joint in step with the TAIL, so the whole "
+         "body curls one way at once and snaps back -- a beached fish, not a swimming one. The "
+         "tail keeps its timing but PEAK CURL MOVES (f18 at 0, f1 at 1 on SWIM_FAST), so "
+         "re-find bounce phase after moving this. Only the swims have a wave to lock; on a "
+         "bite it does nothing and says so."),
     Knob("bounce_height", "bounce.height", None, 0.0, 0.8, 0.02,
          "bounce height", "tiles", "&larr; sliding", "launched &uarr;",
          "How far off the ground the push-off throws him, in world tiles. 0 pins him to the "
@@ -211,7 +220,8 @@ KNOBS = [
 #: because the five shark knobs are meaningless without them. A flop tuned at gain 1.0 and
 #: pasted without `action` is the standing shark.
 TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model.rotation",
-             "model.action", "model.pose_gain", "model.frame", "model.reparent_head",
+             "model.action", "model.pose_gain", "model.phase_lock", "model.frame",
+             "model.reparent_head",
              "model.base_yaw",
              "bounce.height", "bounce.phase", "bounce.gravity")
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
@@ -267,12 +277,15 @@ DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2}
 #: touched the art that ships, and `reset to committed` has something to mean. Roll 85 with
 #: no clip selected is also a pose nobody wants: a STANDING shark lying on his side.
 #:
-#: So: one click to the recipe, from wherever the sliders are. It sets only the six knobs the
+#: So: one click to the recipe, from wherever the sliders are. It sets only the knobs the
 #: flop is about and deliberately leaves scale, girth, pivot and pitch alone -- those are
 #: mid-tuning values half the time, and a preset that silently reverted them would be a
-#: preset nobody presses twice. `--set model.rotation=[85,0,0]` still seeds it from the CLI.
+#: preset nobody presses twice. `--set model.rotation=[85,0,180]` still seeds it from the CLI.
+#:
+#: YAW 180 is chotchki's framing call (2026-09-23, "a much better framing"): head-for-tail in
+#: his own frame, inside the roll. phase_lock is NOT in here -- it is still being judged.
 FLOP_PRESET = {
-    "values": {"roll": 85.0, "bounce_height": 0.3},
+    "values": {"roll": 85.0, "yaw": 180.0, "bounce_height": 0.3},
     "pose": {"clip": "SWIM_FAST", "frame": 1, "gain": 1.0, "stride": 2},
     "opts": {"view": "broadside", "reparent": True},
 }
@@ -495,13 +508,13 @@ def _toml_value(v) -> str:
 def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
     """`--set` -> (committed, slider start values, export note, clamped knobs).
 
-    --set has TWO jobs, because the sliders own five of the schema's knobs and --set takes
-    any of them. On one of the five it seeds that slider. On ANYTHING ELSE it used to land
+    --set has TWO jobs, because the sliders own some of the schema's knobs and --set takes
+    any of them. On a slider's knob it seeds that slider. On ANYTHING ELSE it used to land
     in `start`, which is read for nothing but slider values, so `--set camera.canvas_tiles=8`
     moved no pixel and printed no complaint -- a silent no-op on the flag whose whole job is
     "carry on from yesterday". Those go into `committed` instead, where every render and
     both hashes pick them up (art.py's own meaning of --set), and they come back as a note
-    for the export header, because the five exported lines cannot carry them.
+    for the export header, because the exported lines cannot carry them.
 
     Seeded PAST a slider end is the other quiet one: the page paints 1.5 in the number box,
     the range input pins itself at 1.2, and the render clamps to 1.2 -- three numbers, one
@@ -614,7 +627,7 @@ class Tuner:
         self.start = start
         self.jobs = jobs
         #: Rides in the exported TOML header. Non-empty when `--set` moved a knob no slider
-        #: owns: that knob IS in every render and both hashes, and it is NOT in the five
+        #: owns: that knob IS in every render and both hashes, and it is NOT in the
         #: exported lines, so the export has to say so or the paste silently loses it.
         self.note = note
         self.render_lock = threading.Lock()
@@ -998,8 +1011,9 @@ PAGE = r"""<!doctype html>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="rerender">re-render</button>
-        <button id="flop" title="SWIM_FAST, roll 85, gain 1.0, bounce 0.3, HEAD reparented,
-broadside. Leaves scale / girth / pivot / pitch where you have them.">flop preset</button>
+        <button id="flop" title="SWIM_FAST, roll 85, yaw 180, gain 1.0, bounce 0.3, HEAD
+reparented, broadside. Leaves scale / girth / pivot / pitch / phase lock where you have
+them.">flop preset</button>
         <button id="reset">reset to committed</button>
         <button id="copy">copy TOML</button>
       </div>
@@ -1132,9 +1146,10 @@ $("shadow").onchange = e => { opts.shadow = e.target.checked; touched(); quote()
 $("reparent").onchange = e => { opts.reparent = e.target.checked; touched(); quote(); render(); };
 $("view").onchange = e => { opts.view = e.target.value; touched(); quote(); render(); };
 $("rerender").onclick = () => render();
-// The C.5 recipe in one click -- roll 85, SWIM_FAST, gain 1.0, bounce 0.3, HEAD reparented,
-// broadside. Only those: scale, girth, pivot and pitch stay where they are, because half the
-// time they are mid-tuning and a preset that reverted them is one nobody presses twice.
+// The C.5 recipe in one click -- roll 85, yaw 180, SWIM_FAST, gain 1.0, bounce 0.3, HEAD
+// reparented, broadside. Only those: scale, girth, pivot, pitch and phase lock stay where they
+// are, because half the time they are mid-tuning and a preset that reverted them is one
+// nobody presses twice.
 $("flop").onclick = () => { Object.assign(values, BOOT.flop.values);
                             Object.assign(posest, BOOT.flop.pose);
                             Object.assign(opts, BOOT.flop.opts);

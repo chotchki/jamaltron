@@ -157,6 +157,23 @@ action = "rest"
 # default 1.0
 pose_gain = 1.0
 
+# THE CURL (C.5, chotchki's standing-wave call). The swims are a TRAVELLING wave: every spine
+# joint bends a fixed lag behind the one in front, so the bend runs nose to tail and reads as
+# propulsion -- which is why a rolled swim looks like a shark swimming sideways and not a fish
+# dying on a beach. A beached fish makes a STANDING wave: the whole body curls one way at
+# once, then snaps back. Same bones, same keyframes, different phase relationship.
+# 0 is the clip as bought. 1 plays every joint in step with the TAIL, re-timed off the clip's
+# OWN lags, which the renderer measures every run (SWIM_FAST: 0 / 1.50 / 2.99 / 4.49 / 5.49 /
+# 6.99 / 8.50 / 10.00 frames of 20, nose to tail -- exactly half a cycle). In between is part
+# of the way. No new keyframes, and the loop still wraps at the clip's own length.
+# The TAIL keeps its timing but PEAK CURL MOVES (SWIM_FAST: f18 at 0, f1 at 1), and [bounce]
+# launches on peak curl -- so re-find bounce.phase after moving this, do not inherit it.
+# Per joint and NOT a front/back split: the 09-20 spike measured a split at its best k at
+# standing_R 0.976 against 0.999 for this, and the split needs k re-tuned because the wave is
+# rear-loaded 3:1. Only the swims carry a wave; on a bite it does nothing and warns.
+# default 0.0
+phase_lock = 0.0
+
 # RIG FIX (C.18a), applied in memory at render time because the bought .blend never enters
 # the repo. HEAD ships as a ROOT bone and no swim clip touches it, so the snout is welded to
 # world space and a thrashing spine cannot move his face. This hangs HEAD off SPINE_01,
