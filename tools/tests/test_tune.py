@@ -527,7 +527,8 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
     assert set(tune.FLOP_PRESET["opts"]) <= set(tune.DEFAULT_OPTS) | {"reparent"}
     assert tune.FLOP_PRESET["values"]["roll"] == 85.0
     assert tune.FLOP_PRESET["values"]["yaw"] == 180.0, "chotchki's framing, 2026-09-23"
-    assert "phase_lock" not in tune.FLOP_PRESET["values"], "not decided; the preset is"
+    assert tune.FLOP_PRESET["values"]["phase_lock"] == 0.5, "the C.5.2 call"
+    assert tune.FLOP_PRESET["values"]["bounce_phase"] == 0.5, "travels with the lock"
     assert tune.FLOP_PRESET["pose"]["gain"] == 1.0, "ungained IS the call at this roll"
     assert tune.FLOP_PRESET["pose"]["clip"] == "SWIM_FAST"
     assert tune.FLOP_PRESET["opts"]["reparent"] is True
@@ -538,7 +539,8 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
                           dict(tune.DEFAULT_OPTS, **tune.FLOP_PRESET["opts"]))
     assert out["model.rotation"][0] == 85.0 and out["model.rotation"][2] == 180.0
     assert out["model.action"] == "SWIM_FAST" and out["model.pose_gain"] == 1.0
-    assert out["bounce.height"] == 0.3
+    assert out["bounce.height"] == 0.3 and out["bounce.phase"] == 0.5
+    assert out["model.phase_lock"] == 0.5
     assert out["model.reparent_head"] is True
     assert out["compare.rotations"] == 3, "broadside, the three directions a roll reads in"
     # and it leaves the shark's own shape where it found it -- those are mid-tuning values

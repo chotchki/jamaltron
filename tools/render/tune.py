@@ -283,9 +283,13 @@ DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2}
 #: preset nobody presses twice. `--set model.rotation=[85,0,180]` still seeds it from the CLI.
 #:
 #: YAW 180 is chotchki's framing call (2026-09-23, "a much better framing"): head-for-tail in
-#: his own frame, inside the roll. phase_lock is NOT in here -- it is still being judged.
+#: his own frame, inside the roll. PHASE LOCK 0.5 WITH BOUNCE PHASE 0.5 is his C.5.2 call the
+#: same evening, off this page at 24 fps ("I think this looks good") -- half way from the swim
+#: to the standing wave, pushing off half a cycle in. The two travel together: the lock moves
+#: peak curl, and the bounce launches on it.
 FLOP_PRESET = {
-    "values": {"roll": 85.0, "yaw": 180.0, "bounce_height": 0.3},
+    "values": {"roll": 85.0, "yaw": 180.0, "phase_lock": 0.5, "bounce_height": 0.3,
+               "bounce_phase": 0.5},
     "pose": {"clip": "SWIM_FAST", "frame": 1, "gain": 1.0, "stride": 2},
     "opts": {"view": "broadside", "reparent": True},
 }
@@ -1011,9 +1015,9 @@ PAGE = r"""<!doctype html>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="rerender">re-render</button>
-        <button id="flop" title="SWIM_FAST, roll 85, yaw 180, gain 1.0, bounce 0.3, HEAD
-reparented, broadside. Leaves scale / girth / pivot / pitch / phase lock where you have
-them.">flop preset</button>
+        <button id="flop" title="SWIM_FAST, roll 85, yaw 180, gain 1.0, phase lock 0.5, bounce
+0.3 at phase 0.5, HEAD reparented, broadside. Leaves scale / girth / pivot / pitch where you
+have them.">flop preset</button>
         <button id="reset">reset to committed</button>
         <button id="copy">copy TOML</button>
       </div>
@@ -1146,10 +1150,10 @@ $("shadow").onchange = e => { opts.shadow = e.target.checked; touched(); quote()
 $("reparent").onchange = e => { opts.reparent = e.target.checked; touched(); quote(); render(); };
 $("view").onchange = e => { opts.view = e.target.value; touched(); quote(); render(); };
 $("rerender").onclick = () => render();
-// The C.5 recipe in one click -- roll 85, yaw 180, SWIM_FAST, gain 1.0, bounce 0.3, HEAD
-// reparented, broadside. Only those: scale, girth, pivot, pitch and phase lock stay where they
-// are, because half the time they are mid-tuning and a preset that reverted them is one
-// nobody presses twice.
+// The C.5 recipe in one click -- roll 85, yaw 180, SWIM_FAST, gain 1.0, phase lock 0.5,
+// bounce 0.3 at phase 0.5, HEAD reparented, broadside. Only those: scale, girth, pivot and
+// pitch stay where they are, because half the time they are mid-tuning and a preset that
+// reverted them is one nobody presses twice.
 $("flop").onclick = () => { Object.assign(values, BOOT.flop.values);
                             Object.assign(posest, BOOT.flop.pose);
                             Object.assign(opts, BOOT.flop.opts);

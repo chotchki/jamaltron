@@ -100,10 +100,11 @@ i.e. nothing); it is there because a beached shark only reads as beached from th
 nose-on, the roll is invisible and the thrash is all in screen depth, so five of the wheel's
 eight views cannot answer the question.
 
-**flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, yaw 180, gain 1.0, bounce
-0.3, HEAD reparented, broadside - and it leaves scale, girth, pivot, pitch and phase lock where
-you have them, because half the time those are mid-tuning. Yaw 180 is chotchki's framing call
-of 2026-09-23. The page still OPENS on the committed standing
+**flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, yaw 180, gain 1.0, phase
+lock 0.5, bounce 0.3 at phase 0.5, HEAD reparented, broadside - and it leaves scale, girth,
+pivot and pitch where you have them, because half the time those are mid-tuning. Yaw 180 and
+the lock/phase pair are chotchki's calls of 2026-09-23, the second one made off this page at
+24 fps. The page still OPENS on the committed standing
 config (the header's `paste` hash reads `83d6be794998` on arrival, which is the live proof the
 flop work has not touched the art that ships), so 85 is a button and not a boot value.
 

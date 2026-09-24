@@ -171,6 +171,9 @@ pose_gain = 1.0
 # Per joint and NOT a front/back split: the 09-20 spike measured a split at its best k at
 # standing_R 0.976 against 0.999 for this, and the split needs k re-tuned because the wave is
 # rear-loaded 3:1. Only the swims carry a wave; on a bite it does nothing and warns.
+# THE FLOP'S VALUE IS 0.5 (chotchki, 2026-09-23, watched at 24 fps in the tuner), paired with
+# [bounce] phase 0.5 -- it is the tuner's flop preset. It stays 0 HERE because this file is
+# the STANDING shark the shipped sheets came off; where flop knobs get committed is C.24.
 # default 0.0
 phase_lock = 0.0
 
