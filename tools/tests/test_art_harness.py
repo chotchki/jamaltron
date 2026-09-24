@@ -1268,3 +1268,105 @@ def test_the_pose_lines_name_every_pose_knob_and_actually_format():
             assert want in text, (want, text)
     assert art.pose_log_line(ac.resolve(env={}), ac.derived(ac.resolve(env={}))) == "", \
         "the standing shark gets no pose line"
+
+
+def test_bounce_lift_clamps_the_frame_the_pose_clamps():
+    """C.22: apply_action clamps model.frame to the clip, bounce_lift did not, so frame 32 on
+    SWIM_FAST (1-20) POSED frame 20 and LIFTED frame 32 -- 14 px of the wrong height. One
+    config has to mean one frame."""
+    base = {"model": {"action": "SWIM_FAST"}, "bounce": {"height": 0.3, "phase": 0.5}}
+    def lift(frame):
+        return ac.bounce_lift(ac.resolve(dict(base, model=dict(base["model"], frame=frame)),
+                                         env={}))
+    assert lift(32) == lift(20) and lift(-7) == lift(1)
+    assert lift(20) != lift(12), "the clamp must not flatten the in-range cycle"
+
+
+def test_a_cached_frame_carries_the_warning_its_cold_render_gave(tmp_path, capsys):
+    """C.23: the buried-body WARN used to exist exactly once, on the cold render -- re-run the
+    same command and the frames came out of the cache with nothing said. Now a pass directory
+    keeps each frame's WARNs and a cache hit replays them, as WARN lines (the tuner lifts
+    those into its warning box), naming the frames."""
+    from render import art
+    buried = "WARN the posed body reaches 0.280 tiles BELOW the ground plane"
+    art.record_warnings(tmp_path, [([12, 16], [buried]), ([20], [])])
+    capsys.readouterr()
+    got = art.replay_warnings(tmp_path, [12, 16, 20])
+    assert got == [buried + "  [cached frames 12,16]"]
+    assert capsys.readouterr().out.strip() == got[0]
+    assert art.replay_warnings(tmp_path, [20]) == [], "a clean frame replays nothing"
+    # a re-render REPLACES a frame's entry, and a clean re-render of everything clears the file
+    art.record_warnings(tmp_path, [([16], [])])
+    assert art.replay_warnings(tmp_path, [12, 16]) == [buried + "  [cached frame 12]"]
+    art.record_warnings(tmp_path, [([12], [])])
+    assert not (tmp_path / art.WARNINGS_FILE).exists()
+    assert art.replay_warnings(tmp_path, [12]) == [], "no file is no warnings, not a crash"
+
+
+def test_render_pass_files_and_replays_what_its_blenders_said(tmp_path, monkeypatch, capsys):
+    """The C.23 wiring, not just the helpers: render_pass has to FILE each chunk's WARNs
+    against that chunk's frames, REPLAY them on a full cache hit, replay only the CACHED
+    frames' on a partial one (minus anything the fresh chunk just said), and never file the
+    clip-table check, which is about pose.py rather than the frames. Blender is faked --
+    this is the plumbing around it, and the plumbing is what a refactor breaks silently."""
+    from PIL import Image
+    from render import art
+    blend = tmp_path / "model.blend"
+    blend.write_bytes(b"not really a model")
+    cfg = ac.resolve({"model": {"blend": str(blend)}, "output": {"dir": str(tmp_path / "out")}},
+                     env={})
+    res = ac.derived(cfg)["body_resolution_px"]
+    said = {}          # frame -> what the fake Blender warns when it renders that frame
+
+    def fake_blender(_blend, _payload, _which, frames, outdir, quiet=True):
+        for i in frames:
+            Image.new("RGBA", (res, res), (0, 0, 0, 0)).save(outdir / f"frame_{i:03d}.png")
+        return ({"engine": "FAKE"},
+                [said[i] for i in frames] + ["WARN clip table vs the model: X (1-78 vs 1-79)"])
+    monkeypatch.setattr(art, "run_blender", fake_blender)
+
+    said.update({0: "WARN buried 0", 8: "WARN buried 8", 16: "WARN buried 8"})
+    art.render_pass(cfg, "body", [0, 8], 16, jobs=2)                       # two chunks, cold
+    book = json.loads((art.pass_dir(cfg, "body", 16) / art.WARNINGS_FILE).read_text())
+    assert book == {"0": ["WARN buried 0"], "8": ["WARN buried 8"]}, "per chunk, no clip table"
+    capsys.readouterr()
+
+    art.render_pass(cfg, "body", [0, 8], 16)                               # full cache hit
+    out = capsys.readouterr().out
+    assert "WARN buried 0  [cached frame 0]" in out and "WARN buried 8  [cached frame 8]" in out
+    assert "clip table" not in out
+
+    art.render_pass(cfg, "body", [8, 16], 16)          # partial: 16 fresh says what 8 said
+    out = capsys.readouterr().out
+    assert out.count("WARN buried 8") == 1 and "[cached" not in out, out
+
+
+def test_a_blender_that_writes_nothing_is_a_failed_render(tmp_path, monkeypatch):
+    """Blender exits 0 on a Python exception unless told otherwise, and that is how a crash
+    in render_jamal.main() once came back as "1 frames in 0.58s" with no frame on disk. So:
+    the launch asks for a real exit code, and render_pass refuses a pass whose frames are
+    missing whatever the exit code said."""
+    from render import art
+    blend = tmp_path / "model.blend"
+    blend.write_bytes(b"not really a model")
+    cfg = ac.resolve({"model": {"blend": str(blend)}, "output": {"dir": str(tmp_path / "out")}},
+                     env={})
+    monkeypatch.setattr(art, "run_blender", lambda *a, **k: ({"engine": "FAKE"}, []))
+    with pytest.raises(SystemExit) as lost:
+        art.render_pass(cfg, "body", [0, 8], 16)
+    assert "wrote no frame" in str(lost.value)
+
+    monkeypatch.undo()                      # the real run_blender, with subprocess faked
+    seen = {}
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_run(cmd, **_):
+        seen["cmd"] = cmd
+        return Done()
+    monkeypatch.setattr(art.subprocess, "run", fake_run)
+    art.run_blender(blend, tmp_path / "c.json", "body", [0], tmp_path)
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--python-exit-code") + 1] == "1"
+    assert cmd.index("--python-exit-code") < cmd.index("--python"), "must precede the script"

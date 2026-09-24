@@ -110,7 +110,12 @@ def chunk(items, n):
 
 
 def run_blender(blend, config_json, which, frames, outdir, quiet=True):
-    cmd = [BLENDER, "-b", str(blend), "--python", str(RENDER_SCRIPT), "--",
+    # --python-exit-code 1: WITHOUT it a Python exception inside render_jamal exits Blender
+    # with 0, so a crash that happened after the FIX lines printed looked like a render that
+    # finished -- no frames, engine "?", and a cheerful "1 frames in 0.58s". MEASURED, that is
+    # exactly how a shadowed variable in main() hid.
+    cmd = [BLENDER, "-b", str(blend), "--python-exit-code", "1",
+           "--python", str(RENDER_SCRIPT), "--",
            "--config", str(config_json), "--pass", which,
            "--frames", ",".join(str(f) for f in frames), "--out", str(outdir)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -160,6 +165,7 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     if not todo:
         print(f"  {which:<7} {len(frames)} frames CACHED  {shorten(outdir)}")
         warn_if_clipped(cfg, outdir, frames, which)
+        replay_warnings(outdir, frames)
         return outdir, {"seconds": 0.0, "rendered": 0, "cached": len(frames)}
 
     blend = blend_path(cfg)
@@ -181,6 +187,12 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
                        for i, g in enumerate(groups)]
             results = [f.result() for f in futures]
     wall = time.time() - t0
+    # And never trust the exit code alone: a render that asked for N frames and wrote fewer
+    # is a failed render, whatever Blender said about it.
+    lost = [i for i in todo if not (outdir / f"frame_{i:03d}.png").exists()]
+    if lost:
+        raise SystemExit(f"blender reported success but wrote no frame for {lost[:8]} in "
+                         f"{outdir} -- rerun with -v to see its output")
 
     d = ac.derived(cfg)
     ss = d["supersample"]
@@ -207,10 +219,79 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     if not verbose:
         for w in dict.fromkeys(w for r in results for w in warn_notes(r[1])):
             print("   " + w)
+    record_warnings(outdir, [(g, warn_notes(r[1])) for g, r in zip(groups, results)])
+    # A partial hit: the cached frames' caveats, minus any the fresh chunk just printed --
+    # the standing shark's burial is the same sentence on every frame, and saying it twice,
+    # once tagged, is noise the tuner's warning box would faithfully show twice.
+    fresh = {w for r in results for w in warn_notes(r[1])}
+    replay_warnings(outdir, [i for i in frames if i not in todo], skip=fresh)
     for r in results:
         for m in (r[0] or {}).get("clip_mismatches", ()):
             print("  WARN clip table vs the model: " + m)
     return outdir, stats
+
+
+#: Where a pass directory keeps the WARN lines its frames were rendered with.
+WARNINGS_FILE = "warnings.json"
+
+#: How render_jamal opens the clip-table WARN, which record_warnings deliberately drops.
+CLIP_TABLE_WARN = "WARN clip table vs the model"
+
+
+def record_warnings(outdir, groups) -> None:
+    """Keep each render's WARN lines beside the frames they are about (C.23).
+
+    A WARN is something only a render can know -- the posed body under the floor, the clip
+    table drifting from the model -- and it used to exist exactly once, on the cold render.
+    Run the identical command again and the frames came out of the cache with nothing said,
+    which is precisely when somebody is re-running it to look at the problem. So every
+    frame a process rendered is filed under that process's warnings (a Blender renders a
+    chunk of frames and warns about the chunk, so the attribution is per chunk, never
+    finer), a re-render replaces a frame's entry, and a clean re-render clears it.
+
+    NOT the clip-table check. It describes pose.py against the model, not these frames, and
+    the table is deliberately outside every hash (pose.table_digest) -- so after the table is
+    fixed the frames stay cached and a recorded mismatch would replay a problem that no longer
+    exists. Every cold posed render re-checks the table anyway.
+    """
+    path = pathlib.Path(outdir) / WARNINGS_FILE
+    try:
+        book = json.loads(path.read_text())
+    except (OSError, ValueError):
+        book = {}
+    for frames, warns in groups:
+        keep = [w for w in warns if not w.startswith(CLIP_TABLE_WARN)]
+        for i in frames:
+            book[str(i)] = keep
+    book = {k: v for k, v in book.items() if v}
+    if book:
+        path.write_text(json.dumps(book, indent=1, sort_keys=True))
+    elif path.exists():
+        path.unlink()
+
+
+def replay_warnings(outdir, frames, skip=()) -> list:
+    """Print, and return, the recorded WARNs for frames this run served from the cache.
+
+    Printed as ordinary `WARN` lines -- the tuner lifts anything starting with WARN into its
+    warning box -- with the frames named, so a cached picture carries the same caveat the cold
+    render did."""
+    try:
+        book = json.loads((pathlib.Path(outdir) / WARNINGS_FILE).read_text())
+    except (OSError, ValueError):
+        return []
+    by_warn = {}
+    for i in frames:
+        for w in book.get(str(i), ()):
+            if w not in skip:
+                by_warn.setdefault(w, []).append(i)
+    out = []
+    for w, hit in by_warn.items():
+        line = "%s  [cached frame%s %s]" % (w, "s" if len(hit) > 1 else "",
+                                             ",".join(str(i) for i in sorted(hit)))
+        print("   " + line)
+        out.append(line)
+    return out
 
 
 #: Knob to turn when a pass runs out of canvas, per pass.

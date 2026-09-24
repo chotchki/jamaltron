@@ -55,6 +55,29 @@ rendering. The model is gitignored, so point at your copy with `--blend PATH` or
 `$JAMALTRON_BLEND`. Sheets land in `render-out/` (gitignored) and nothing is ever promoted
 into `mod/jamaltron/graphics/` for you - that directory carries the licence carve-out.
 
+### Getting the model on disk
+
+The bought model ships as ONE zip holding ANOTHER, and where the inner one lands decides
+whether he renders textured. From the repo root, with the RenderHub download at
+`assets/source/hammerhead_shark.zip`:
+
+```sh
+cd assets/source
+unzip -n hammerhead_shark.zip                  # -> FILES/HAMMERHEAD.blend (+ .fbx, .dae)
+unzip -n FILES/HAMMERHEAD_TEXTURES.zip         # -> TEX/, a SIBLING of FILES/, not inside it
+```
+
+The .blend reads its textures at `//../TEX/HAMMERHEAD_*.png`, so the second zip has to be
+unpacked from `assets/source/` - unzip it inside `FILES/` and you get `FILES/TEX/` and a
+MAGENTA shark (Blender's missing-texture colour; MEASURED, mean RGB 239/19/239). Nothing
+fails, but every render WARNs, naming HAMMERHEAD_COLOR and _NORMAL. READ THAT WARN EVEN AFTER
+YOU FIX THE LAYOUT: the textures are not in the cache key, so the magenta frames sit under
+the same hash a correct render produces and keep being served. The WARN is replayed on those
+cache hits (C.23) and says so; clear them with `--force` or by deleting the pass directory.
+The two GREATWHITE images the `CHECK unresolvable images` line always lists are the seller's
+other model, wired to nothing, and never WARN. All of
+`assets/source/` is gitignored, which is the condition the licence turns on.
+
 ## Sliders, when you do not know the number yet
 
 `--compare` answers "is this value right". It is the wrong tool for "which value IS right",

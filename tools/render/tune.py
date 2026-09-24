@@ -784,8 +784,9 @@ class Tuner:
                 # bounce grows it, so the page has to say both.
                 "box_tiles": body_stats.get("box_tiles"),
                 # Whether a Blender actually ran. If every frame came from the cache the box
-                # was not re-measured and the render printed no warnings of its own -- the
-                # page has to say that rather than leave the PREVIOUS render's box sitting
+                # was not re-measured (its WARNs still come back: art.py replays the ones the
+                # frames were rendered with, C.23) -- the page has to say that rather than
+                # leave the PREVIOUS render's box sitting
                 # under a different picture. (Persisting the box per frame in the pass dir
                 # would fix it properly; it needs a per-frame box out of render_jamal, which
                 # is more than this phase should touch.)
@@ -1443,7 +1444,7 @@ function apply(res, rtt) {
     // No box came back, which means no Blender ran: every frame was cached. Keeping the last
     // render's box here would put roll 90's numbers under a roll 85 picture.
     lastBox = "<br><span class=\"dim\">box not re-measured &mdash; every frame came out of "
-              + "the cache, so the render printed no report of its own</span>";
+              + "the cache (its warnings are replayed above, the box is not)</span>";
   } else { lastBox = ""; }
   paintPose();
   setStatus(`ok in ${rtt.toFixed(2)}s`);

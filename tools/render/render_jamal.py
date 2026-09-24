@@ -556,7 +556,7 @@ def dead_image_check():
         path = bpy.path.abspath(img.filepath) if img.filepath else ""
         if path and os.path.exists(path):
             continue
-        wired = []
+        wired, live = [], False
         for mat in bpy.data.materials:
             if not mat.use_nodes or not mat.node_tree:
                 continue
@@ -564,8 +564,9 @@ def dead_image_check():
                 if getattr(node, "image", None) is img:
                     links = [l for o in node.outputs for l in o.links]
                     wired.append("%s/%s:%d links" % (mat.name, node.name, len(links)))
+                    live = live or bool(links)
         findings.append({"image": img.name, "path": img.filepath,
-                         "users": img.users, "wired_into": wired})
+                         "users": img.users, "wired_into": wired, "live": live})
     return findings
 
 
@@ -931,7 +932,20 @@ def main():
             # lags were. A skip is a WARN, which the harness prints however quiet the pass is.
             print(("WARN " if wave["skipped"] else "FIX ") + wave["note"])
     print("FIX removed shipped cams/lights:", strip_scene(scene))
-    print("CHECK unresolvable images:", json.dumps(dead_image_check()))
+    dead = dead_image_check()
+    print("CHECK unresolvable images:", json.dumps(dead))
+    # A missing image that a shader actually USES is not a curiosity, it is a MAGENTA shark
+    # (Blender's missing-texture colour; measured 239/19/239 with TEX/ unpacked in the wrong
+    # place). A WARN, not a CHECK: a CHECK only shows under -v, and the frames it spoils are
+    # cached under the same hash a correct layout produces -- the textures are not in the
+    # key -- so this line, recorded and replayed on every cache hit (art.py, C.23), is what
+    # tells you the cache is serving magenta. The GREATWHITE refs are wired to nothing.
+    for img in dead:
+        if img["live"]:
+            print("WARN texture %s is USED by %s but does not resolve (%s): these frames render "
+                  "MAGENTA. See tools/README 'Getting the model on disk', then re-render with "
+                  "--force -- a fixed layout does not change the cache key"
+                  % (img["image"], ", ".join(img["wired_into"]), img["path"]))
     print("FIX materials:", tune_materials(cfg))
     print("FIX subdiv:", set_subdiv(cfg))
 

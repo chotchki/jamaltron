@@ -424,6 +424,11 @@ def bounce_lift(cfg: dict, frame=None) -> float:
         # is not one. warnings() says so out loud rather than letting a set height do nothing.
         return 0.0
     f = cfg["model.frame"] if frame is None else frame
+    # CLAMPED to the clip, exactly as apply_action clamps the frame it POSES (C.22). Without
+    # it, model.frame=32 on SWIM_FAST posed frame 20 and lifted frame 32 -- one config, two
+    # different frames, 14 px apart. A float clamp rather than pose.clamp_frame, which rounds:
+    # a fractional sample is a legitimate question to ask of a parabola.
+    f = min(max(float(f), float(lo)), float(hi))
     phase = cfg["bounce.phase"] - math.floor(cfg["bounce.phase"])     # wraps, so 1.25 == 0.25
     launch = lo + phase * span
     fps = pose.FPS

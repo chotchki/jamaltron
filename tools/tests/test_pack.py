@@ -945,3 +945,25 @@ def test_the_committed_sheets_keep_a_transparent_margin(sprite_id, graphics, ent
     assert tightest[1][0] >= pack.DEFAULT_PAD, (
         f"{sprite_id} is CLIPPED on the {tightest[0]} edge of frame {tightest[1][1]} "
         f"(bbox {tightest[1][2]} in a {width}x{height} cell): re-pack it")
+
+
+def test_the_generated_lua_is_what_ci_classifies_as_ours(packed_tree):
+    """C.16: ci.yml recognises the generated Lua by CONTENT too -- `generated_lua()` there
+    requires literal substrings of the banner lua_blob writes. The JSON half of that contract
+    is pinned above; this is the Lua half, and it is the file the GAME reads. Change the banner
+    and CI silently stops treating the module as ours (it falls out of the gate), so read
+    ci.yml's own literals rather than a copy of them, and check both the fresh pack and the
+    committed module. A ci.yml this regex can no longer find the classifier in is a failure
+    too: that is the tripwire."""
+    import re
+    ci = (pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
+    body = re.search(r"def generated_lua\(path\):(.*?)\n\s*\n", ci, re.S)
+    assert body, "ci.yml has no generated_lua() classifier any more -- re-pin this test"
+    literals = re.findall(r'"([^"]+)" in text', body.group(1))
+    assert any("GENERATED" in lit for lit in literals), literals
+    _, _, lua, _ = packed_tree
+    committed = (pathlib.Path(__file__).resolve().parents[2]
+                 / "mod/jamaltron/prototypes/sprites_generated.lua")
+    for text in (lua.read_text(), committed.read_text()):
+        for lit in literals:
+            assert lit in text, (lit, text[:120])
