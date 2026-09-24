@@ -241,4 +241,4 @@ The two shark scales get compared in C.10's own compare mode (8 rotations beside
 
 **To apply the taste calls:** reply with one letter per decision — `D1 B, D2 A, D3 B, D4 B, D5 B, D6 A, D7 C, D8 wire 8.1+8.2 / cut 8.3+8.5, D9 B, D10 B` is the full set of recommendations above. Row edits go into `character/lines.md` only, no renumbering, cuts leave gaps, and every cross-reference and computed number in the header gets regenerated in the same pass.
 
-**Then, in order:** D10's new `platform` lines (the only decision that needs writing) → B.5 generates `scripts/lines.lua` + `locale/en/jamaltron.cfg` and **the ids freeze** → A.7 measures a real bubble and settles the two over-cap rows → C.4 picks the scale off a render.
+**Then, in order:** D10's new `platform` lines (the only decision that needs writing) → B.5 generates `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` and **the ids freeze** → A.7 measures a real bubble and settles the two over-cap rows → C.4 picks the scale off a render.

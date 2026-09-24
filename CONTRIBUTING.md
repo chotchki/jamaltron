@@ -61,7 +61,7 @@ A PR that adds or replaces a PNG under `graphics/` is therefore an asset PR, not
 
 ## The catalog is the source, `scripts/lines.lua` is generated
 
-`character/lines.md` is the single source of truth for every string the mod speaks. `mod/jamaltron/scripts/lines.lua` and `locale/en/jamaltron.cfg` are GENERATED from it by `tools/gen_lines.py` (PLAN B.5, not landed yet - so neither generated file exists in the tree today), and both will carry a header saying so.
+`character/lines.md` is the single source of truth for every string the mod speaks. `mod/jamaltron/scripts/lines.lua` and `locale/en/jamaltron-lines.cfg` are GENERATED from it by `tools/gen_lines.py` (PLAN B.5, not landed yet - so neither generated file exists in the tree today), and both will carry a header saying so.
 
 **Editing a generated file is the wrong edit.** The next generator run eats it silently, and the diff will not tell you which side was right. Change the catalog row and regenerate.
 

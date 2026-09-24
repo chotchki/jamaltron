@@ -20,3 +20,4 @@ package = false
 testpaths = ["tests"]
 pythonpath = ["."]  # lets tests do `from render.spritesheet import ...`
 addopts = "-q"
+markers = ["real_catalog: runs gen_lines against character/lines.md itself, real allow-lists on"]

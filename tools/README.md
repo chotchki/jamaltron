@@ -413,6 +413,8 @@ The C.7 packer, also from the repo root:
 | `... --targets body,shadow` / `--frames-dir body=DIR` | pack a subset (ids: `body`, `body_mask`, `shadow`, `reflection`) / point one target somewhere else |
 | `... --allow-clipped` / `--any-config` / `--no-verify` | pack frames that are CUT / frames from another config / skip the strict lint of our own output |
 | `python3 tools/lint_sprites.py --strict --mod-root jamaltron=mod/jamaltron mod/jamaltron/graphics/sprites.json` | the sprite gate, exactly as CI runs it |
+| `uv run --directory tools python gen_lines.py --check` | B.5: validate `character/lines.md` against its own contract (and against the gitignored book extracts when they are on this machine) and report whether the generated `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` are current. Writes nothing |
+| `uv run --directory tools python gen_lines.py` | the same, then WRITES both files. The first run is the B.5 id freeze - chotchki's call, after the `character/REVIEW.md` decisions |
 
 `Blender` is `/Applications/Blender.app/Contents/MacOS/Blender` on this machine.
 `blender_check.py` prints the Blender and bundled-Python versions plus the usable
@@ -519,6 +521,10 @@ probe the `gpu` module headless - rendering is fine, that one call is not.
 pyproject.toml      deps + pytest config
 .python-version     3.11, matches Blender's bundled CPython
 uv.lock             committed
+gen_lines.py        entry point (B.5): character/lines.md -> scripts/lines.lua (the picker's
+                    table, no strings) + locale/en/jamaltron-lines.cfg (every string, one key
+                    per id). Validates the catalog's whole machine contract first, and the
+                    book fidelity when the gitignored extracts are on this machine
 render/
   jamaltron.toml       EVERY art knob, with what it defaults to and what it does to the
                        picture. The one file you edit while iterating
@@ -566,6 +572,8 @@ tests/
                             the union box, the line_length divisor property over every
                             count, a byte-exact place-it-back round trip, and the two
                             artifacts read through both of lint_sprites.py's front ends
+  test_gen_lines.py         the line generator: the staleness gate CI runs, one test per
+                            contract refusal, emission, fidelity, and main()'s exit codes
   test_env.py               python version, Pillow present, spritesheet.py still stdlib-only
 smoke.sh, build.sh  shell, not part of the uv project (PLAN A.2)
 ```

@@ -1,6 +1,6 @@
 # Jamal — situation → line catalog
 
-**THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR EVERY STRING THE MOD SPEAKS.** `scripts/lines.lua` and `locale/en/jamaltron.cfg` are GENERATED from it by `tools/gen_lines.py` (PLAN B.5). Both generated files carry a header saying so. **Never hand-edit the generated files** — the next generator run silently eats the edit, and the diff will not tell you which side is right.
+**THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR EVERY STRING THE MOD SPEAKS.** `scripts/lines.lua` and `locale/en/jamaltron-lines.cfg` are GENERATED from it by `tools/gen_lines.py` (PLAN B.5). Both generated files carry a header saying so. **Never hand-edit the generated files** — the next generator run silently eats the edit, and the diff will not tell you which side is right.
 
 Built from [`jamal_profile.md`](jamal_profile.md) and its 125-line verified quote bank, which in turn came from the two per-book profiles. Characterization and every `original` line below are OURS. The book text itself never leaves the gitignored `extracts/`.
 
@@ -53,7 +53,7 @@ Every section is `## <event>`, then a `key:` line naming the Lua table key, then
 | `GRP` | anti-repeat group: the ID of the FIRST row in this file carrying that exact `Line`. A unique string is its own group. **Computed, never hand-assigned.** D.5 keys anti-repeat on this, per ENTITY, across pools |
 | `Note` | why the line is here, the full quote when trimmed, the `ORIGINAL:` quote when adapted, and the B.4 ruling where one applies |
 
-**IDs were renumbered twice, both on 2026-09-19, and that door is now CLOSED.** Renumbering was legal for exactly one reason: **nothing references these ids yet** — `scripts/lines.lua` and `locale/en/jamaltron.cfg` do not exist until B.5 generates them. **The moment B.5 runs, an id becomes a locale key, a locale key is a public contract, and a cut row leaves a GAP whose id is retired forever.**
+**IDs were renumbered twice, both on 2026-09-19, and that door is now CLOSED.** Renumbering was legal for exactly one reason: **nothing references these ids yet** — `scripts/lines.lua` and `locale/en/jamaltron-lines.cfg` do not exist until B.5 generates them. **The moment B.5 runs, an id becomes a locale key, a locale key is a public contract, and a cut row leaves a GAP whose id is retired forever.**
 
 - **Pass 1, the Q5 proper-noun purge, cut three rows.** `command_done`'s two were the tail of its own pool so it simply got shorter; OLD `idle.25` was mid-pool, so `idle` was renumbered — old `idle.26`–`.39` became `idle.25`–`.38`. **`idle.25` therefore names two different rows depending on which side of this pass you are reading, and pass 3 has now retired the second one. That is the whole case against renumbering in one id**, and it is why the pass-3 cuts left gaps instead.
 - **Pass 2, the B.4 cuts, cut six rows** (Q2, Q3 and Q12). Four were pool tails and cost nothing: `attacking.15`, `jump.14`, `legs_break.33`, `flopping.42`. Two were mid-pool, so both pools were renumbered: `damaged` old `.09`–`.16` are now `.08`–`.15`, and `flopping` old `.38`–`.41` are now `.37`–`.40`.
