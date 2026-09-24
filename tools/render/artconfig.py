@@ -105,6 +105,7 @@ SCHEMA: dict[str, tuple] = {
     "model.pose_gain":            (float,              1.0, ("body", "shadow", "mask")),
     "model.phase_lock":           (float,              0.0, ("body", "shadow", "mask")),
     "model.reparent_head":        (bool,             False, ("body", "shadow", "mask")),
+    "model.ground_contact":       (bool,             False, ("body", "shadow", "mask")),
     # ---- C.5's bounce: the lift that makes the shadow separate --------------------
     "bounce.height":              (float,              0.0, ("body", "shadow", "mask")),
     "bounce.phase":               (float,              0.0, ("body", "shadow", "mask")),
@@ -196,7 +197,7 @@ ENUMS = {
 #: standing one. test_art_harness.py pins both halves, and a new entry here MUST be a
 #: provable no-op at its default -- if it is not, it does not belong in this tuple.
 ADDITIVE = ("model.action", "model.pose_gain", "model.phase_lock", "model.reparent_head",
-            "bounce.height", "bounce.phase", "bounce.gravity")
+            "model.ground_contact", "bounce.height", "bounce.phase", "bounce.gravity")
 
 #: Where `model.rotation[0]` stops reading as BEACHED, in degrees of roll either way.
 #: Measured off the C.5 sheets (sheet B): 80-90 is the flop and past about 105 he reads as
@@ -579,6 +580,13 @@ def warnings(cfg: dict) -> list[str]:
             "the head cannot lift off the ground however hard the spine thrashes. At roll "
             "80-90 that is the curl-up the whole pose depends on. Set "
             "model.reparent_head = true" % cfg["model.action"])
+    if cfg["model.ground_contact"] and not posed:
+        out.append(
+            "model.ground_contact with model.action=rest MOVES THE STANDING SHARK off the height "
+            "his shipped sheets were rendered at: contact cancels model.offset z (%.2f) and "
+            "re-seats him on his lowest vertex. At the committed config that vertex is 0.26 "
+            "tiles BELOW z=0 (C.27), so contact RAISES him about 12 px. It is the flop's knob; "
+            "pick a clip or turn it off" % cfg["model.offset"][2])
     if not posed and not cfg["model.rest_pose"]:
         out.append(
             "model.action=rest with model.rest_pose=false renders whatever pose the .blend "
@@ -741,6 +749,13 @@ def hashable(cfg: dict) -> dict:
     for key in ADDITIVE:
         if key in view and is_default(key, view[key]):
             del view[key]
+    # The same rule, for a knob that a SWITCH makes dead rather than a default: with
+    # ground_contact on, offset z is added and then cancelled (render_jamal.ground_contact),
+    # so it cannot move a pixel -- MEASURED, 0.5 vs 1.0 renders identical -- and keeping it in
+    # the key made every drag of the tuner's height slider re-render the same picture under
+    # a new hash. It is pinned to 0 here; the stamp still records what the file said.
+    if view.get("model.ground_contact") and "model.offset" in view:
+        view["model.offset"] = list(view["model.offset"][:2]) + [0.0]
     return view
 
 

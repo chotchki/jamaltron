@@ -524,7 +524,7 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
     ids = {k.id for k in tune.KNOBS}
     assert set(tune.FLOP_PRESET["values"]) <= ids, "a preset value no slider owns"
     assert set(tune.FLOP_PRESET["pose"]) == set(tune.DEFAULT_POSE), "pose keys must match"
-    assert set(tune.FLOP_PRESET["opts"]) <= set(tune.DEFAULT_OPTS) | {"reparent"}
+    assert set(tune.FLOP_PRESET["opts"]) <= set(tune.DEFAULT_OPTS) | set(tune.KNOB_BOXES)
     assert tune.FLOP_PRESET["values"]["roll"] == 85.0
     assert tune.FLOP_PRESET["values"]["yaw"] == 180.0, "chotchki's framing, 2026-09-23"
     assert tune.FLOP_PRESET["values"]["phase_lock"] == 0.5, "the C.5.2 call"
@@ -542,6 +542,7 @@ def test_the_flop_preset_is_the_decided_recipe_and_only_that():
     assert out["bounce.height"] == 0.3 and out["bounce.phase"] == 0.5
     assert out["model.phase_lock"] == 0.5
     assert out["model.reparent_head"] is True
+    assert out["model.ground_contact"] is True, "C.5.4: a fixed offset z buries the flop"
     assert out["compare.rotations"] == 3, "broadside, the three directions a roll reads in"
     # and it leaves the shark's own shape where it found it -- those are mid-tuning values
     # half the time, and a preset that reverted them is one nobody presses twice.
@@ -630,3 +631,57 @@ def test_the_phase_lock_slider_writes_the_knob_and_survives_the_paste():
     assert ac.config_hash(full) == ac.config_hash(posed)
     assert ac.pass_hash(posed, "body") != ac.pass_hash(
         tune.apply_values(posed, {"phase_lock": 0.0}), "body"), "a lock move must re-render"
+
+
+def test_every_knob_box_reaches_the_export_and_the_page():
+    """Both rig checkboxes are KNOBS, so both have to survive the paste, fall back to the
+    config rather than to False, and boot ticked when --set ticked them. Checked as a table so
+    a third box cannot be half-wired."""
+    import json
+    cfg = ac.load(env={})
+    tuner = tune.Tuner(cfg, cfg, 1)
+    values = tune.values_of(cfg)
+    for name, key in tune.KNOB_BOXES.items():
+        assert key in tune.TOML_KEYS and key in ac.ADDITIVE, key
+        leaf = key.split(".", 1)[1]
+        for ticked in (True, False):
+            q = tuner.quote(values, {name: ticked}, {"clip": "SWIM_FAST", "frame": 7})
+            assert "%s = %s" % (leaf, "true" if ticked else "false") in q["toml"], (key, ticked)
+        seeded = ac.resolve(ac.unflatten({key: True}), env={})
+        assert tune.box_of(seeded, {}, name) is True
+        assert tune.box_of(seeded, {name: False}, name) is False
+        assert tune.box_of(cfg, {}, name) is False
+        boot = json.loads(tune.page(tune.Tuner(seeded, seeded, jobs=1))
+                          .split("const BOOT = ", 1)[1].split(";\n", 1)[0])
+        assert boot["opts"][name] is True, name
+        page = tune.page(tuner)
+        # each half separately: the box, the paint (so the preset and reset tick it) and the
+        # handler (so clicking it does something). Any one missing is a half-wired box.
+        for want in ('id="%s"' % name, '$("%s").checked = !!opts.%s' % (name, name),
+                     '$("%s").onchange' % name):
+            assert want in page, (name, want)
+
+
+def test_ground_contact_greys_out_the_height_it_cancels():
+    """Contact cancels offset z, so the height slider can move no pixel while it is ticked.
+    The page greys it (and the hash drops it -- see test_art_harness); a live-looking slider
+    that does nothing is the tool feeling broken."""
+    page = tune.page(tune.Tuner(ac.load(env={}), ac.load(env={}), jobs=1))
+    assert "function deadHeight()" in page
+    assert 'const dead = !!opts.ground;' in page
+    assert "offset_z" in {k.id for k in tune.KNOBS}, "deadHeight() names this slider's id"
+    for caller in ("  deadHeight();\n}", "opts.ground = e.target.checked; deadHeight();"):
+        assert caller in page, caller
+
+
+def test_seed_only_tells_you_to_add_what_the_export_really_lacks():
+    """A --set of a non-slider knob the export ALREADY writes (the rig checkboxes, gravity)
+    used to land in the 'add them by hand' note -- follow it and the paste declares the key
+    twice, a TOML error. Only keys outside TOML_KEYS belong there."""
+    committed = ac.load(env={})
+    _, _, note, _ = tune.seed(committed, {"model.ground_contact": True,
+                                          "model.reparent_head": True})
+    assert note == ""
+    _, _, note, _ = tune.seed(committed, {"model.ground_contact": True,
+                                          "camera.canvas_tiles": 8.0})
+    assert "camera.canvas_tiles=8.0" in note and "ground_contact" not in note

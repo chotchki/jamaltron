@@ -1033,6 +1033,7 @@ def test_a_new_knob_at_its_default_is_not_in_any_hash():
     ("model.pose_gain", 2.0),
     ("model.phase_lock", 1.0),
     ("model.reparent_head", True),
+    ("model.ground_contact", True),
     ("bounce.height", 0.3),
     ("bounce.phase", 0.25),
     ("bounce.gravity", 4.0),
@@ -1216,3 +1217,54 @@ def test_phase_lock_says_when_it_cannot_do_anything():
     assert len(bite) == 1 and "BITE_01" in bite[0] and "NOTHING" in bite[0]
     for off_rail in (1.5, -0.25):
         assert any("0..1" in w for w in ac.warnings(dict(base, **{"model.phase_lock": off_rail})))
+
+
+def test_ground_contact_on_the_standing_shark_says_what_it_does():
+    """Contact cancels offset z and re-seats him on his lowest vertex, which at the committed
+    config is 0.26 tiles BELOW the floor (C.27) -- so it RAISES the standing shark off the
+    height his shipped sheets came off. Legal, but never silent, and the warning has to say
+    which way he moves: the first draft said he would drop, which is backwards."""
+    standing = ac.resolve({"model": {"ground_contact": True}}, env={})
+    got = [w for w in ac.warnings(standing) if "ground_contact" in w]
+    assert len(got) == 1 and "STANDING" in got[0] and "RAISES" in got[0]
+    flop = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True,
+                                 "ground_contact": True}}, env={})
+    assert not [w for w in ac.warnings(flop) if "ground_contact" in w]
+
+
+def test_offset_z_leaves_the_key_while_ground_contact_cancels_it():
+    """With contact on, offset z is added and then cancelled, so it cannot move a pixel. In the
+    key it made every drag of the tuner's height slider re-render the same picture under a new
+    hash. Out of it -- but ONLY z, only while contact is on: x and y still place him."""
+    flop = ac.resolve({"model": {"action": "SWIM_FAST", "ground_contact": True,
+                                 "offset": [0.0, 0.0, 0.5]}}, env={})
+    moved_z = dict(flop, **{"model.offset": [0.0, 0.0, 1.3]})
+    moved_x = dict(flop, **{"model.offset": [0.2, 0.0, 0.5]})
+    assert ac.config_hash(moved_z) == ac.config_hash(flop)
+    for name in ("body", "shadow", "mask"):
+        assert ac.pass_hash(moved_z, name) == ac.pass_hash(flop, name), name
+        assert ac.pass_hash(moved_x, name) != ac.pass_hash(flop, name), name
+    off = dict(flop, **{"model.ground_contact": False})
+    assert ac.config_hash(dict(off, **{"model.offset": [0.0, 0.0, 1.3]})) != ac.config_hash(off)
+    # and the stamp still says what the file said, and still re-hashes to its own claim
+    blob = ac.stamp(moved_z)
+    assert blob["config"]["model"]["offset"] == [0.0, 0.0, 1.3]
+    assert ac.config_hash(ac.resolve(blob["config"], env={})) == blob["config_hash"]
+
+
+def test_the_pose_lines_name_every_pose_knob_and_actually_format():
+    """The footer and the log line are the only places a flop sheet says HOW it was posed, and
+    both are %-format strings -- a placeholder that drifts from its arguments is a TypeError
+    that fires only on posed renders. So format them for real, and require every pose knob."""
+    from render import art
+    flop = ac.resolve({"model": {"action": "SWIM_FAST", "frame": 7, "phase_lock": 0.5,
+                                 "reparent_head": True, "ground_contact": True},
+                       "bounce": {"height": 0.3, "phase": 0.5}}, env={})
+    d = ac.derived(flop)
+    foot = "\n".join(art.footer_lines(flop, "compare"))
+    log = art.pose_log_line(flop, d)
+    for text in (foot, log):
+        for want in ("SWIM_FAST", "phase_lock 0.50", "reparent_head=True", "ground_contact=True"):
+            assert want in text, (want, text)
+    assert art.pose_log_line(ac.resolve(env={}), ac.derived(ac.resolve(env={}))) == "", \
+        "the standing shark gets no pose line"

@@ -559,10 +559,10 @@ def footer_lines(cfg, label, passes=()):
         # TWO lines, not one: the draw does not wrap, and at one line the broadside sheet (the
         # flop preset's, 1250 px) cut the shadow-east figure -- the one number the bounce is for.
         lines.append(
-            "POSE %s%s frame %d gain %.2f phase_lock %.2f  reparent_head=%s"
+            "POSE %s%s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  ground_contact=%s"
             % (cfg["model.action"], " (%s)" % clip.action if clip else "",
                cfg["model.frame"], cfg["model.pose_gain"], cfg["model.phase_lock"],
-               cfg["model.reparent_head"]))
+               cfg["model.reparent_head"], cfg["model.ground_contact"]))
         lines.append(
             "BOUNCE %.2f tiles peak (phase %.2f, g %.1f -> %.1f of %d frames airborne)  this "
             "frame lifted %.3f tiles = %.1f px up-screen, %.1f px of shadow east"
@@ -571,6 +571,23 @@ def footer_lines(cfg, label, passes=()):
                d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
                d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
     return lines
+
+
+def pose_log_line(cfg, d) -> str:
+    """The one-line pose summary main() prints, or "" for a standing, grounded config. A
+    function so the format string is tested: a placeholder count that drifts from its
+    arguments is a TypeError that only fires on POSED renders, which is the worst place."""
+    if cfg["model.action"] == pose.REST and not cfg["bounce.height"]:
+        return ""
+    return ("  pose %s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  "
+            "ground_contact=%s  bounce peak %.2f tiles (phase %.2f) -> this frame +%.3f tiles "
+            "= %.1f px up-screen, %.1f px shadow east"
+            % (cfg["model.action"], cfg["model.frame"], cfg["model.pose_gain"],
+               cfg["model.phase_lock"], cfg["model.reparent_head"],
+               cfg["model.ground_contact"], cfg["bounce.height"], cfg["bounce.phase"],
+               d["bounce_lift_tiles"],
+               d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
+               d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
 
 
 def finish(cfg, png, sidecar, extra):
@@ -645,16 +662,9 @@ def main(argv=None):
           % (ac.config_hash(cfg), cfg["model.scale"], d["shark_length_tiles"],
              d["shark_width_tiles"], d["shark_height_tiles"],
              cfg["model.offset"], cfg["model.rotation"]))
-    if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
-        print("  pose %s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  bounce peak "
-              "%.2f tiles (phase %.2f) -> this frame +%.3f tiles = %.1f px up-screen, %.1f px "
-              "shadow east"
-              % (cfg["model.action"], cfg["model.frame"], cfg["model.pose_gain"],
-                 cfg["model.phase_lock"], cfg["model.reparent_head"], cfg["bounce.height"],
-                 cfg["bounce.phase"],
-                 d["bounce_lift_tiles"],
-                 d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
-                 d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
+    line = pose_log_line(cfg, d)
+    if line:
+        print(line)
     made = []
     t0 = time.time()
 

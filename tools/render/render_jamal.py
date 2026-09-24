@@ -61,6 +61,7 @@ import time
 
 import bpy
 import mathutils
+import numpy as np
 
 from render import artconfig as ac
 from render import factorio_camera as fc
@@ -435,23 +436,74 @@ def world_box(skip=("shadow_catcher",)):
     model's own. artconfig.derived() reports the REST box from a measured constant, which is
     correct for the standing shark and wrong the moment he thrashes -- this is the number
     C.17 needs and the one the bounce grows.
+
+    EVERY VERTEX, NOT THE BOUND BOX. `ob.bound_box` is the mesh's LOCAL axis-aligned box, and
+    eight corners of a box rolled 85 deg hang below anything the mesh actually reaches.
+    MEASURED on the C.5.2 flop: up to 0.109 tiles too deep, on the six frames where the curl
+    tilts that local box (f01 and f16-f20, the back quarter of the loop), within 0.001 on the
+    rest -- so the buried-body WARN overstated, and ground contact placed off it would float
+    him. 10337 verts at subdiv 1, ~1 ms through numpy.
     """
-    lo = [1e9] * 3
-    hi = [-1e9] * 3
+    lo, hi = None, None
     dg = bpy.context.evaluated_depsgraph_get()
     for ob in bpy.data.objects:
         if ob.type != "MESH" or ob.name in skip:
             continue
         ev = ob.evaluated_get(dg)
-        mw = ev.matrix_world
-        for corner in ev.bound_box:
-            w = mw @ mathutils.Vector(corner)
-            for i in range(3):
-                lo[i] = min(lo[i], w[i])
-                hi[i] = max(hi[i], w[i])
-    if lo[0] > hi[0]:
+        me = ev.to_mesh()
+        try:
+            n = len(me.vertices)
+            if not n:
+                continue
+            co = np.empty(n * 3, dtype=np.float64)
+            me.vertices.foreach_get("co", co)
+            mw = np.array(ev.matrix_world, dtype=np.float64)
+            world = co.reshape(n, 3) @ mw[:3, :3].T + mw[:3, 3]
+        finally:
+            ev.to_mesh_clear()
+        a, b = world.min(axis=0), world.max(axis=0)
+        lo = a if lo is None else np.minimum(lo, a)
+        hi = b if hi is None else np.maximum(hi, b)
+    if lo is None:
         return None
-    return [[round(lo[i], 4), round(hi[i], 4)] for i in range(3)]
+    return [[round(float(lo[i]), 4), round(float(hi[i]), 4)] for i in range(3)]
+
+
+def ground_contact(cfg, subject) -> float:
+    """C.5.4: put the posed body's LOWEST VERTEX on the ground, plus this frame's bounce lift.
+    Returns the world-z shift it applied, in tiles.
+
+    `model.offset` z places the model's ORIGIN, and that is the right knob for the standing
+    shark -- he rides his legs at a set height. It is the wrong knob for a posed one,
+    because the lowest point of a thrashing body moves every frame: at the C.5.2 call (roll
+    85, lock 0.5) a fixed offset z of 0.5 left him 0.105-0.430 tiles UNDER the floor on every
+    one of 20 frames, invisible in the tuner (the body pass draws no ground) and sliced by the
+    shadow pass's catcher. So this measures instead of assuming: evaluate the posed mesh,
+    find its lowest vertex, move `adjust` so that vertex sits at exactly bounce_lift(cfg).
+    Offset z drops out entirely -- it is added in build_rig and cancelled here, which is why
+    artconfig.hashable() pins it out of the cache key while this is on.
+
+    What that buys beyond "not buried": the half of the curl that bends DOWN now lifts his
+    middle off the floor, which is the arch a fish on its side actually makes, and the bounce
+    is measured from where he touches, so the landing frame is a real landing.
+
+    The wheel's per-direction spin is about world z, so one measurement holds for every
+    direction this process renders. Same code in all three passes, so body, shadow and mask
+    stay stacked.
+    """
+    adjust = subject.parent.parent if subject.parent else None
+    # split("."): Blender suffixes a repeated name .001, which a second build_rig in one
+    # session produces -- still build_rig's adjust empty, still the right thing to move.
+    if adjust is None or adjust.name.split(".")[0] != "jamaltron_adjust":
+        raise SystemExit("ground_contact: %r is not under build_rig's adjust empty" % subject.name)
+    bpy.context.view_layer.update()
+    box = world_box()
+    if box is None:
+        raise SystemExit("ground_contact: no mesh to put on the ground")
+    shift = ac.bounce_lift(cfg) - box[2][0]
+    adjust.location.z += shift
+    bpy.context.view_layer.update()
+    return shift
 
 
 def drop_stale_final_keyframes():
@@ -915,6 +967,12 @@ def main():
     print("SUN ", sun_note)
 
     root, subject = build_rig(scene, cfg)
+    ground_shift = None
+    if cfg["model.ground_contact"]:
+        ground_shift = ground_contact(cfg, subject)
+        print("FIX ground contact: lowest vertex placed at z=%.3f (the bounce lift) by a %+.3f "
+              "tile shift -- model.offset z %.2f cancelled"
+              % (ac.bounce_lift(cfg), ground_shift, cfg["model.offset"][2]))
 
     if mask:
         print("FIX mask material:", apply_mask_material(cfg))
@@ -935,12 +993,12 @@ def main():
              final / canvas, frames))
 
     if posed or d["bounce_lift_tiles"]:
-        print("POSE action=%s gain=%.2f phase_lock=%.2f frame=%d  reparent_head=%s  bounce "
-              "lift %.3f tiles (peak %.3f, %.1f of %d frames airborne, %.3f tiles up-screen, "
-              "%.3f tiles of shadow east at peak)"
+        print("POSE action=%s gain=%.2f phase_lock=%.2f frame=%d  reparent_head=%s  "
+              "ground_contact=%s  bounce lift %.3f tiles (peak %.3f, %.1f of %d frames airborne, "
+              "%.3f tiles up-screen, %.3f tiles of shadow east at peak)"
               % (cfg["model.action"], cfg["model.pose_gain"], cfg["model.phase_lock"],
-                 cfg["model.frame"],
-                 cfg["model.reparent_head"], d["bounce_lift_tiles"], d["bounce_peak_tiles"],
+                 cfg["model.frame"], cfg["model.reparent_head"], cfg["model.ground_contact"],
+                 d["bounce_lift_tiles"], d["bounce_peak_tiles"],
                  d["bounce_airtime_frames"], d["bounce_cycle_frames"],
                  d["bounce_lift_up_screen_tiles"], d["bounce_peak_shadow_east_tiles"]))
 
@@ -967,13 +1025,20 @@ def main():
     # HE SANK. Only a render can measure this -- the box depends on the pose, the roll and
     # the scale together -- and it is invisible in the body pass, which draws no ground: the
     # shadow pass's catcher sits at z=0 and quietly slices whatever is under it. The BOUNCE
-    # cannot fix it (its floor is the lift, not the body); `model.offset`'s z can, and that
-    # is the C.17 tuning session's job.
+    # cannot fix it (its floor is the lift, not the body). For a POSED body the fix is
+    # model.ground_contact, which re-measures every frame; offset z is one number and a
+    # thrashing body's lowest point is not. With contact on this cannot fire.
     if box is not None and box[2][0] < -0.01:
-        print("WARN the posed body reaches %.3f tiles BELOW the ground plane (z=0) at this "
+        print("WARN the %s body reaches %.3f tiles BELOW the ground plane (z=0) at this "
               "roll. The shadow catcher cuts through him there and in game he is buried to "
-              "that depth. Raise model.offset z (now %.2f) by at least that much"
-              % (-box[2][0], cfg["model.offset"][2]))
+              "that depth. %s"
+              % ("posed" if posed else "standing", -box[2][0],
+                 "Set model.ground_contact = true -- a fixed model.offset z (now %.2f) cannot "
+                 "follow a body whose lowest point moves every frame" % cfg["model.offset"][2]
+                 if posed else
+                 "Raising model.offset z (now %.2f) by that much fixes it AND re-dates the "
+                 "shipped sheets -- that is C.27's call, not this warning's"
+                 % cfg["model.offset"][2]))
 
     print("JAMALTRON_RESULT " + json.dumps({
         "pass": which, "engine": engine, "samples": samples, "render_px": res,
@@ -984,6 +1049,8 @@ def main():
         # What the pose and the bounce actually did, so a cached frame's own report says so.
         "action": cfg["model.action"], "pose_gain": cfg["model.pose_gain"],
         "phase_lock": cfg["model.phase_lock"],
+        "ground_contact": cfg["model.ground_contact"],
+        "ground_shift_tiles": None if ground_shift is None else round(ground_shift, 5),
         "wave": ({k: wave[k] for k in ("chain", "lags", "offsets")}
                  if wave and not wave["skipped"] else None),
         "model_frame": cfg["model.frame"], "reparent_head": cfg["model.reparent_head"],

@@ -215,15 +215,19 @@ KNOBS = [
 #: one of these or the export would quietly drop a value you spent an afternoon finding --
 #: asserted at import, not documented and hoped for.
 #:
-#: Five of these are NOT sliders (`action`, `pose_gain`, `frame`, `reparent_head`,
-#: `bounce.gravity`): they come off the clip selects or off `--set`, and they ride the export
-#: because the five shark knobs are meaningless without them. A flop tuned at gain 1.0 and
+#: Six of these are NOT sliders (`action`, `pose_gain`, `frame`, `reparent_head`,
+#: `ground_contact`, `bounce.gravity`): they come off the clip selects, the two rig
+#: checkboxes or `--set`, and they ride the export because the shark knobs are meaningless
+#: without them. A flop tuned at gain 1.0 and
 #: pasted without `action` is the standing shark.
 TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model.rotation",
              "model.action", "model.pose_gain", "model.phase_lock", "model.frame",
-             "model.reparent_head",
+             "model.reparent_head", "model.ground_contact",
              "model.base_yaw",
              "bounce.height", "bounce.phase", "bounce.gravity")
+#: The three TOML_KEYS that posed() writes from the page's pose controls rather than taking
+#: from the config -- which is why a --set of one does not survive to the export.
+POSE_KEYS = ("model.action", "model.frame", "model.pose_gain")
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
 assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema does not have"
 
@@ -232,10 +236,15 @@ assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema doe
 #: 384 px), shadow -> compare.show_shadow plus whether the Cycles pass runs at all.
 ROTATION_CHOICES = (4, 8)
 RES_CHOICES = (0, 256)
-#: `reparent` is deliberately absent: it defaults to whatever the config being tuned says,
-#: so `--set model.reparent_head=true` is not silently overridden by a page default. page()
-#: seeds the checkbox off the committed config for the same reason.
+#: The KNOB_BOXES are deliberately absent: each defaults to whatever the config being tuned
+#: says, so `--set model.reparent_head=true` is not silently overridden by a page default.
+#: page() seeds the checkboxes off the committed config for the same reason.
 DEFAULT_OPTS = {"rotations": 8, "res": 0, "shadow": False, "view": "wheel"}
+
+#: The checkboxes that are real KNOBS rather than tuner render options: the export carries
+#: them, so they ride with the pose into the paste config and not just into the render. Opt
+#: name -> schema key. `shadow` is NOT one: it is a tuner option (compare.show_shadow).
+KNOB_BOXES = {"reparent": "model.reparent_head", "ground": "model.ground_contact"}
 
 # ----------------------------------------------------------------------------- the pose
 #
@@ -286,12 +295,13 @@ DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2}
 #: his own frame, inside the roll. PHASE LOCK 0.5 WITH BOUNCE PHASE 0.5 is his C.5.2 call the
 #: same evening, off this page at 24 fps ("I think this looks good") -- half way from the swim
 #: to the standing wave, pushing off half a cycle in. The two travel together: the lock moves
-#: peak curl, and the bounce launches on it.
+#: peak curl, and the bounce launches on it. GROUND CONTACT (C.5.4) came right after: at that
+#: call a fixed offset z buried him on all 20 frames, and this page draws no floor to show it.
 FLOP_PRESET = {
     "values": {"roll": 85.0, "yaw": 180.0, "phase_lock": 0.5, "bounce_height": 0.3,
                "bounce_phase": 0.5},
     "pose": {"clip": "SWIM_FAST", "frame": 1, "gain": 1.0, "stride": 2},
-    "opts": {"view": "broadside", "reparent": True},
+    "opts": {"view": "broadside", "reparent": True, "ground": True},
 }
 
 #: The model's own rest-pose box in tiles at scale 1, read OUT of artconfig.derived()
@@ -353,7 +363,8 @@ def apply_opts(cfg: dict, opts: dict) -> dict:
     cfg["compare.rotations"] = choice("rotations", ROTATION_CHOICES)
     cfg["render.resolution_px"] = choice("res", RES_CHOICES)
     cfg["compare.show_shadow"] = bool(opts.get("shadow", False))
-    cfg["model.reparent_head"] = reparent_of(cfg, opts)
+    for name, key in KNOB_BOXES.items():
+        cfg[key] = box_of(cfg, opts, name)
     if view_of(opts) == "broadside":
         # The COUNT has to follow the view or the hash claims eight cells for a three-cell
         # sheet. Which three is not expressible as a knob (there is no "directions" knob,
@@ -362,15 +373,21 @@ def apply_opts(cfg: dict, opts: dict) -> dict:
     return cfg
 
 
-def reparent_of(cfg: dict, opts: dict) -> bool:
-    """The rig-fix checkbox, falling back to the CONFIG's own value and not to False.
+def box_of(cfg: dict, opts: dict, name: str) -> bool:
+    """A knob checkbox, falling back to the CONFIG's own value and not to False.
 
-    Two reasons it is not just `opts.get("reparent", False)`. `--set
-    model.reparent_head=true` has to survive a POST that does not mention the checkbox, and
-    the EXPORT has to carry whatever is ticked -- a block that says `reparent_head = false`
-    under a picture rendered with it on is the export lying about the picture.
+    Two reasons it is not just `opts.get(name, False)`. `--set model.reparent_head=true` has
+    to survive a POST that does not mention the checkbox, and the EXPORT has to carry
+    whatever is ticked -- a block that says `reparent_head = false` under a picture rendered
+    with it on is the export lying about the picture.
     """
-    return bool(opts.get("reparent", cfg["model.reparent_head"]))
+    return bool(opts.get(name, cfg[KNOB_BOXES[name]]))
+
+
+def reparent_of(cfg: dict, opts: dict) -> bool:
+    """The C.18a rig-fix checkbox. See box_of."""
+    return box_of(cfg, opts, "reparent")
+
 
 
 def view_of(opts: dict) -> str:
@@ -554,9 +571,17 @@ def seed(committed: dict, sets: dict) -> tuple[dict, dict, str, dict]:
         # The header hash is computed WITH these, because the render was. Say so, or the
         # block reads as "paste this, get this hash" and the hash comes back different.
         # Worded to read the same in the terminal at startup and as a comment in the block.
-        note = ("also --set, in every render and in the hash but NOT in the exported "
-                "[model] lines (add them by hand or the pasted hash will differ): "
-                + " ".join("%s=%s" % (key, value) for key, value in sorted(extra.items())))
+        # ...but only the ones the export really lacks. The rig checkboxes and gravity ARE
+        # written out, straight from this config, and telling someone to add one by hand is
+        # how a paste ends up declaring it twice. The three POSE keys are the exception that
+        # stays in the note: posed() overwrites them from the page's own pose controls, so a
+        # --set of those does not reach the export (C.28).
+        missing = {key: value for key, value in extra.items()
+                   if key not in TOML_KEYS or key in POSE_KEYS}
+        if missing:
+            note = ("also --set, in every render and in the hash but NOT in the exported "
+                    "[model] lines (add them by hand or the pasted hash will differ): "
+                    + " ".join("%s=%s" % (key, value) for key, value in sorted(missing.items())))
     return committed, start, note, pinned
 
 
@@ -661,10 +686,11 @@ class Tuner:
         """
         p = normalize_pose(p)
         paste_cfg = posed(apply_values(self.committed, values), p)
-        # The rig fix rides with the POSE, not with the tuner's render options, because it is
-        # a knob the export has to carry. apply_opts sets it again from the same opts, so the
-        # two configs cannot disagree about it.
-        paste_cfg["model.reparent_head"] = reparent_of(paste_cfg, opts)
+        # The knob checkboxes ride with the POSE, not with the tuner's render options, because
+        # they are knobs the export has to carry. apply_opts sets them again from the same
+        # opts, so the two configs cannot disagree about them.
+        for name, key in KNOB_BOXES.items():
+            paste_cfg[key] = box_of(paste_cfg, opts, name)
         cfg = apply_opts(paste_cfg, opts)
         paste_hash = ac.config_hash(paste_cfg)
         tuner_hash = ac.config_hash(cfg)
@@ -920,6 +946,7 @@ PAGE = r"""<!doctype html>
  .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px;
           padding:12px; margin-bottom:12px; }
  .k { margin-bottom:16px; }
+ .k.dead { opacity:.45; }
  .k label { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
  .k .name { font-weight:600; }
  .k .ends { display:flex; justify-content:space-between; color:var(--dim); font-size:11px;
@@ -1001,6 +1028,11 @@ PAGE = r"""<!doctype html>
       <label class="opts" style="margin-top:4px"><input type="checkbox" id="reparent">
         reparent HEAD to SPINE_01 <span class="dim">(C.18a: HEAD is a ROOT bone, so the
         snout is welded to world space until this is on)</span></label>
+      <label class="opts" style="margin-top:4px"><input type="checkbox" id="ground">
+        ground contact <span class="dim">(C.5.4: his LOWEST point sits on the floor every
+        frame, bounce on top, and the height slider goes dead. Off, a fixed offset z buries a
+        thrashing body -- and this page draws no floor, so only the render's WARN says
+        so)</span></label>
       <div class="dim" id="posenote"></div>
     </div>
     <div class="panel" id="knobs"></div>
@@ -1016,8 +1048,8 @@ PAGE = r"""<!doctype html>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="rerender">re-render</button>
         <button id="flop" title="SWIM_FAST, roll 85, yaw 180, gain 1.0, phase lock 0.5, bounce
-0.3 at phase 0.5, HEAD reparented, broadside. Leaves scale / girth / pivot / pitch where you
-have them.">flop preset</button>
+0.3 at phase 0.5, HEAD reparented, ground contact, broadside. Leaves scale / girth / pivot /
+pitch where you have them.">flop preset</button>
         <button id="reset">reset to committed</button>
         <button id="copy">copy TOML</button>
       </div>
@@ -1143,17 +1175,30 @@ function paintKnobs() {
   $("rotations").value = opts.rotations; $("res").value = opts.res;
   $("shadow").checked = opts.shadow; $("view").value = opts.view;
   $("reparent").checked = !!opts.reparent;
+  $("ground").checked = !!opts.ground;
+  deadHeight();
+}
+// Ground contact CANCELS offset z (it re-seats him on his lowest vertex), so the height slider
+// can move no pixel while the box is ticked -- and artconfig.hashable() pins it out of the
+// hash for the same reason. Greyed rather than hidden, so the value is still visible.
+function deadHeight() {
+  const dead = !!opts.ground;
+  for (const id of ["r_offset_z", "n_offset_z"]) $(id).disabled = dead;
+  $("k_offset_z").classList.toggle("dead", dead);
+  $("k_offset_z").title = dead ? "cancelled by ground contact: his lowest point sets it" : "";
 }
 $("rotations").onchange = e => { opts.rotations = +e.target.value; touched(); quote(); render(); };
 $("res").onchange = e => { opts.res = +e.target.value; touched(); quote(); render(); };
 $("shadow").onchange = e => { opts.shadow = e.target.checked; touched(); quote(); render(); };
 $("reparent").onchange = e => { opts.reparent = e.target.checked; touched(); quote(); render(); };
+$("ground").onchange = e => { opts.ground = e.target.checked; deadHeight(); touched(); quote();
+                              render(); };
 $("view").onchange = e => { opts.view = e.target.value; touched(); quote(); render(); };
 $("rerender").onclick = () => render();
 // The C.5 recipe in one click -- roll 85, yaw 180, SWIM_FAST, gain 1.0, phase lock 0.5,
-// bounce 0.3 at phase 0.5, HEAD reparented, broadside. Only those: scale, girth, pivot and
-// pitch stay where they are, because half the time they are mid-tuning and a preset that
-// reverted them is one nobody presses twice.
+// bounce 0.3 at phase 0.5, HEAD reparented, ground contact, broadside. Only those: scale,
+// girth, pivot and pitch stay where they are, because half the time they are mid-tuning and a
+// preset that reverted them is one nobody presses twice.
 $("flop").onclick = () => { Object.assign(values, BOOT.flop.values);
                             Object.assign(posest, BOOT.flop.pose);
                             Object.assign(opts, BOOT.flop.opts);
@@ -1432,10 +1477,11 @@ def page(tuner: Tuner) -> str:
                   for k in KNOBS],
         "start": values_of(tuner.start),
         "committed": values_of(tuner.committed),
-        # `reparent` is seeded off the config rather than off DEFAULT_OPTS, so
+        # The knob checkboxes are seeded off the config rather than off DEFAULT_OPTS, so
         # `--set model.reparent_head=true` boots with the box ticked instead of being
         # silently turned back off by the page's own default.
-        "opts": dict(DEFAULT_OPTS, reparent=tuner.committed["model.reparent_head"]),
+        "opts": dict(DEFAULT_OPTS, **{name: tuner.committed[key]
+                                      for name, key in KNOB_BOXES.items()}),
         "rotation_choices": list(ROTATION_CHOICES),
         "res_choices": list(RES_CHOICES),
         "view_choices": list(VIEW_CHOICES),

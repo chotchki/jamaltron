@@ -101,10 +101,10 @@ nose-on, the roll is invisible and the thrash is all in screen depth, so five of
 eight views cannot answer the question.
 
 **flop preset** is the C.5 recipe in one click - SWIM_FAST, roll 85, yaw 180, gain 1.0, phase
-lock 0.5, bounce 0.3 at phase 0.5, HEAD reparented, broadside - and it leaves scale, girth,
-pivot and pitch where you have them, because half the time those are mid-tuning. Yaw 180 and
-the lock/phase pair are chotchki's calls of 2026-09-23, the second one made off this page at
-24 fps. The page still OPENS on the committed standing
+lock 0.5, bounce 0.3 at phase 0.5, HEAD reparented, ground contact on, broadside - and it
+leaves scale, girth, pivot and pitch where you have them, because half the time those are
+mid-tuning. Yaw 180 and the lock/phase pair are chotchki's calls of 2026-09-23, the second one
+made off this page at 24 fps. The page still OPENS on the committed standing
 config (the header's `paste` hash reads `83d6be794998` on arrival, which is the live proof the
 flop work has not touched the art that ships), so 85 is a button and not a boot value.
 
@@ -138,6 +138,7 @@ uv run --directory tools python render/art.py --compare \
 | `model.frame` | which frame of that clip, clamped to its range |
 | `model.pose_gain` | every bone's rotation scaled away from rest. **1.0 ships**: at roll 80-90 the bounce carries the thrash. The rig survives 2.6x, measured |
 | `model.phase_lock` | 0 is the swim's TRAVELLING wave as bought, 1 plays every spine joint in step with the tail - the standing wave a beached fish makes. See below |
+| `model.ground_contact` | C.5.4: the posed body's LOWEST vertex sits on the floor every frame, plus the bounce lift; `offset` z drops out. See below |
 | `model.reparent_head` | C.18a rig fix, applied in memory - HEAD ships as a ROOT bone, so the snout is welded to world space until this is on |
 | `bounce.height` / `.phase` / `.gravity` | the ballistic lift: how high, where in the cycle he pushes off, and the `g` that fixes the airtime |
 
@@ -188,16 +189,53 @@ pixel.
 nose to tail against 32.8 travelling - but it reads as a big TAIL FLICK and not a U. Two
 reasons, both measured: the wave is rear-loaded 3:1 (the front four joints carry 12.8 deg of
 it), and SPINE_01 is a root bone at the nose, so the curl hinges at his head and the front never
-leaves the floor. And he is BURIED, which the lock makes worse but did not start. Measured at
-roll 85 on the landing frames (lift 0), lowest point of the posed body: **-0.455 tiles at lock
-0** - `offset` z 0.5 was tuned for the STANDING shark - then -0.804 at 0.5 and **-0.950 at 1**,
-because the half of the cycle that curls DOWN drives the tail into the floor. A real fish on
-its side cannot curl into the ground; the ground turns that half into an arch. Note the
-render's own WARN only sees the frames it drew, so a still off a mid-air frame reports -0.043
-while the landing ten frames later is ten times deeper. So a U needs the two things the 09-20
-spike already named: counter-rotating the body by half its curl each frame (both ends rise
-together), and per-frame ground contact so the lowest point sits on z=0 with the bounce on
-top.
+leaves the floor. And without ground contact he is BURIED, which the lock makes worse but did
+not start: worst lowest vertex over the loop at roll 85 is **-0.389 tiles at lock 0** (`offset`
+z 0.5 was tuned for the STANDING shark), -0.697 at 0.5 and **-0.841 at 1**, because the half of
+the cycle that curls DOWN drives the tail into the floor. A real fish on its side cannot curl
+into the ground; the ground turns that half into an arch. (These replace -0.455 / -0.804 /
+-0.950, which came off a bounding box that ran up to 0.108 tiles too deep - see below.) A U
+would need counter-rotating the body by half its curl each frame (C.5.3, optional since the
+0.5 call); the ground half is C.5.4, below.
+
+### Ground contact (C.5.4)
+
+`model.ground_contact = true` evaluates the posed mesh, finds its LOWEST VERTEX and moves the
+model so that vertex sits at exactly this frame's bounce lift - on the floor at landing,
+`lift` above it in the air. `offset` z drops out (it is added and then cancelled), which is
+the point: it places the model's ORIGIN, right for the standing shark riding his legs and
+wrong for a thrashing body whose lowest point moves every frame. At the C.5.2 call without it
+he was under the floor on all 20 frames, 0.105-0.430 tiles, invisible in the tuner (the body
+pass draws no floor) and sliced by the shadow catcher. Because offset z cannot move a pixel
+while contact is on, `artconfig.hashable()` pins it out of the key (x and y stay in) and the
+tuner greys its height slider - otherwise every drag re-rendered the same picture under a new
+hash.
+
+MEASURED at the call (lock 0.5, bounce phase 0.5, roll 85, yaw 180):
+
+* the lowest vertex lands on the lift to **0.00007 tiles** on all 20 frames, at three wheel
+  directions - the wheel spins about world z, so one measurement per frame holds for all 64
+* **0 of 40** forced renders (20 frames x body + shadow) warn buried. Without contact all 20
+  frames are past the WARN's threshold
+* the shadow comes back WHOLE - without contact the catcher cut the down-curled tail out of
+  it, which is exactly the frames where the tail is the thing touching the ground
+* it costs TOP headroom: he sits up to **31 px** higher (+0.697 tiles x 0.707 x 64, f18),
+  and the tightest top margin over the loop at dir 16 drops from 82 px to 68. The tightest
+  margin overall is 13 px on the RIGHT edge, with or without contact. No broadside frame
+  clips (dirs 12/16/20: 24/13/8 px). NOSE-ON ones do: at f8 dirs 61-63 and 0-8 touch the top
+  of the 6-tile canvas with contact (dirs 0-4 already did without). Moot while the beached
+  sheet is ONE broadside direction (C.5's budget); a full-wheel flop needs a taller canvas
+* WATCH AT 24 fps: the shift runs +0.280..+0.697 tiles across the loop. Its biggest step is
+  the loop SEAM, -0.221 f20 -> f1 (the top edge drops 12 px, against 2 without contact), then
+  +0.19 f16 -> f17, where the curl flips which part of him is lowest. Physically right (the
+  down-curl arches his middle up), but those two are the frames most likely to read as a hitch
+
+It is exact because `world_box()` is now exact: it walks the evaluated vertices instead of
+transforming each mesh's LOCAL bound box, whose corners hang up to 0.109 tiles below anything
+the mesh reaches once he is rolled 85 and curled (six of the call's 20 frames, f01 and
+f16-f20). That also corrects the buried-body WARN, which
+was overstating by the same amount. Standing renders are untouched bit for bit - the new
+renderer and HEAD's produce identical IDAT for the committed config.
 
 ### What the bounce is for
 
@@ -337,7 +375,7 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
-| `uv run --directory tools python render/tune.py` | **the slider UI.** eleven sliders, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix toggle, live coverage count, copy-TOML button; shadow off by default |
+| `uv run --directory tools python render/tune.py` | **the slider UI.** eleven sliders, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix and ground-contact toggles, live coverage count, copy-TOML button; shadow off by default |
 | `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
 
 The C.7 packer, also from the repo root:

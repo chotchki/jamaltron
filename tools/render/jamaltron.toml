@@ -193,6 +193,19 @@ phase_lock = 0.0
 # default false
 reparent_head = false
 
+# GROUND CONTACT (C.5.4). On, the posed body's LOWEST VERTEX sits on the floor every frame,
+# plus that frame's [bounce] lift, and `offset` z drops out entirely. `offset` z places the
+# model's ORIGIN, which is right for the standing shark (he rides his legs at a set height)
+# and wrong for a thrashing one, whose lowest point moves every frame. MEASURED at the
+# C.5.2 flop call (roll 85, phase_lock 0.5, offset z 0.5): buried 0.105-0.430 tiles on ALL 20
+# frames -- invisible in the tuner, which draws no floor, and sliced by the shadow pass's
+# catcher. Contact also turns the half of the curl that bends DOWN into the arch a fish on its
+# side really makes, and makes the bounce's landing frame an actual landing.
+# While it is on, offset z cannot move a pixel, so the hash drops it (x and y stay in).
+# Off by default because the standing shark must not move; with `action = "rest"` it warns.
+# default false
+ground_contact = false
+
 [bounce]
 # THE BOUNCE (C.5). A per-frame vertical lift so he LAUNCHES off the ground and LANDS, driven
 # by the thrash's own phase. Without it a beached shark pinned to z=0 slides, and the landing
