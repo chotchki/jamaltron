@@ -64,8 +64,10 @@ local settings = {
     order = "c",
   },
   {
-    -- Seconds between NEW lines from one Jamaltron. A setup/punchline chain is one line in
-    -- two beats and is exempt (SPEC), so this never cuts a punchline off.
+    -- Seconds between AMBIENT lines from one Jamaltron - idle, moving, damaged, attacking,
+    -- flopping, command_done (speech.lua's M.AMBIENT). Event lines always get through and
+    -- still reset it. A setup/punchline chain is one line in two beats and is exempt (SPEC),
+    -- so this never cuts a punchline off.
     type = "int-setting",
     name = "jamaltron-speech-cooldown",
     setting_type = "runtime-global",

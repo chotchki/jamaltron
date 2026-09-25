@@ -25,6 +25,8 @@ local C = {
   -- measured. Re-measure (art.py --compare, coverage line) if scale or girth move.
   mount_lift = 0.184,
   remnants = "jamaltron-remnants",
+  -- D.5: his speech bubble, a named copy of base's compilatron bubble (prototypes/speech.lua)
+  speech_bubble = "jamaltron-speech-bubble",
   explosion = "jamaltron-explosion",
 }
 

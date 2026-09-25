@@ -1,0 +1,9 @@
+{
+  "name": "jamaltron-harness",
+  "version": "0.1.0",
+  "title": "Jamaltron test harness",
+  "author": "chotchki",
+  "description": "Headless test driver for the jamaltron mod (PLAN D.5.4, grows into F.1). Never shipped: tools/smoke.sh --harness loads it into a throwaway profile.",
+  "factorio_version": "2.1",
+  "dependencies": ["jamaltron"]
+}

@@ -22,7 +22,13 @@
 # is `factorio --dump-icon-sprites`, which is accurate, mac-only and ~35s.
 #
 # Usage: tools/smoke.sh [--mod-dir PATH|--mod-zip PATH] [--ticks N] [--keep] [-v]
-#                       [--workdir PATH]
+#                       [--workdir PATH] [--harness DIR]
+#
+# --harness DIR loads a second, test-only mod (tools/harness/jamaltron-harness) into the
+# same throwaway profile and judges what it logs: any `HARNESS FAIL` line fails the run,
+# `HARNESS done` must appear, every `HARNESS need <ERE>` must match some line of the run and
+# no `HARNESS never <ERE>` may. Ticks default to 3800 with a harness (the idle timer needs
+# the better part of a minute).
 # Env:   FACTORIO_BIN=/path/to/factorio   binary override (FACTORIO also accepted)
 #        SMOKE_WORKDIR=PATH               scratch dir override
 #        SMOKE_TIMEOUT=SECONDS            per-stage kill, 0 disables (default 120)
@@ -36,6 +42,8 @@ MOD_SRC="$REPO_ROOT/mod/jamaltron"
 WORK="${SMOKE_WORKDIR:-$REPO_ROOT/.smoketest}"
 TIMEOUT="${SMOKE_TIMEOUT:-120}"
 TICKS=60
+TICKS_SET=0
+HARNESS_SRC=""
 KEEP=0
 VERBOSE=0
 
@@ -46,7 +54,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --mod-dir|--mod-zip) [ $# -ge 2 ] || die "$1 needs a path"; MOD_SRC="$2"; shift 2 ;;
     --workdir)           [ $# -ge 2 ] || die "$1 needs a path"; WORK="$2"; shift 2 ;;
-    --ticks)             [ $# -ge 2 ] || die "$1 needs a number"; TICKS="$2"; shift 2 ;;
+    --ticks)             [ $# -ge 2 ] || die "$1 needs a number"; TICKS="$2"; TICKS_SET=1; shift 2 ;;
+    --harness)           [ $# -ge 2 ] || die "$1 needs a path"; HARNESS_SRC="$2"; shift 2 ;;
     --keep)              KEEP=1; shift ;;
     -v|--verbose)        VERBOSE=1; shift ;;
     -h|--help)           usage; exit 0 ;;
@@ -55,6 +64,13 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TICKS" in ''|*[!0-9]*) die "--ticks wants a whole number, got '$TICKS'" ;; esac
+HARNESS_NAME=""
+if [ -n "$HARNESS_SRC" ]; then
+  [ -f "$HARNESS_SRC/info.json" ] || die "no info.json in harness $HARNESS_SRC"
+  HARNESS_SRC="$(cd -- "$HARNESS_SRC" && pwd)"
+  HARNESS_NAME="$(basename "$HARNESS_SRC")"
+  [ "$TICKS_SET" -eq 1 ] || TICKS=3800
+fi
 case "$TIMEOUT" in ''|*[!0-9]*) die "SMOKE_TIMEOUT wants whole seconds, got '$TIMEOUT'" ;; esac
 
 [ -x "$FACTORIO_BIN" ] || die "factorio binary not executable: $FACTORIO_BIN (set FACTORIO_BIN=...)"
@@ -165,6 +181,7 @@ else
   ln -s "$MOD_SRC" "$WORK/mods/$MOD_NAME"   # a symlinked mod folder loads fine
   PREFLIGHT_DIR="$MOD_SRC"
 fi
+[ -z "$HARNESS_NAME" ] || ln -s "$HARNESS_SRC" "$WORK/mods/$HARNESS_NAME"
 
 cat > "$WORK/config.ini" <<EOF
 ; throwaway profile - never point write-data at the real factorio directory
@@ -252,7 +269,8 @@ write_mod_list() { # write_mod_list <true|false, for the DLC mods>
  {"name":"quality","enabled":$dlc},
  {"name":"recycler","enabled":$dlc},
  {"name":"space-age","enabled":$dlc},
- {"name":"$MOD_NAME","enabled":true}]}
+ {"name":"$MOD_NAME","enabled":true}${HARNESS_NAME:+,
+ {"name":"$HARNESS_NAME","enabled":true}}]}
 EOF
 }
 
@@ -296,6 +314,32 @@ if [ -f "$WORK/write/sa.zip" ]; then
 else
   echo "smoke: FAIL benchmark - no save was created to run"
   fail=1
+fi
+
+# ---- the harness's own verdict, off what it logged during the benchmark ----------
+if [ -n "$HARNESS_NAME" ] && [ -f "$WORK/bench-sa.log" ]; then
+  bench="$WORK/bench-sa.log"
+  hfail="$(grep -E 'HARNESS FAIL ' "$bench" || true)"
+  if [ -n "$hfail" ]; then
+    echo "smoke: FAIL harness:"
+    printf '%s\n' "$hfail" | sed 's/^.*HARNESS FAIL /    /'
+    fail=1
+  fi
+  if ! grep -qE 'HARNESS done ' "$bench"; then
+    echo "smoke: FAIL harness - never reached 'HARNESS done' (a crash, or --ticks too short)"
+    fail=1
+  fi
+  while IFS= read -r pat; do
+    grep -v 'HARNESS need ' "$bench" | grep -qE -- "$pat" ||
+      { echo "smoke: FAIL harness - nothing in the run matched: $pat"; fail=1; }
+  done < <(sed -n 's/^.*HARNESS need //p' "$bench")
+  while IFS= read -r pat; do
+    if grep -v 'HARNESS never ' "$bench" | grep -qE -- "$pat"; then
+      echo "smoke: FAIL harness - the run matched what it must never: $pat"; fail=1
+    fi
+  done < <(sed -n 's/^.*HARNESS never //p' "$bench")
+  passed="$(grep -cE 'HARNESS ok ' "$bench" || true)"
+  [ "$fail" -ne 0 ] || echo "smoke: harness $HARNESS_NAME - $passed checks passed"
 fi
 
 if [ "$fail" -ne 0 ]; then
