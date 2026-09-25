@@ -84,7 +84,7 @@ remote.add_interface("jamaltron", {
   say = function(entity, pool, cond)
     return speech.say(entity, pool, cond)
   end,
-  ---@param on boolean
+  ---@param on boolean|string true logs each line said; "print" also puts its row id in chat
   debug = function(on)
     speech.set_debug(on)
   end,
@@ -95,9 +95,10 @@ remote.add_interface("jamaltron", {
 remote.add_interface("jamaltron-harness", {
   ---@param entity LuaEntity
   ---@param id string
+  ---@param still boolean? render it the way a death does
   ---@return string?
-  force = function(entity, id)
-    return speech.force(entity, id)
+  force = function(entity, id, still)
+    return speech.force(entity, id, still)
   end,
   ---@param entity LuaEntity
   ---@return table?

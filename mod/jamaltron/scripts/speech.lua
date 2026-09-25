@@ -93,7 +93,7 @@ M.ROWS = ROWS
 ---@field bubble LuaEntity?
 ---@field note LuaRenderObject?
 
----@return {speech: table<integer, Jamaltron.SpeechRecord>, debug: boolean?}
+---@return {speech: table<integer, Jamaltron.SpeechRecord>, debug: (boolean|string)?}
 local function root()
   storage.jamaltron = storage.jamaltron or {}
   local r = storage.jamaltron
@@ -174,15 +174,26 @@ local function echo(entity, message)
   end
 end
 
----Put one row on screen. `still` pins it to where he IS rather than following him, for a
----line said by something about to stop existing (a death).
+---Put one row on screen. `still` is a line said by something about to stop existing (a
+---death): it cannot follow him, so it is drawn where he fell. A speech BUBBLE cannot do that
+---- the engine refuses one with nothing to hang on ("Need entity target", found by the D.5.4
+---harness on a death that rolled a speech row), and the wreck only exists by
+---on_post_entity_died, after his record's entity is gone - so a dying speech line is plain
+---white world text, no prefix, beside narration's grey "Game Note:".
 ---@param rec Jamaltron.SpeechRecord
 ---@param row table
 ---@param still boolean
 local function render(rec, row, still)
   local entity = rec.entity
   local text = text_of(rec, row)
-  if row.ch == "narration" then
+  if still and row.ch ~= "narration" then
+    if rec.note and rec.note.valid then rec.note.destroy() end
+    rec.note = rendering.draw_text{
+      text = text, surface = entity.surface, target = entity.position,
+      color = {r = 1, g = 1, b = 1, a = 1}, scale = 1.4, alignment = "center",
+      vertical_alignment = "middle", time_to_live = M.SHOW_TICKS}
+    echo(entity, {"jamaltron-speech.chat", text})
+  elseif row.ch == "narration" then
     -- The game describing him, so visibly NOT a bubble. The "Game Note: " prefix lives here
     -- and nowhere else (lines.md: THE PREFIX SHIPS, AND D.5 APPLIES IT AT RENDER TIME).
     local note = {"jamaltron-speech.narration", text}
@@ -200,14 +211,18 @@ local function render(rec, row, still)
       rec.bubble.destroy()                -- one bubble per shark: a new line replaces the old
     end
     rec.bubble = entity.surface.create_entity{
-      name = C.speech_bubble, position = entity.position, text = text,
-      source = (not still) and entity or nil, lifetime = M.SHOW_TICKS}
+      name = C.speech_bubble, position = entity.position, text = text, source = entity,
+      lifetime = M.SHOW_TICKS}
     echo(entity, {"jamaltron-speech.chat", text})
   end
   pick.remember(rec.recent, row.grp)
   rec.last_id = row.id
-  if root().debug then
+  local debug = root().debug
+  if debug then
     log("jamaltron speech " .. tostring(entity.unit_number) .. " " .. row.id)
+    if debug == "print" then
+      game.print("[jamaltron] " .. row.id)            -- playtesting: the row behind the bubble
+    end
   end
 end
 
@@ -438,23 +453,27 @@ function M.adopt_all()
   end
 end
 
----@param on boolean log every line said, for the D.5.4 harness
+---@param on boolean|string true logs every line said (the D.5.4 harness); "print" also puts
+---each row id in chat (tools/play.sh's /jamaltron-kit); false stops both
 function M.set_debug(on)
   root().debug = on
 end
 
 ---HARNESS ONLY: say one named row as a new utterance, skipping every gate and the roll -
 ---so a test can open a window or start a chain on purpose instead of waiting for the dice.
+---`still` renders it the way a death does, so the harness reaches both of a death's render
+---paths (speech and narration) on purpose instead of by the roll.
 ---@param entity LuaEntity
 ---@param id string
+---@param still boolean?
 ---@return string?
-function M.force(entity, id)
+function M.force(entity, id, still)
   local rec, row = M.record(entity, true), ROWS[id]
   if rec == nil or row == nil then
     return nil
   end
   local pool = lines.pools[(id:match("^(.-)%.%d+$"))]
-  return commit(rec, row, pool, false)
+  return commit(rec, row, pool, still == true)
 end
 
 ---HARNESS ONLY: a copy of one record's scalars, for asserting on.

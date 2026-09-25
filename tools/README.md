@@ -479,6 +479,7 @@ The C.7 packer, also from the repo root:
 | `... --allow-clipped` / `--any-config` / `--no-verify` | pack frames that are CUT / frames from another config / skip the strict lint of our own output |
 | `... --config render/beached.toml` | pack the `[sequence]`: one frame out of each config's own cache dir, one `animation` sheet per pass with a `frame_sequence`, written beside the standing pair as `jamaltron-beached-*.png` + `beached-sprites.json` + `beached_sprites_generated.lua` |
 | `python3 tools/lint_sprites.py --strict --mod-root jamaltron=mod/jamaltron mod/jamaltron/graphics/sprites.json` | the sprite gate, exactly as CI runs it |
+| `tools/play.sh --new` | PLAYTEST: the real game on its own profile in `.playtest/` (gitignored) - its own saves, mod list and settings, jamaltron symlinked from the working tree, a fresh map loaded straight in. Your real Factorio profile is never read or written (measured: zero files changed in it across a run). In game `/jamaltron-kit`, `/jamaltron-say <pool> [cond]`, `/jamaltron-row <id>`, `/jamaltron-state`. Plain `tools/play.sh` reopens the profile at the main menu; `--base-only` drops Space Age; `--reset` starts it clean |
 | `tools/smoke.sh --harness tools/harness/jamaltron-harness` | D.5.4: the smoke test plus a scripted in-engine run (3800 ticks) of the speech rules - chains, windows, R3/R4/R5, the fork and {N}, transfer, idle, moving, command_done. Fails on any `HARNESS FAIL` line |
 | `uv run --directory tools python gen_lines.py --check` | B.5: validate `character/lines.md` against its own contract (and against the gitignored book extracts when they are on this machine) and report whether the generated `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` are current. Writes nothing |
 | `uv run --directory tools python gen_lines.py` | the same, then WRITES both files. Run it after every catalog edit - CI fails a stale pair. Generating is NOT the id freeze: ids stay renumberable through playtesting, and freezing them is PLAN F.6, just before release |
@@ -652,6 +653,8 @@ tests/
                             the row ids speech.lua hard-codes against the catalog
   lua/test_pick.lua         the D.5.1 picker against the real generated catalog
 harness/jamaltron-harness/  test-only mod smoke.sh --harness loads (D.5.4; grows into F.1)
+playtest/jamaltron-playtest/  the /jamaltron-* console commands tools/play.sh loads
+play.sh             the isolated playtest profile launcher
   test_env.py               python version, Pillow present, spritesheet.py still stdlib-only
 smoke.sh, build.sh  shell, not part of the uv project (PLAN A.2)
 ```

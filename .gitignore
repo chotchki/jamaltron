@@ -25,6 +25,7 @@ __pycache__/
 
 # Factorio smoke-test scratch (tools/smoke.sh) and build output (tools/build.sh)
 .smoketest/
+.playtest/
 dist/
 jamaltron_*.zip
 factorio-current.log

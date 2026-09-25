@@ -156,6 +156,21 @@ at(25, function(s)
   s.t1.destroy()
 end)
 
+at(35, function(s)                          -- a death's two render paths, on purpose
+  local ok = pcall(remote.call, HARNESS, "force", s.e, "died.02", true)
+  check("a dying SPEECH line draws world text (a bubble needs an entity)",
+        ok and state(s.e).note == true, serpent.line(state(s.e)))
+  ok = pcall(remote.call, HARNESS, "force", s.e, "died.01", true)
+  check("a dying NARRATION line draws where he fell", ok and state(s.e).note == true)
+end)
+
+at(30, function(s)                          -- tools/play.sh's chat mode, then back to logging
+  remote.call(SAY, "debug", "print")
+  check("print-mode debug says a line without falling over",
+        remote.call(HARNESS, "force", s.e, "idle.01") == "idle.01")
+  remote.call(SAY, "debug", true)
+end)
+
 for dt = 60, 3600, 60 do                   -- watch the walker
   at(dt, function(s)
     local m = s.m.valid and state(s.m)
