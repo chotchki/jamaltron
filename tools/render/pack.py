@@ -134,13 +134,13 @@ import json  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
-from dataclasses import dataclass, field  # noqa: E402
+from dataclasses import dataclass, field, replace  # noqa: E402
 
 from render import artconfig as ac  # noqa: E402
 from render import factorio_camera as fc  # noqa: E402
 from render import sheets  # noqa: E402
 from render.art import (REPO, RENDER_NOISE_FLOOR, SPRITE_VISIBLE_ALPHA,  # noqa: E402
-                        pass_dir)
+                        pass_dir, sequence_samples)
 from render.spritesheet import MAX_SHEET_SIDE, SheetLayout, plan_sheet  # noqa: E402
 
 #: Dry-run root. Gitignored, and mod-shaped so the manifest lints where it lands.
@@ -258,6 +258,36 @@ TARGETS = (
            stem="jamaltron-body-water-reflection", kind="variations",
            reduce="reflection"),
 )
+
+
+#: A SEQUENCE sheet (C.21): the beached flop, one direction, N animation frames gathered from
+#: N per-frame cache directories. Body, tint mask and shadow, exactly the standing layers,
+#: as `animation` frames. `stem` is completed with the sequence's name (jamaltron-beached-
+#: body) so a sequence can never overwrite the standing sheets.
+#:
+#: NO REFLECTION. Stock's reflection is a rotationally symmetric blob under a torso that
+#: turns; a beached shark lies one way and refuses water, and the reducer's mean-of-rotations
+#: means nothing over animation frames. The slot goes in `clear`, which says so out loud.
+SEQUENCE_TARGETS = (
+    Target(id="body", slot="animation", order=0, pass_name="body", stem="body",
+           kind="animation"),
+    Target(id="body_mask", slot="animation", order=1, pass_name="mask", stem="body-mask",
+           kind="animation", apply_runtime_tint=True),
+    Target(id="shadow", slot="shadow_animation", order=0, pass_name="shadow",
+           stem="body-shadow", kind="animation", draw_as_shadow=True),
+)
+
+
+def sequence_targets(name: str) -> tuple:
+    """SEQUENCE_TARGETS with their stems completed for sequence `name`."""
+    return tuple(replace(t, stem=f"{MOD_NAME}-{name}-{t.stem}") for t in SEQUENCE_TARGETS)
+
+
+def sequence_outputs(name: str) -> tuple:
+    """(manifest file name, Lua module name) for sequence `name`. Beside the standing pair,
+    never over it: CI recognises both kinds by CONTENT, so a second manifest in the strict
+    tree is linted exactly like the first."""
+    return f"{name}-{MANIFEST_NAME}", f"{name}_{LUA_NAME}"
 
 
 class PackError(RuntimeError):
@@ -519,8 +549,8 @@ def choose_line_length(frame_count: int, requested: int, columns_that_fit: int):
 #: Field order for the one dict. Factorio ignores order; a diff does not, and these two
 #: artifacts are read side by side when a number looks wrong.
 FIELD_ORDER = ("filename", "filenames", "width", "height", "line_length",
-               "direction_count", "frame_count", "variation_count", "lines_per_file",
-               "scale", "shift", "draw_as_shadow", "apply_runtime_tint")
+               "direction_count", "frame_count", "frame_sequence", "variation_count",
+               "lines_per_file", "scale", "shift", "draw_as_shadow", "apply_runtime_tint")
 
 #: kind -> the ONE count field Factorio should read, and what the other two default to.
 #: Emitting only the one that applies is deliberate: `direction_count = 1` on a
@@ -529,7 +559,8 @@ COUNT_FIELD = {"rotations": "direction_count", "animation": "frame_count",
                "variations": "variation_count"}
 
 
-def sprite_fields(target: Target, filenames, layout, shift, scale: float) -> dict:
+def sprite_fields(target: Target, filenames, layout, shift, scale: float,
+                  frame_sequence=None) -> dict:
     """THE dict. The Lua table and the manifest entry are both this, verbatim.
 
     Built off SheetLayout.prototype_fields() rather than re-deriving the geometry, with
@@ -555,6 +586,12 @@ def sprite_fields(target: Target, filenames, layout, shift, scale: float) -> dic
     # reader checks; the other two kinds leave the fields their struct does not own alone.
     if target.kind == "rotations":
         fields["frame_count"] = 1
+    if frame_sequence is not None:
+        # C.21's order: 1-based cells, repeats and holds included. Only an animation plays in
+        # an order; a rotation or a variation is picked, never played.
+        if target.kind != "animation":
+            raise PackError(f"{target.id}: frame_sequence on a {target.kind} sheet")
+        fields["frame_sequence"] = list(frame_sequence)
     if "lines_per_file" in proto:
         fields["lines_per_file"] = proto["lines_per_file"]
     fields["scale"] = scale
@@ -716,6 +753,23 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
 
     images = [(i, Image.open(directory / f"frame_{i:03d}.png").convert("RGBA"))
               for i in frames]
+    return pack_images(cfg, target, images, ppt, out_root, mod_name=mod_name,
+                       line_length=line_length, pad=pad, max_side=max_side, visible=visible,
+                       noise_floor=noise_floor, allow_clipped=allow_clipped, source=directory)
+
+
+def pack_images(cfg, target: Target, images, ppt: float, out_root: pathlib.Path, *,
+                mod_name: str, line_length: int = DEFAULT_LINE_LENGTH, pad: int = DEFAULT_PAD,
+                max_side: int = MAX_SHEET_SIDE, visible: int = SPRITE_VISIBLE_ALPHA,
+                noise_floor: int = RENDER_NOISE_FLOOR, allow_clipped: bool = False,
+                source=None, frame_sequence=None, stamp_blob=None) -> Packed:
+    """[(index, RGBA image), ...] -> sheet PNG(s) + the sprite dict. Everything after the
+    frames are FOUND: the shadow surgery, the box, the refusals, the layout, the stamp.
+
+    Split out of pack_target because a C.21 sequence finds its frames somewhere else -- one
+    per cache directory, not N in one -- and must not get a second copy of anything below.
+    """
+    frames = [i for i, _ in images]
     canvas = images[0][1].size
     odd = [i for i, img in images if img.size != canvas]
     if odd:
@@ -799,13 +853,77 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
 
     scale = fc.NOMINAL_PX_PER_TILE / ppt
     fields = sprite_fields(target, [f"__{mod_name}__/{GRAPHICS_DIR}/{p.name}" for p in paths],
-                           layout, shift, scale)
+                           layout, shift, scale, frame_sequence)
     for path in paths:
-        sheets.stamp_png(path, ac.stamp(cfg, {
-            "sheet": target.id, "frames": frames, "source": str(directory),
+        sheets.stamp_png(path, stamp_blob or ac.stamp(cfg, {
+            "sheet": target.id, "frames": frames, "source": str(source),
             "sprite": fields}))
     return Packed(target=target, fields=fields, frames=frames, paths=paths, box=box,
-                  layout=layout, margins=worst, notes=notes, source=directory)
+                  layout=layout, margins=worst, notes=notes, source=source)
+
+
+def gather_sequence(seq, target: Target, *, preview: bool = False, any_config: bool = False):
+    """(images, px_per_tile) for one target of a C.21 sequence: frame k is the sequence's
+    ONE direction out of unique config k's own cache directory.
+
+    Every directory is verified against ITS OWN config (check_pass_hash, the same refusal a
+    standing pack gets), so a sheet of 72 frames is 72 provenance checks and a stale frame
+    anywhere in it stops the pack. Missing frames are collected and reported together -- one
+    at a time would be 72 runs to find out you have not rendered the sequence.
+    """
+    from PIL import Image
+    name = f"frame_{seq.direction:03d}.png"
+    missing, found = [], []
+    for k, cfg in enumerate(seq.configs):
+        directory = pass_dir(cfg, target.pass_name,
+                             sequence_samples(cfg, target.pass_name, preview))
+        if not (directory / name).is_file():
+            missing.append(k)
+            continue
+        found.append((k, cfg, directory))
+    if missing:
+        raise PackError(
+            f"{target.id}: {len(missing)} of {len(seq.configs)} sequence frames have no "
+            f"{target.pass_name} render at direction {seq.direction} (unique frames "
+            f"{missing[:8]}{'...' if len(missing) > 8 else ''}).\n"
+            f"  render them first: uv run --directory tools python render/art.py "
+            f"--config <this config> --sequence{' --preview' if preview else ''}")
+    images, ppt = [], None
+    for k, cfg, directory in found:
+        blob = check_pass_hash(cfg, target, directory, any_config=any_config)
+        key = PASS_PPT.get(target.pass_name, "body_px_per_tile")
+        got = ((blob or {}).get("derived") or ac.derived(cfg)).get(key) or ac.derived(cfg)[key]
+        if ppt is not None and abs(got - ppt) > 1e-9:
+            raise PackError(f"{target.id}: sequence frame {k} renders at {got} px/tile, the "
+                            f"rest at {ppt}; one sheet needs one scale")
+        ppt = got
+        images.append((k, Image.open(directory / name).convert("RGBA")))
+    return images, ppt
+
+
+def pack_sequence(seq, out_root: pathlib.Path, *, mod_name: str, targets=None,
+                  preview: bool = False, any_config: bool = False, **kw) -> list:
+    """Every target of a C.21 sequence -> Packed list. `kw` goes to pack_images.
+
+    Stamped with the SEQUENCE's provenance (sequence.Sequence.provenance), not with one
+    frame's config: the sheet's config_hash is the digest, the same id the manifest and the
+    Lua carry, and the samples it was rendered at are written down."""
+    frame_sequence = seq.frame_sequence()
+    out = []
+    for target in targets or sequence_targets(seq.name):
+        images, ppt = gather_sequence(seq, target, preview=preview, any_config=any_config)
+        blob = {"config_hash": seq.digest, "derived": ac.derived(seq.configs[0]),
+                "sequence": seq.provenance(sequence_samples_of(seq, preview))}
+        out.append(pack_images(seq.configs[0], target, images, ppt, out_root,
+                               mod_name=mod_name, source=f"sequence {seq.name} {seq.digest}",
+                               frame_sequence=frame_sequence, stamp_blob=blob, **kw))
+    return out
+
+
+def sequence_samples_of(seq, preview: bool) -> dict:
+    """pass -> the samples its frames were rendered at, for the record."""
+    return {t.pass_name: sequence_samples(seq.configs[0], t.pass_name, preview)
+            for t in SEQUENCE_TARGETS}
 
 
 def blacken(img, floor: int):
@@ -856,7 +974,8 @@ def clear_list(slots) -> list[str]:
     return [s for s in STOCK_ART_SLOTS if s not in slots]
 
 
-def manifest_blob(cfg, packed: list[Packed], *, mod_name: str) -> dict:
+def manifest_blob(cfg, packed: list[Packed], *, mod_name: str, seq=None,
+                  samples: dict | None = None) -> dict:
     """The JSON the linter eats. `sprites` entries are the SAME dicts plus an `id`.
 
     `mod_roots` is relative to the manifest, so the tree lints in place with no flags --
@@ -864,17 +983,27 @@ def manifest_blob(cfg, packed: list[Packed], *, mod_name: str) -> dict:
     fills roots the CLI has not already claimed).
     """
     slots = slot_map(packed)
-    return {
+    blob = {
         "version": MANIFEST_VERSION,
         "generated_by": "tools/render/pack.py",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "config_hash": ac.config_hash(cfg),
+        # A sequence has no one config: its id is the digest over every frame's hash.
+        "config_hash": seq.digest if seq is not None else ac.config_hash(cfg),
         "mod": mod_name,
         "mod_roots": {mod_name: ".."},
         "slots": slots,
         "clear": clear_list(slots),
         "sprites": [dict(id=p.target.id, **p.fields) for p in packed],
     }
+    if seq is not None:
+        blob["sequence"] = {"name": seq.name, "direction": seq.direction,
+                            "played": len(seq.order), "unique": len(seq.configs),
+                            "samples": samples or {}, "frame_hashes": list(seq.hashes)}
+    return blob
+
+
+#: Numbers per line before a numeric list wraps. 20 three-digit indices is ~100 columns.
+LUA_NUMBERS_PER_LINE = 20
 
 
 def lua_value(value, indent: str) -> str:
@@ -890,7 +1019,14 @@ def lua_value(value, indent: str) -> str:
         return text[:-2] if text.endswith(".0") else text
     if isinstance(value, (list, tuple)):
         if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value):
-            return "{" + ", ".join(lua_value(v, indent) for v in value) + "}"
+            if len(value) <= LUA_NUMBERS_PER_LINE:
+                return "{" + ", ".join(lua_value(v, indent) for v in value) + "}"
+            # A 117-frame frame_sequence on one line is 450 characters against luacheck's
+            # 120, and the generated file is linted like any other.
+            inner = indent + "  "
+            rows = [", ".join(lua_value(v, inner) for v in value[i:i + LUA_NUMBERS_PER_LINE])
+                    for i in range(0, len(value), LUA_NUMBERS_PER_LINE)]
+            return "{\n" + ",\n".join(inner + r for r in rows) + "\n" + indent + "}"
         inner = indent + "  "
         body = ",\n".join(inner + lua_value(v, inner) for v in value)
         return "{\n" + body + "\n" + indent + "}"
@@ -905,7 +1041,7 @@ def lua_table(fields: dict, indent: str = "") -> str:
     return indent + "{\n" + body + "\n" + indent + "}"
 
 
-def lua_blob(cfg, packed: list[Packed]) -> str:
+def lua_blob(cfg, packed: list[Packed], *, seq=None, origin: str = "render/jamaltron.toml") -> str:
     """The generated data-stage module. Same dicts, Lua syntax, nothing added.
 
     Emits the sprites by id AND assembled into their graphics_set slots, sharing the same
@@ -915,18 +1051,32 @@ def lua_blob(cfg, packed: list[Packed]) -> str:
     the assignment in entity.lua, where a wrong one is a real finding.
     """
     slots = slot_map(packed)
-    by_id = {p.target.id: p for p in packed}
+    ident = seq.digest if seq is not None else ac.config_hash(cfg)
+    what = ("%d animation frames'" % max(len(p.frames) for p in packed) if seq is not None
+            else "%d rotations'" % max(len(p.frames) for p in packed))
     lines = [
-        "-- GENERATED by tools/render/pack.py from render/jamaltron.toml. DO NOT EDIT.",
+        "-- GENERATED by tools/render/pack.py from %s. DO NOT EDIT." % origin,
         "--",
         "-- Every number here was measured off the rendered frames: the frame box is the",
-        "-- union of all %d rotations' alpha, and the shift is the distance from the render"
-        % max(len(p.frames) for p in packed),
+        "-- union of all %s alpha, and the shift is the distance from the render" % what,
         "-- canvas's own origin pixel to the cropped frame's centre. The JSON manifest",
         "-- beside the sheets is these same tables plus an id, which is what",
         "-- tools/lint_sprites.py checks against the real PNGs.",
         "--",
-        "-- config %s   packed %s" % (ac.config_hash(cfg), time.strftime("%Y-%m-%d %H:%M:%S")),
+    ]
+    if seq is not None:
+        lines += [
+            "-- SEQUENCE %s (C.21): %d played frames at 24 fps out of %d unique renders, one"
+            % (seq.name, len(seq.order), len(seq.configs)),
+            "-- direction (%d). frame_sequence is the order they play in; a repeated cell is"
+            % seq.direction,
+            "-- loaded once. config_hash below is the digest over every frame's own config",
+            "-- hash, so it moves if any frame's knobs do. Play it at animation_speed 0.4",
+            "-- (24 fps against the engine's 60 ticks).",
+            "--",
+        ]
+    lines += [
+        "-- config %s   packed %s" % (ident, time.strftime("%Y-%m-%d %H:%M:%S")),
         "",
         "local sprites = {}",
         "",
@@ -971,7 +1121,7 @@ def lua_blob(cfg, packed: list[Packed]) -> str:
         "",
         "return",
         "{",
-        '  config_hash = "%s",' % ac.config_hash(cfg),
+        '  config_hash = "%s",' % ident,
         "  sprites = sprites,",
         "  slots = slots,",
         "  clear = clear,",
@@ -1134,18 +1284,45 @@ def main(argv=None):
             return 2
         overrides[name] = value
 
+    # A config with a [sequence] (render/beached.toml) packs THAT: one sheet per pass,
+    # gathered frame by frame across per-config cache dirs. See pack_sequence.
+    from render import sequence as sequence_mod
+    try:
+        table = ac.load_sequence(args.config)
+        seq = sequence_mod.parse(table, cfg) if table is not None else None
+    except ac.ConfigError as exc:
+        sys.stderr.write("pack.py: %s\n" % exc)
+        return 2
+    if seq is not None and overrides:
+        sys.stderr.write("pack.py: --frames-dir does not apply to a sequence; its frames "
+                         "come from one cache dir per frame config\n")
+        return 2
+    catalogue = sequence_targets(seq.name) if seq is not None else TARGETS
+
     wanted = set(args.targets.split(",")) if args.targets else None
-    targets = [t for t in TARGETS if wanted is None or t.id in wanted]
+    targets = [t for t in catalogue if wanted is None or t.id in wanted]
     if wanted and not targets:
         sys.stderr.write(f"pack.py: no target matches {sorted(wanted)}; known: "
-                         f"{', '.join(t.id for t in TARGETS)}\n")
+                         f"{', '.join(t.id for t in catalogue)}\n")
         return 2
 
-    print("jamaltron pack  config %s  -> %s" % (ac.config_hash(cfg),
-                                                _relative(root)))
+    if seq is not None:
+        print("jamaltron pack  sequence %s %s (%d played, %d unique, direction %d)  -> %s"
+              % (seq.name, seq.digest, len(seq.order), len(seq.configs), seq.direction,
+                 _relative(root)))
+    else:
+        print("jamaltron pack  config %s  -> %s" % (ac.config_hash(cfg), _relative(root)))
     packed: list[Packed] = []
     try:
-        for target in targets:
+        if seq is not None:
+            packed = pack_sequence(seq, root, mod_name=mod_name, targets=targets,
+                                   preview=args.preview, any_config=args.any_config,
+                                   line_length=args.line_length, pad=args.pad,
+                                   max_side=args.max_side,
+                                   allow_clipped=args.allow_clipped)
+            for item in packed:
+                report(item)
+        for target in (targets if seq is None else ()):
             item = pack_target(cfg, target, root, mod_name=mod_name,
                                line_length=args.line_length, pad=args.pad,
                                max_side=args.max_side, preview=args.preview,
@@ -1155,16 +1332,7 @@ def main(argv=None):
             if item is None:
                 continue
             packed.append(item)
-            geometry = item.fields
-            print("  %-10s %2d frames  %3dx%-3d  ll %-2d  shift %+.4f,%+.4f tiles "
-                  "(by_pixel %+.1f,%+.1f)  %s"
-                  % (target.id, len(item.frames), geometry["width"], geometry["height"],
-                     geometry["line_length"], geometry["shift"][0], geometry["shift"][1],
-                     geometry["shift"][0] * 32, geometry["shift"][1] * 32,
-                     ", ".join("%dx%d" % item.layout.sheet_size(i)
-                               for i in range(item.layout.file_count))))
-            for note in item.notes:
-                print("       NOTE " + note)
+            report(item)
     except PackError as exc:
         sys.stderr.write("pack.py: %s\n" % exc)
         return 1
@@ -1182,6 +1350,12 @@ def main(argv=None):
         print("  WARN the rotating sheets disagree on direction_count (%s). The body and "
               "its shadow would turn at different rates; pack them from the same render."
               % ", ".join(str(n) for n in sorted(rotating)))
+    if seq is not None and args.preview:
+        # The standing path's preview guard is a coarse direction_count, which an animation
+        # never has -- so without this a preview-samples flop promotes in silence.
+        print("  WARN packed at PREVIEW samples (%s): fine to look at, not the shipping "
+              "sheet. Drop --preview (after art.py --sequence without it) to ship"
+              % ", ".join("%s %d" % kv for kv in sequence_samples_of(seq, True).items()))
     coarse = sorted(n for n in rotating if n < cfg["rotations.count"])
     if coarse:
         print("  WARN direction_count %s against rotations.count %d: this is a PREVIEW "
@@ -1189,12 +1363,15 @@ def main(argv=None):
               % (", ".join(str(n) for n in coarse), cfg["rotations.count"]))
 
     graphics = root / GRAPHICS_DIR
-    manifest_path = graphics / MANIFEST_NAME
-    manifest_path.write_text(json.dumps(manifest_blob(cfg, packed, mod_name=mod_name),
-                                        indent=2) + "\n")
-    lua_path = root / PROTOTYPES_DIR / LUA_NAME
+    manifest_name, lua_name = (sequence_outputs(seq.name) if seq is not None
+                               else (MANIFEST_NAME, LUA_NAME))
+    manifest_path = graphics / manifest_name
+    samples = sequence_samples_of(seq, args.preview) if seq is not None else None
+    manifest_path.write_text(json.dumps(manifest_blob(cfg, packed, mod_name=mod_name, seq=seq,
+                                                      samples=samples), indent=2) + "\n")
+    lua_path = root / PROTOTYPES_DIR / lua_name
     lua_path.parent.mkdir(parents=True, exist_ok=True)
-    lua_path.write_text(lua_blob(cfg, packed))
+    lua_path.write_text(lua_blob(cfg, packed, seq=seq, origin=config_label(args.config)))
 
     sheet_paths = [p for item in packed for p in item.paths]
     total = sum(p.stat().st_size for p in sheet_paths)
@@ -1225,6 +1402,37 @@ def main(argv=None):
     for line in text.splitlines():
         print("  " + line)
     return 0 if ok else 1
+
+
+def config_label(path) -> str:
+    """How the generated Lua names the config it came from: relative to tools/ (where every
+    documented command runs, so `render/beached.toml`), else to the repo, else as given."""
+    p = pathlib.Path(path).resolve() if path else ac.DEFAULT_CONFIG_PATH
+    for root in (REPO / "tools", REPO):
+        try:
+            return str(p.relative_to(root))
+        except ValueError:
+            continue
+    return str(p)
+
+
+def report(item: Packed) -> None:
+    """One packed sheet as a line of stdout, plus its notes."""
+    geometry = item.fields
+    count = geometry.get("direction_count") or geometry.get("frame_count") or 1
+    played = geometry.get("frame_sequence")
+    print("  %-10s %2d frames%s  %3dx%-3d  ll %-2d  shift %+.4f,%+.4f tiles "
+          "(by_pixel %+.1f,%+.1f)  %s"
+          % (item.target.id, len(item.frames),
+             " (%d played)" % len(played) if played else "",
+             geometry["width"], geometry["height"],
+             geometry["line_length"], geometry["shift"][0], geometry["shift"][1],
+             geometry["shift"][0] * 32, geometry["shift"][1] * 32,
+             ", ".join("%dx%d" % item.layout.sheet_size(i)
+                       for i in range(item.layout.file_count))))
+    assert count >= 1
+    for note in item.notes:
+        print("       NOTE " + note)
 
 
 def _relative(path: pathlib.Path) -> str:

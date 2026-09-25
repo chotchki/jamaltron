@@ -345,7 +345,7 @@ def test_broadside_is_three_directions_around_east():
     assert tune.view_of({"view": "sideways"}) == "wheel", "unknown view falls back"
 
 
-def test_a_posed_quote_names_the_hash_of_the_picture_it_is_showing():
+def test_a_posed_quote_names_the_hash_of_the_picture_it_is_showing(tmp_path):
     """This is what landing the knobs bought. The pose used to live in a baked .blend that
     did not exist until a render had run, so the header could only say "pending bake" -- a
     tool refusing to guess at provenance. Now the pose IS the config, both hashes are
@@ -362,9 +362,12 @@ def test_a_posed_quote_names_the_hash_of_the_picture_it_is_showing():
     assert posed["paste_hash"] != rest["paste_hash"]
     assert posed["tuner_hash"] != rest["tuner_hash"]
     # and the paste hash is exactly the hash of the block over the file it lands in, which
-    # is the whole promise of the copy-TOML button
-    full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(posed["toml"])), env={})
-    assert ac.config_hash(full) == posed["paste_hash"]
+    # is the whole promise of the copy-TOML button. For a POSE that file is beached.toml
+    # (C.24) -- pasted over the standing file it would move the shipped shark.
+    assert posed["toml_file"] == "render/beached.toml"
+    assert ac.config_hash(_paste_into_overlay(tmp_path, posed["toml"])) == posed["paste_hash"]
+    full = ac.resolve(dict(ac.unflatten(cfg), **tomllib.loads(rest["toml"])), env={})
+    assert ac.config_hash(full) == rest["paste_hash"]
 
 
 def test_a_posed_quote_warns_that_the_rest_pivot_is_unverified():
@@ -653,7 +656,10 @@ def test_every_knob_box_reaches_the_export_and_the_page():
         seeded = ac.resolve(ac.unflatten({key: True}), env={})
         assert tune.box_of(seeded, {}, name) is True
         assert tune.box_of(seeded, {name: False}, name) is False
-        assert tune.box_of(cfg, {}, name) is False
+        unseeded = ac.resolve(ac.unflatten({key: False}), env={})
+        assert tune.box_of(unseeded, {}, name) is False
+        # and the committed config's own value, whatever it is (ground is ON since C.27)
+        assert tune.box_of(cfg, {}, name) is cfg[key]
         boot = json.loads(tune.page(tune.Tuner(seeded, seeded, jobs=1))
                           .split("const BOOT = ", 1)[1].split(";\n", 1)[0])
         assert boot["opts"][name] is True, name
@@ -707,3 +713,91 @@ def test_a_set_pose_boots_the_page_on_that_pose_and_reaches_the_export():
     q = tuner.quote(tune.values_of(committed), {}, boot["pose"])
     assert 'action = "SWIM_FAST"' in q["toml"] and "frame = 12" in q["toml"]
     assert "pose_gain = 1.5" in q["toml"]
+
+
+# ---------------------------------------------------------- C.24: which file the export is for
+
+
+def _paste_into_overlay(tmp_path, block: str) -> dict:
+    """Paste an overlay block into a copy of render/beached.toml the way the header says to --
+    REPLACE the keys -- and resolve the result, [sequence] and all."""
+    import tomllib
+    own = tomllib.loads(ac.BEACHED_CONFIG_PATH.read_text())
+    own.pop("sequence", None)
+    own["base"] = str(ac.DEFAULT_CONFIG_PATH)            # absolute: the copy lives in tmp
+    flat = ac.flatten({k: v for k, v in own.items() if k != "base"})
+    flat.update(ac.flatten(tomllib.loads(block)))
+    lines = ['base = "%s"' % own["base"]]
+    for key, value in sorted(ac.unflatten(flat).items()):
+        lines.append("[%s]" % key)
+        lines += ["%s = %s" % (leaf, tune._toml_scalar(v)) for leaf, v in value.items()]
+    path = tmp_path / "beached.toml"
+    path.write_text("\n".join(lines) + "\n")
+    return ac.load(path, env={})
+
+
+def test_the_overlay_export_round_trips_and_carries_no_shared_knob(tmp_path):
+    """Opened on beached.toml, the block is the overlay's own keys plus what moved -- and
+    pasted back it hashes to the header's paste hash, with scale/girth/pivot nowhere in it."""
+    import tomllib
+    cfg = ac.load(ac.BEACHED_CONFIG_PATH, env={})
+    tuner = tune.Tuner(cfg, cfg, 1, config_path=ac.BEACHED_CONFIG_PATH)
+    values = dict(tune.values_of(cfg), phase_lock=0.7)
+    q = tuner.quote(values, {}, dict(tune.pose_of(cfg), frame=12))
+    assert q["toml_file"] == "render/beached.toml"
+    assert "REPLACE these keys in render/beached.toml" in q["toml"]
+    body = ac.flatten(tomllib.loads(q["toml"]))
+    assert body["model.phase_lock"] == 0.7 and body["model.frame"] == 12
+    for shared in ("model.scale", "model.girth", "model.pivot", "model.offset"):
+        assert shared not in body, shared
+    assert "SHARED" not in q["toml"]
+    assert ac.config_hash(_paste_into_overlay(tmp_path, q["toml"])) == q["paste_hash"]
+
+
+def test_a_shared_knob_moved_on_the_flop_page_is_exported_and_flagged(tmp_path):
+    cfg = ac.load(ac.BEACHED_CONFIG_PATH, env={})
+    tuner = tune.Tuner(cfg, cfg, 1, config_path=ac.BEACHED_CONFIG_PATH)
+    q = tuner.quote(dict(tune.values_of(cfg), scale=0.9), {}, tune.pose_of(cfg))
+    assert "scale = 0.9" in q["toml"]
+    assert "NOTE model.scale: SHARED knob" in q["toml"]
+    assert ac.config_hash(_paste_into_overlay(tmp_path, q["toml"])) == q["paste_hash"]
+
+
+def test_a_pose_tuned_off_the_standing_file_is_exported_for_beached_toml(tmp_path):
+    """THE C.24 BUG: the flop preset on the standing page used to say 'REPLACE these tables in
+    render/jamaltron.toml' -- pasting it moved the shipped standing shark. Now a posed block
+    names beached.toml, is overlay-shaped, and round-trips there; a rest block still names
+    jamaltron.toml and is the whole-file block."""
+    standing = ac.load(env={})
+    tuner = tune.Tuner(standing, standing, 1)
+    values = dict(tune.values_of(standing), **tune.FLOP_PRESET["values"])
+    q = tuner.quote(values, tune.FLOP_PRESET["opts"], tune.FLOP_PRESET["pose"])
+    assert q["toml_file"] == "render/beached.toml"
+    assert "jamaltron.toml it would move the STANDING shark" in q["toml"]
+    assert "pivot" not in q["toml"] and "girth" not in q["toml"]
+    assert ac.config_hash(_paste_into_overlay(tmp_path, q["toml"])) == q["paste_hash"]
+    rest = tuner.quote(tune.values_of(standing), {}, None)
+    assert rest["toml_file"] == "render/jamaltron.toml"
+    assert "REPLACE these tables in render/jamaltron.toml" in rest["toml"]
+    assert "pivot = " in rest["toml"]
+
+
+def test_the_page_names_the_file_the_block_is_for():
+    page = tune.page(tune.Tuner(ac.load(env={}), ac.load(env={}), 1))
+    assert 'id="tomlfile"' in page
+    assert page.count('$("tomlfile").textContent') == 2      # quote AND render both paint it
+
+
+def test_a_pose_off_some_other_whole_file_is_not_redirected(tmp_path):
+    """The redirect diffs against beached.toml's BASE. Off any other whole file that diff
+    would leave out every knob the two disagree on and the header's paste hash would lie --
+    so there it stays a whole-file block for the file it was opened on."""
+    other = tmp_path / "other.toml"
+    other.write_text(ac.DEFAULT_CONFIG_PATH.read_text().replace("scale = 0.81", "scale = 0.9"))
+    cfg = ac.load(other, env={})
+    tuner = tune.Tuner(cfg, cfg, 1, config_path=other)
+    assert tuner.flop is None
+    values = dict(tune.values_of(cfg), **tune.FLOP_PRESET["values"])
+    q = tuner.quote(values, tune.FLOP_PRESET["opts"], tune.FLOP_PRESET["pose"])
+    assert q["toml_file"] == "render/other.toml"
+    assert "REPLACE these tables in render/other.toml" in q["toml"] and "scale = 0.9" in q["toml"]

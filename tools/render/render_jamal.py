@@ -1041,7 +1041,8 @@ def main():
     # shadow pass's catcher sits at z=0 and quietly slices whatever is under it. The BOUNCE
     # cannot fix it (its floor is the lift, not the body). For a POSED body the fix is
     # model.ground_contact, which re-measures every frame; offset z is one number and a
-    # thrashing body's lowest point is not. With contact on this cannot fire.
+    # thrashing body's lowest point is not. The standing shark ships with contact on too
+    # (C.27). With contact on this cannot fire.
     if box is not None and box[2][0] < -0.01:
         print("WARN the %s body reaches %.3f tiles BELOW the ground plane (z=0) at this "
               "roll. The shadow catcher cuts through him there and in game he is buried to "
@@ -1050,8 +1051,9 @@ def main():
                  "Set model.ground_contact = true -- a fixed model.offset z (now %.2f) cannot "
                  "follow a body whose lowest point moves every frame" % cfg["model.offset"][2]
                  if posed else
-                 "Raising model.offset z (now %.2f) by that much fixes it AND re-dates the "
-                 "shipped sheets -- that is C.27's call, not this warning's"
+                 "The shipped standing config fixes it with model.ground_contact = true (C.27), "
+                 "which also moves the leg mounts: mount_lift in shared.lua has to follow "
+                 "whatever raise this needs (offset z is now %.2f)"
                  % cfg["model.offset"][2]))
 
     print("JAMALTRON_RESULT " + json.dumps({

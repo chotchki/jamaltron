@@ -623,8 +623,8 @@ def main(argv=None) -> int:
             if path.is_file():
                 print("  STALE %s -- run gen_lines.py" % path.relative_to(REPO))
             else:
-                print("  NOT GENERATED %s -- generating it IS the B.5 id freeze, chotchki's "
-                      "call (character/REVIEW.md)" % path.relative_to(REPO))
+                print("  NOT GENERATED %s -- run gen_lines.py (generating is not the id "
+                      "freeze; that is PLAN F.6, after playtesting)" % path.relative_to(REPO))
         return 1 if stale else 0
     for path, text in ((LUA_OUT, lua), (CFG_OUT, cfg)):
         path.parent.mkdir(parents=True, exist_ok=True)

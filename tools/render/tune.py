@@ -85,7 +85,8 @@ test), at roll 85 / SWIM_FAST / bounce 0.3 / broadside:
     every one of those 16 came back a DIFFERENT sheet -- no slider on this page is decorative.
   * the export round-trips: the block the server hands you, pasted into the shipped TOML,
     re-hashes to the `paste` hash the header showed (460805dd6aef), and the shipped file with
-    nothing pasted still hashes 83d6be794998.
+    nothing pasted still hashes to what the sheets carry (83d6be794998 then; bd71cb367d90
+    since C.27 put his belly on the floor).
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
@@ -228,6 +229,54 @@ TOML_KEYS = ("model.pivot", "model.scale", "model.girth", "model.offset", "model
 assert {k.key for k in KNOBS} <= set(TOML_KEYS), "a slider is missing from TOML_KEYS"
 assert set(TOML_KEYS) <= set(ac.SCHEMA), "the export names a knob the schema does not have"
 
+#: The knobs that are the FLOP'S to set (C.24). An overlay export that carries anything else
+#: is overriding a SHARED knob for the beached sheet alone -- legal, sometimes the point, and
+#: never silent: the block says which ones, because a scale tuned on the flop page and pasted
+#: into beached.toml makes the beached shark a different size from the standing one.
+FLOP_KEYS = ("model.action", "model.pose_gain", "model.phase_lock", "model.frame",
+             "model.reparent_head", "model.ground_contact", "model.rotation",
+             "bounce.height", "bounce.phase", "bounce.gravity")
+assert set(FLOP_KEYS) <= set(TOML_KEYS)
+
+
+@dataclass(frozen=True)
+class ExportTarget:
+    """The file an export is FOR (C.24). A whole file (`base` None) gets every TOML_KEYS
+    line; an OVERLAY gets only its own keys plus whatever differs from `base`, so a paste
+    never copies a shared knob into the overlay by accident."""
+
+    name: str
+    base: dict | None = None
+    own: frozenset = frozenset()
+
+
+#: What an export targets when nothing says otherwise: the standing shark's own file.
+STANDING = ExportTarget("render/jamaltron.toml")
+
+
+def export_target(path=None) -> ExportTarget:
+    """The ExportTarget for a config file: whole, or an overlay on its base."""
+    p = pathlib.Path(path or ac.DEFAULT_CONFIG_PATH)
+    over = ac.overlay_of(p)
+    if over is None:
+        return ExportTarget("render/" + p.name)
+    base, own = over
+    return ExportTarget("render/" + p.name, base, frozenset(own))
+
+
+def flop_target(config_path=None) -> ExportTarget | None:
+    """Where a POSED export off a whole file belongs -- render/beached.toml, diffed against
+    ITS base and carrying every key it already owns, so the paste replaces them rather than
+    leaving yesterday's flop underneath. None unless `config_path` IS that base: a posed
+    block off some other whole file diffed against beached's base would leave out every knob
+    the two files disagree on, and the header's paste hash would be a lie."""
+    layers = ac.read_layers(ac.BEACHED_CONFIG_PATH)
+    here = pathlib.Path(config_path or ac.DEFAULT_CONFIG_PATH).resolve()
+    if len(layers) < 2 or layers[-2][0] != here:
+        return None
+    base, own = ac.overlay_of(ac.BEACHED_CONFIG_PATH)
+    return ExportTarget("render/" + ac.BEACHED_CONFIG_PATH.name, base, frozenset(own))
+
 #: Render options the page can set. All three are real knobs, which is why they move the
 #: tuner hash: rotations -> compare.rotations, res -> render.resolution_px (0 = native
 #: 384 px), shadow -> compare.show_shadow plus whether the Cycles pass runs at all.
@@ -279,7 +328,8 @@ DEFAULT_POSE = {"clip": pose.REST, "frame": 1, "gain": 1.0, "stride": 2}
 #: WHY A BUTTON AND NOT THE BOOT STATE. The ask was a roll slider "defaulted to 85", and the
 #: page cannot boot there: it opens on the COMMITTED config, which is the standing shark the
 #: shipped sprites came off, and that is load bearing twice over -- the header's paste hash
-#: reads 83d6be794998 on arrival, which is the live proof that nothing about the flop has
+#: reads the shipped sheets' own hash on arrival (bd71cb367d90 since C.27), which is the live
+#: proof that nothing about the flop has
 #: touched the art that ships, and `reset to committed` has something to mean. Roll 85 with
 #: no clip selected is also a pose nobody wants: a STANDING shark lying on his side.
 #:
@@ -602,7 +652,8 @@ def _toml_scalar(v) -> str:
 
 
 def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None,
-               tuner_hash: str = "") -> str:
+               tuner_hash: str = "", target: ExportTarget | None = None,
+               flop: ExportTarget | None = None) -> str:
     """The lines to paste into render/jamaltron.toml. Nothing else, no reformatting of
     the file's comments, and NEVER `model.blend` -- that path is machine-local and
     gitignored, and pasting it would break the config for everyone else.
@@ -621,8 +672,21 @@ def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None
     job each: the pose state is what `cfg` was posed FROM (so the block can say what clip
     this is in words), and the tuner hash rides in a comment when the picture on screen was
     rendered at tuner-only options. Neither is a knob any more -- the pose is in `cfg`.
+
+    WHICH FILE (C.24). `target` is the file the tuner was opened on; `flop` is where a posed
+    block goes when that file is the standing shark. A POSE pasted into jamaltron.toml moves
+    the shipped standing sheets, which is never what tuning a flop means -- so a posed block
+    off the standing file is written for render/beached.toml instead, as an overlay block.
+    With neither given it is the whole-file block, as it always was.
     """
     p = normalize_pose(p)
+    target = origin = target or STANDING
+    redirected = target.base is None and flop is not None and cfg["model.action"] != pose.REST
+    if redirected:
+        target = flop
+    keys = TOML_KEYS
+    if target.base is not None:
+        keys = tuple(k for k in TOML_KEYS if k in target.own or cfg[k] != target.base[k])
     clip = pose.clip_of(cfg["model.action"])
     head = ["# tuned in render/tune.py %s -- config %s"
             % (time.strftime("%Y-%m-%d %H:%M"), paste_hash)]
@@ -630,12 +694,25 @@ def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None
         head.append("# %s (%s), frame %d of %d-%d @ %d fps (%.2f s cycle), gain %s"
                     % (clip.id, clip.action, cfg["model.frame"], clip.lo, clip.hi, pose.FPS,
                        clip.seconds, _num(cfg["model.pose_gain"])))
-    head.append("# REPLACE these tables in render/jamaltron.toml, or just these keys inside "
-                "them. Appending is a TOML error (model declared twice).")
+    if target.base is None:
+        head.append("# REPLACE these tables in %s, or just these keys inside them. Appending "
+                    "is a TOML error (model declared twice)." % target.name)
+    else:
+        head.append("# REPLACE these keys in %s. It is an OVERLAY: only what it owns and what "
+                    "differs from its base is here." % target.name)
+        if redirected:
+            head.append("# A POSE: pasted into %s it would move the STANDING shark the "
+                        "shipped sheets came off." % origin.name)
+        shared = [k for k in keys if k not in FLOP_KEYS and k not in target.own]
+        if shared:
+            head.append("# NOTE %s: SHARED knob%s, overridden here for the beached sheet "
+                        "ALONE. Put %s in jamaltron.toml unless that split is the point."
+                        % (", ".join(shared), "s" if len(shared) > 1 else "",
+                           "them" if len(shared) > 1 else "it"))
     if note:
         head.append("# " + note)
     table = None
-    for key in TOML_KEYS:
+    for key in keys:
         section, leaf = key.split(".", 1)
         if section != table:
             head.append("[%s]" % section)
@@ -654,10 +731,17 @@ def toml_block(cfg: dict, paste_hash: str, note: str = "", p: dict | None = None
 class Tuner:
     """Render state for one server. One render at a time, latest values win."""
 
-    def __init__(self, committed: dict, start: dict, jobs: int, note: str = ""):
+    def __init__(self, committed: dict, start: dict, jobs: int, note: str = "",
+                 config_path=None):
         self.committed = committed
         self.start = start
         self.jobs = jobs
+        #: C.24: which file the export is for, and where a pose goes when that file is the
+        #: standing shark.
+        #: The diff base is beached.toml's base FILE as written, not `committed`: a --set
+        #: pose is in committed, and diffing against it would drop the keys the paste needs.
+        self.target = export_target(config_path)
+        self.flop = flop_target(config_path) if self.target.base is None else None
         #: Rides in the exported TOML header. Non-empty when `--set` moved a knob no slider
         #: owns: that knob IS in every render and both hashes, and it is NOT in the
         #: exported lines, so the export has to say so or the paste silently loses it.
@@ -706,7 +790,10 @@ class Tuner:
                          "body_resolution_px", "body_px_per_tile",
                          "bounce_lift_tiles", "bounce_peak_tiles", "bounce_airtime_frames",
                          "bounce_cycle_frames", "bounce_lift_up_screen_tiles")},
-            "toml": toml_block(paste_cfg, paste_hash, self.note, p, tuner_hash),
+            "toml": toml_block(paste_cfg, paste_hash, self.note, p, tuner_hash,
+                               self.target, self.flop),
+            "toml_file": (self.flop.name if self.flop is not None and p["clip"] != pose.REST
+                          else self.target.name),
             "pose": pose_report(p),
             "view": {"name": view_of(opts), "frames": view_frames(cfg, opts)},
             "warnings": ac.warnings(cfg) + pose_warnings(cfg, p, self.committed),
@@ -1059,7 +1146,7 @@ pitch where you have them.">flop preset</button>
       </div>
     </div>
     <div class="panel">
-      <div class="dim">paste into render/jamaltron.toml</div>
+      <div class="dim">paste into <span id="tomlfile">render/jamaltron.toml</span></div>
       <pre id="toml">-</pre>
     </div>
   </div>
@@ -1374,6 +1461,7 @@ function quote() {
     $("htuner").textContent = q.tuner_hash;
     $("hpaste").textContent = q.paste_hash;
     $("toml").textContent = q.toml;
+    $("tomlfile").textContent = q.toml_file || "render/jamaltron.toml";
     showWarn(q.warnings || []);
   }).catch(() => {}).finally(() => {
     quoteBusy = false;
@@ -1412,7 +1500,8 @@ function render() {
 function apply(res, rtt) {
   if (res.tuner_hash) { $("htuner").textContent = res.tuner_hash;
                         $("hpaste").textContent = res.paste_hash;
-                        $("toml").textContent = res.toml; }
+                        $("toml").textContent = res.toml;
+                        $("tomlfile").textContent = res.toml_file || "render/jamaltron.toml"; }
   $("log").textContent = res.log || "-";
   showWarn(res.warnings || []);
   if (!res.ok) { fail(res.error || "render failed"); return; }
@@ -1555,7 +1644,7 @@ def main(argv=None):
               "point at it with --blend or $%s.\n     The server starts anyway and the page "
               "will show the error." % (blend, ac.BLEND_ENV))
 
-    tuner = Tuner(committed, start, max(1, args.jobs), note)
+    tuner = Tuner(committed, start, max(1, args.jobs), note, config_path=args.config)
     httpd = None
     for port in range(args.port, args.port + 12):
         try:

@@ -191,9 +191,9 @@
 
 ## Blocked on you
 
-### B.5 — the id freeze. One-way door.
+### B.5 — generated, and NOT frozen. The freeze moved to F.6.
 
-**The moment `tools/gen_lines.py` runs, every `ID` becomes a locale key, and a locale key is a public contract.** After that a cut leaves a permanent gap and the id is retired forever; renumbering is over (the file has already burned two renumbers and documents why the third is refused). **Every cut on this page is free today and permanent tomorrow** — D3, D5C, D8.3, D8.5, D9 — which is the entire reason this document exists before B.5 instead of after it.
+**chotchki, 2026-09-24: "I'm not freezing IDs until very late in this build since play testing will be a big determining factor."** That splits what this section used to treat as one event. `tools/gen_lines.py` has run and both files are committed, so every `ID` is a locale key IN THE REPO, and CI fails a stale pair from here on. But a locale key only becomes a public contract when it SHIPS: until F.5 the only things that hold an id are playtest saves (the per-entity fired-set and pending chains in `storage`), and breaking those is what playtest saves are for. So cuts and renumbers stay legal through playtesting; each one is an edit to `lines.md`, a regenerate and a commit. **The one-way door is now PLAN F.6, the last thing before release** — after it, a cut leaves a permanent gap and the id is retired forever. Every cut on this page (D3, D5C, D8.3, D8.5, D9) is still free until then.
 
 Also still open ahead of the freeze, and both are already in the file: the two over-cap rows (`flopping.38` at 61 and `jump_refused.19` at 64) stay untrimmed **by your B.4 Q8 ruling until you measure a real speech bubble at A.7**, and the `Game Note: ` prefix for the 12 `narration` rows renders in D.5, not in the `Line` column, with one interpretation call flagged (your angle brackets read as placeholder notation, not literal characters).
 
@@ -241,4 +241,4 @@ The two shark scales get compared in C.10's own compare mode (8 rotations beside
 
 **To apply the taste calls:** reply with one letter per decision — `D1 B, D2 A, D3 B, D4 B, D5 B, D6 A, D7 C, D8 wire 8.1+8.2 / cut 8.3+8.5, D9 B, D10 B` is the full set of recommendations above. Row edits go into `character/lines.md` only, no renumbering, cuts leave gaps, and every cross-reference and computed number in the header gets regenerated in the same pass.
 
-**Then, in order:** D10's new `platform` lines (the only decision that needs writing) → B.5 generates `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` and **the ids freeze** → A.7 measures a real bubble and settles the two over-cap rows → C.4 picks the scale off a render.
+**Then, in order:** D10's new `platform` lines (the only decision that needs writing) → regenerate `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` (they exist since 2026-09-24; every catalog edit regenerates them) → A.7 measures a real bubble and settles the two over-cap rows → playtesting → **F.6 freezes the ids**. (C.4's scale was picked off a render on 2026-09-20.)

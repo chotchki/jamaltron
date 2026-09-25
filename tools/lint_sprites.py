@@ -42,6 +42,11 @@ WHAT IT CHECKS (every one of these is a real Factorio failure mode)
                     the engine's default row width depends on which prototype field is
                     being loaded and a bare table does not say. See SpriteSpec.columns.
   file-count        `filenames` + `lines_per_file` do not add up to the frame count.
+  frame-sequence    a `frame_sequence` (the play order C.21's sequence sheets carry) that
+                    names a frame the sheet does not have - it is 1-BASED, so frame_count
+                    itself is legal and 0 is not - or plays past Factorio's 255-frame cap
+                    on an animation's played length. `--strict` also calls a cell that the
+                    sequence never plays `unused-frames`: it still ships in the PNG.
   unresolved-*      the declaration could not be read as literal numbers. Reported as
                     an ERROR, never skipped: a green run that checked nothing is worse
                     than a red one (same rule tools/lint.sh applies to its two gates).
@@ -535,6 +540,7 @@ class SpriteSpec:
     frame_count: int = 1
     variation_count: int = 1
     lines_per_file: int | None = None
+    frame_sequence: tuple[int, ...] | None = None
     unmodelled: tuple[str, ...] = ()
     bad_fields: tuple[tuple[str, str], ...] = ()
 
@@ -656,6 +662,22 @@ def spec_from_table(origin: str, table: dict[Any, Any]) -> SpriteSpec:
                 setattr(spec, attr, value)
     if table.get("lines_per_file") is not None:
         spec.lines_per_file = integer("lines_per_file", table["lines_per_file"])
+    if table.get("frame_sequence") is not None:
+        raw_seq = table["frame_sequence"]
+        dense = isinstance(raw_seq, dict) and all(
+            isinstance(k, int) and not isinstance(k, bool) for k in raw_seq) and sorted(
+            raw_seq) == list(range(1, len(raw_seq) + 1))
+        if isinstance(raw_seq, dict) and not dense:
+            # {[1]=1, [3]=2} has a HOLE the engine would see, and a string key is not a frame
+            # at all; compacting either would be the guess this gate refuses to make.
+            bad.append(("frame_sequence",
+                        f"not a dense 1..n list: keys {sorted(map(str, raw_seq))[:8]}"))
+        elif isinstance(raw_seq, dict):
+            played = [integer(f"frame_sequence[{k}]", raw_seq[k]) for k in sorted(raw_seq)]
+            if all(v is not None for v in played):
+                spec.frame_sequence = tuple(v for v in played if v is not None)
+        else:
+            bad.append(("frame_sequence", f"not a list of frame indices: {raw_seq!r}"))
 
     spec.unmodelled = tuple(k for k in UNMODELLED_FIELDS if table.get(k) not in (None, False))
     spec.bad_fields = tuple(bad)
@@ -707,6 +729,8 @@ def check_spec(spec: SpriteSpec, mods: ModPaths, *, strict: bool) -> list[Findin
         out.append(Finding(ERROR, "bad-geometry", spec.origin,
                            f"negative sheet offset x={spec.x} y={spec.y}"))
         return out
+    if spec.frame_sequence is not None:
+        out.extend(_check_frame_sequence(spec, strict=strict))
 
     for name in spec.filenames:
         if not name.lower().endswith(".png"):
@@ -762,6 +786,40 @@ def check_spec(spec: SpriteSpec, mods: ModPaths, *, strict: bool) -> list[Findin
         out.append(Finding(WARN, "line-length-unused", spec.origin,
                            f"line_length {spec.line_length} exceeds the {spec.slots} "
                            f"frame(s) declared, so a row can never fill"))
+    return out
+
+
+#: Factorio's cap on an animation's PLAYED length (AnimationFrameSequence, 2.1.17): "There
+#: is a limit for (actual) animation length of 255 frames."
+MAX_PLAYED_FRAMES = 255
+
+
+def _check_frame_sequence(spec: SpriteSpec, *, strict: bool) -> list[Finding]:
+    """The play order against the frames it plays. The sheet's own geometry is checked as
+    usual; this is only the list of indices on top of it."""
+    out: list[Finding] = []
+    played = spec.frame_sequence or ()
+    if not played:
+        out.append(Finding(ERROR, "frame-sequence", spec.origin,
+                           "frame_sequence is empty, so the animation plays nothing"))
+        return out
+    bad = [v for v in played if not 1 <= v <= spec.frame_count]
+    if bad:
+        out.append(Finding(ERROR, "frame-sequence", spec.origin,
+                           f"frame_sequence names frame(s) {sorted(set(bad))[:8]} against "
+                           f"frame_count {spec.frame_count}",
+                           ("frame_sequence is 1-BASED: 1..frame_count, so 0 is off the front "
+                            "and frame_count itself is the last frame",)))
+    if len(played) > MAX_PLAYED_FRAMES:
+        out.append(Finding(ERROR, "frame-sequence", spec.origin,
+                           f"frame_sequence plays {len(played)} frames; Factorio caps an "
+                           f"animation's played length at {MAX_PLAYED_FRAMES}"))
+    unplayed = sorted(set(range(1, spec.frame_count + 1)) - set(played))
+    if strict and unplayed:
+        out.append(Finding(WARN, "unused-frames", spec.origin,
+                           f"frame(s) {unplayed[:8]}{'...' if len(unplayed) > 8 else ''} are "
+                           f"in the sheet but frame_sequence never plays them",
+                           ("Factorio skips loading them, but they still ship in the PNG",)))
     return out
 
 

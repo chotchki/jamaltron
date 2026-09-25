@@ -99,11 +99,11 @@ MOUNT_SHRINK_LUA = pathlib.Path(__file__).resolve().parents[2] / "mod" / "jamalt
     / "prototypes" / "shared.lua"
 
 
-def mount_shrink(default: float = 1.0) -> float:
-    """The mod's own `mount_shrink`, or `default` when the prototype is unreadable.
+def _shared_number(name: str, default: float) -> float:
+    """A number out of shared.lua, or `default` when the prototype is unreadable.
 
     Never fatal: this module has to keep working with the mod tree missing (it is imported
-    by tests that build their own fixtures) and a missing ratio must degrade to stock's
+    by tests that build their own fixtures) and a missing number must degrade to stock's
     ring rather than stopping you looking at the shark.
     """
     import re
@@ -111,8 +111,20 @@ def mount_shrink(default: float = 1.0) -> float:
         text = MOUNT_SHRINK_LUA.read_text()
     except OSError:
         return default
-    found = re.search(r"^\s*mount_shrink\s*=\s*([0-9.]+)", text, re.M)
+    found = re.search(r"^\s*%s\s*=\s*(-?[0-9.]+)" % re.escape(name), text, re.M)
     return float(found.group(1)) if found else default
+
+
+def mount_shrink(default: float = 1.0) -> float:
+    """The mod's own `mount_shrink` (C.13), or `default` when it cannot be read."""
+    return _shared_number("mount_shrink", default)
+
+
+def mount_lift(default: float = 0.0) -> float:
+    """The mod's own `mount_lift` (C.27): tiles of screen offset every mount moves UP after
+    the shrink, because ground contact drew the standing body that much higher. Zero when
+    it cannot be read, which is stock's ring at stock's height."""
+    return _shared_number("mount_lift", default)
 
 
 # ------------------------------------------------------------------ pure layout math
@@ -201,7 +213,7 @@ def cell_tiles_needed(sprite_box, origin_xy, cell_px_per_tile: float,
     return max(0.0, need / cell_px_per_tile)
 
 
-def mount_markers(px_per_tile: float, shrink: float = 1.0):
+def mount_markers(px_per_tile: float, shrink: float = 1.0, lift: float = 0.0):
     """The eight leg mounts as (mount_px, ground_px) offsets from the entity origin.
 
     Mount is a screen offset: straight multiply. Ground is a world position on the
@@ -213,20 +225,23 @@ def mount_markers(px_per_tile: float, shrink: float = 1.0):
     deliberately untouched there -- that is where the feet land, and shrinking them too
     would give him a mincing stance instead of the splayed-from-a-harness look -- so they
     are untouched here, and the drawn legs splay the way the shipped ones do.
+
+    `lift` moves the MOUNTS up-screen by that many tiles, after the shrink, exactly as
+    entity.lua does (C.27). Feet again untouched: the legs just get that much longer.
     """
     out = []
     for (mx, my), (gx, gy) in LEG_MOUNTS:
-        mount = (mx * shrink * px_per_tile, my * shrink * px_per_tile)
+        mount = (mx * shrink * px_per_tile, (my * shrink - lift) * px_per_tile)
         # fc.project takes (east, north, up); a ground position's y is SOUTH.
         ground = fc.project(gx, -gy, 0.0, scale=fc.NOMINAL_PX_PER_TILE / px_per_tile)
         out.append((mount, ground))
     return out
 
 
-def mount_extents(px_per_tile: float, shrink: float = 1.0):
+def mount_extents(px_per_tile: float, shrink: float = 1.0, lift: float = 0.0):
     """(half_width_px, north_px, south_px) the mounts span. What the shark must cover."""
     xs = [m[0] * shrink * px_per_tile for (m, _) in LEG_MOUNTS]
-    ys = [m[1] * shrink * px_per_tile for (m, _) in LEG_MOUNTS]
+    ys = [(m[1] * shrink - lift) * px_per_tile for (m, _) in LEG_MOUNTS]
     return (max(abs(x) for x in xs), min(ys), max(ys))
 
 
@@ -408,7 +423,8 @@ def selfcheck_line(res: dict) -> str:
 
 
 def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
-                   alpha_threshold: int = MOUNT_OPAQUE_ALPHA, shrink: float = 1.0) -> int:
+                   alpha_threshold: int = MOUNT_OPAQUE_ALPHA, shrink: float = 1.0,
+                   lift: float = 0.0) -> int:
     """How many of the eight leg mounts land on opaque pixels of OUR shark.
 
     mount_selfcheck() pointed at the other row. Stock answers "do the mounts land on
@@ -425,7 +441,7 @@ def mount_coverage(frame, px_per_tile: float, origin_y: float = 0.5,
     alpha = frame.getchannel("A").load()
     ax, ay = cell_anchor(frame.width, origin_y)
     on = 0
-    for (mx, my), _ in mount_markers(px_per_tile, shrink):
+    for (mx, my), _ in mount_markers(px_per_tile, shrink, lift):
         ix, iy = int(round(ax + mx)), int(round(ay + my))
         if 0 <= ix < frame.width and 0 <= iy < frame.height:
             on += alpha[ix, iy] >= alpha_threshold
@@ -546,7 +562,8 @@ def cell_background(cell_px: int, rgb, px_per_tile: float, grid: bool,
 
 
 def draw_mounts(cell, px_per_tile: float, show_legs: bool, origin_y: float = 0.5,
-                mount_rgb=(255, 64, 190), leg_rgb=(255, 205, 70), shrink: float = 1.0):
+                mount_rgb=(255, 64, 190), leg_rgb=(255, 205, 70), shrink: float = 1.0,
+                lift: float = 0.0):
     """Leg mounts as crosses, plus each leg as a faint line to its ground position.
 
     Drawn on an overlay and composited, so the markers sit at a fixed opacity instead
@@ -556,7 +573,7 @@ def draw_mounts(cell, px_per_tile: float, show_legs: bool, origin_y: float = 0.5
     over = Image.new("RGBA", cell.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(over)
     ax, ay = cell_anchor(cell.width, origin_y)
-    for mount, ground in mount_markers(px_per_tile, shrink):
+    for mount, ground in mount_markers(px_per_tile, shrink, lift):
         mx, my = ax + mount[0], ay + mount[1]
         if show_legs:
             gx, gy = ax + ground[0], ay + ground[1]
@@ -577,14 +594,19 @@ def stamp_png(path, blob: dict):
     `exiftool -PNG:all` or `python -c "from PIL import Image; print(Image.open(p).text)"`
     gets it back. A sheet that has been copied out of render-out/ and emailed around
     still knows which knobs made it, which is the whole point of provenance.
+
+    A C.21 SEQUENCE sheet has no one config behind it, so its blob carries a `sequence`
+    chunk (the base knobs, every beat, every frame's own config hash, the play order) and
+    its `config_hash` is the sequence digest -- the same id its manifest and Lua carry --
+    instead of pretending one frame's knobs made the sheet.
     """
     import json
     img = Image.open(path)
     meta = PngInfo()
     meta.add_text("jamaltron:config_hash", blob["config_hash"])
-    meta.add_text("jamaltron:pass_hashes", json.dumps(blob["pass_hashes"]))
-    meta.add_text("jamaltron:config", json.dumps(blob["config"], sort_keys=True))
-    meta.add_text("jamaltron:derived", json.dumps(blob["derived"], sort_keys=True))
+    for key in ("pass_hashes", "config", "derived", "sequence"):
+        if key in blob:
+            meta.add_text("jamaltron:" + key, json.dumps(blob[key], sort_keys=True))
     img.save(path, pnginfo=meta)
 
 

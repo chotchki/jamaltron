@@ -21,14 +21,15 @@
 
 [model]
 # TUNED BY HAND in render/tune.py on 2026-09-20 -> config 137972136a75, which was
-# 335119bf9c46 by the time C.4 shipped sheets and is 83d6be794998 now.
-# THE SHARK KNOBS BELOW HAVE NOT MOVED SINCE THE TUNE. Both older hashes were taken over
-# the model's PATH, so they were facts about one laptop -- three copies of one .blend gave
-# three hashes for identical pixels. The hash is over the model's CONTENT now (see
-# artconfig.hashable), so 83d6be794998 is what these knobs come out as on any machine
-# holding the same file. The part of the jump that is a real knob change is the [mask]
-# plate and the [compare] cell, both of which moved in the same pass; pivot, scale, girth
-# and offset are untouched.
+# 335119bf9c46 by the time C.4 shipped sheets, 83d6be794998 after that, and is
+# bd71cb367d90 now.
+# THE SHARK KNOBS BELOW HAVE NOT MOVED SINCE THE TUNE except one: C.27 (2026-09-24) turned
+# ground_contact on, so his belly sits on the floor instead of 0.26 tiles under it. The two
+# oldest hashes were taken over the model's PATH, so they were facts about one laptop --
+# three copies of one .blend gave three hashes for identical pixels. The hash is over the
+# model's CONTENT now (see artconfig.hashable), so bd71cb367d90 is what these knobs come out
+# as on any machine holding the same file. 335119bf9c46 -> 83d6be794998 also carried a real
+# knob change, the [mask] plate and the [compare] cell; pivot, scale and girth are untouched.
 # pivot sits well FORWARD of the dorsal peak (-0.53), near the cephalofoil, so he swings
 # from the head with the tail trailing rather than spinning about his middle. girth 1.55 is
 # the "overweight" canon doing real work. offset 0.5 sits him lower than the measured 0.85.
@@ -84,6 +85,10 @@ girth = 1.55
 # floats the shark a third of a body above his own legs -- which --compare shows you
 # immediately, and which is how this number got fixed in the first place.
 # Raise it and he floats; lower it and the legs grow out of his back.
+# Z IS DEAD WHILE model.ground_contact IS ON, which it is (C.27): contact seats his lowest
+# vertex on the floor and cancels whatever z says, and the hash drops it. 0.5 stays as the
+# record of the hand tune -- at 0.5 his belly sat 0.260 tiles UNDER the floor, and the
+# shipped shadow was cast from a partly buried shark. x and y still place him.
 # default [0.0, 0.0, 0.85]
 offset = [0.0, 0.0, 0.5]
 
@@ -193,18 +198,19 @@ phase_lock = 0.0
 # default false
 reparent_head = false
 
-# GROUND CONTACT (C.5.4). On, the posed body's LOWEST VERTEX sits on the floor every frame,
-# plus that frame's [bounce] lift, and `offset` z drops out entirely. `offset` z places the
-# model's ORIGIN, which is right for the standing shark (he rides his legs at a set height)
-# and wrong for a thrashing one, whose lowest point moves every frame. MEASURED at the
-# C.5.2 flop call (roll 85, phase_lock 0.5, offset z 0.5): buried 0.105-0.430 tiles on ALL 20
-# frames -- invisible in the tuner, which draws no floor, and sliced by the shadow pass's
-# catcher. Contact also turns the half of the curl that bends DOWN into the arch a fish on its
-# side really makes, and makes the bounce's landing frame an actual landing.
+# GROUND CONTACT (C.5.4). On, the body's LOWEST VERTEX sits on the floor every frame, plus
+# that frame's [bounce] lift, and `offset` z drops out entirely. Built for the flop, whose
+# lowest point moves every frame -- MEASURED at the C.5.2 call (roll 85, phase_lock 0.5,
+# offset z 0.5): buried 0.105-0.430 tiles on ALL 20 frames, invisible in the tuner, which
+# draws no floor, and sliced by the shadow pass's catcher.
+# ON FOR THE STANDING SHARK TOO (C.27, chotchki 2026-09-24). At offset z 0.5 his belly was
+# 0.260 tiles under the floor, so the shipped shadow came off a buried body. Contact raises
+# him 0.2602 tiles, 0.184 tiles up-screen -- and the leg mounts go up by exactly that
+# (`mount_lift` in mod/jamaltron/prototypes/shared.lua) or the tail-down rotations lose
+# their rear legs: 52/64 mount samples without the lift, 64/64 with it.
 # While it is on, offset z cannot move a pixel, so the hash drops it (x and y stay in).
-# Off by default because the standing shark must not move; with `action = "rest"` it warns.
 # default false
-ground_contact = false
+ground_contact = true
 
 [bounce]
 # THE BOUNCE (C.5). A per-frame vertical lift so he LAUNCHES off the ground and LANDS, driven

@@ -149,8 +149,12 @@ def warn_notes(notes):
     return [n for n in notes if n.startswith("WARN ")]
 
 
-def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=False):
-    """Render the missing frames of one pass. Returns (directory, stats)."""
+def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=False,
+                quiet=False):
+    """Render the missing frames of one pass. Returns (directory, stats).
+
+    `quiet` drops the one progress line per pass and nothing else -- a sequence renders one
+    pass per FRAME, and 72 of those lines bury the WARNs, which still print."""
     outdir = pass_dir(cfg, which, samples)
     outdir.mkdir(parents=True, exist_ok=True)
     have = {i for i in frames if (outdir / f"frame_{i:03d}.png").exists()}
@@ -163,7 +167,8 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     payload.write_text(json.dumps(blob, indent=2, sort_keys=True))
 
     if not todo:
-        print(f"  {which:<7} {len(frames)} frames CACHED  {shorten(outdir)}")
+        if not quiet:
+            print(f"  {which:<7} {len(frames)} frames CACHED  {shorten(outdir)}")
         warn_if_clipped(cfg, outdir, frames, which)
         replay_warnings(outdir, frames)
         return outdir, {"seconds": 0.0, "rendered": 0, "cached": len(frames)}
@@ -201,10 +206,11 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
         downsample(outdir, todo, final)
     engine = (results[0][0] or {}).get("engine", "?")
     size = f"{final}px" if ss == 1 else f"{final}px (rendered {final * ss}, x{ss} SS)"
-    print(f"  {which:<7} {len(todo)} frames in {wall:6.2f}s  "
-          f"({wall / len(todo):.2f}s/frame, {engine}, {samples} samples, {size}, "
-          f"{len(groups)} job{'s' if len(groups) > 1 else ''})  "
-          f"{shorten(outdir)}")
+    if not quiet:
+        print(f"  {which:<7} {len(todo)} frames in {wall:6.2f}s  "
+              f"({wall / len(todo):.2f}s/frame, {engine}, {samples} samples, {size}, "
+              f"{len(groups)} job{'s' if len(groups) > 1 else ''})  "
+              f"{shorten(outdir)}")
     warn_if_clipped(cfg, outdir, frames, which)
     stats = {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
              "engine": engine, "jobs": len(groups)}
@@ -451,7 +457,8 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
         bg.alpha_composite(frame)
         if cfg["compare.show_mounts"]:
             sheets.draw_mounts(bg, d["sprite_px_per_tile"], cfg["compare.show_legs"],
-                               cfg["compare.origin_y"], shrink=sheets.mount_shrink())
+                               cfg["compare.origin_y"], shrink=sheets.mount_shrink(),
+                               lift=sheets.mount_lift())
         canvas.alpha_composite(bg, (x, y))
         draw.text((x + 3, y - 15), f"{i:02d} {ac.compass(i, cfg['rotations.count'])}",
                   font=font, fill=(190, 196, 202, 255))
@@ -482,8 +489,9 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     TWO MOUNT RINGS, and mixing them up is the whole reason this note exists. The
     self-check is about STOCK art, so it uses stock's own declared positions. Everything
     drawn on the JAMALTRON row -- the markers, the legs, the coverage count -- uses the
-    ratio entity.lua actually ships (C.13, read out of shared.lua), because a sheet that
-    marks a ring this mod no longer declares is answering a question nobody is asking.
+    ratio and lift entity.lua actually ships (C.13 and C.27, read out of shared.lua),
+    because a sheet that marks a ring this mod no longer declares is answering a question
+    nobody is asking.
     """
     from PIL import Image, ImageDraw
     d = ac.derived(cfg)
@@ -495,8 +503,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
         rows.append("STOCK")
     rows += ["JAMALTRON", "OVERLAY"]
 
-    shrink = sheets.mount_shrink()
-    hw, north, south = sheets.mount_extents(ppt, shrink)
+    shrink, lift = sheets.mount_shrink(), sheets.mount_lift()
+    hw, north, south = sheets.mount_extents(ppt, shrink, lift)
     check = sheets.mount_selfcheck()
     check_line = sheets.selfcheck_line(check)
     print("  " + check_line)
@@ -505,10 +513,10 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     # placeholder and the grid is laid out one line short and the text renders off-canvas.
     coverage, cuts, needs = [], [], []
     foot = footer_lines(cfg, "compare", passes) + [
-        "leg mounts at %.2f of stock (C.13) span %+.0f..%+.0f px transverse, "
-        "%+.0f..%+.0f px along screen (+-%.2f x %.2f..%.2f tiles); "
+        "leg mounts at %.2f of stock (C.13), lifted %.3f tiles (C.27), span %+.0f..%+.0f px "
+        "transverse, %+.0f..%+.0f px along screen (+-%.2f x %.2f..%.2f tiles); "
         "shark %.2f x %.2f tiles at scale %.3f"
-        % (shrink, -hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
+        % (shrink, lift, -hw, hw, north, south, hw / ppt, north / ppt, south / ppt,
            d["shark_length_tiles"], d["shark_width_tiles"], cfg["model.scale"]),
         check_line,
         "",   # placeholder: the shark's own coverage, measured below
@@ -536,7 +544,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
             SPRITE_VISIBLE_ALPHA)
         cuts.append((label, cut))
         needs.append(need)
-        coverage.append((label, sheets.mount_coverage(jam_body, ppt, oy, shrink=shrink)))
+        coverage.append((label, sheets.mount_coverage(jam_body, ppt, oy, shrink=shrink,
+                                                      lift=lift)))
         jam_shadow = None
         if shadowdir is not None:
             sp = shadowdir / f"frame_{i:03d}.png"
@@ -580,8 +589,10 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
                     bg.alpha_composite(jam_shadow)
                 bg.alpha_composite(jam_body)
             if cfg["compare.show_mounts"]:
+                stock = name == "STOCK"
                 sheets.draw_mounts(bg, ppt, cfg["compare.show_legs"], oy,
-                                   shrink=1.0 if name == "STOCK" else shrink)
+                                   shrink=1.0 if stock else shrink,
+                                   lift=0.0 if stock else lift)
             canvas.alpha_composite(bg, lay.cell_origin(col, r))
 
     for r, name in enumerate(rows):
@@ -604,6 +615,7 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     finish(cfg, path, side, {"sheet": "compare", "frames": frames, "rows": rows,
                              "mount_selfcheck": check,
                              "mount_shrink": shrink,
+                             "mount_lift": lift,
                              "mount_coverage": {"per_frame": coverage,
                                                 "line": cover_line},
                              "cell_fit": {"cell_tiles": cfg["compare.cell_tiles"],
@@ -612,6 +624,124 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
                                           "cut_px": {label: list(cut)
                                                      for label, cut in cuts if any(cut)},
                                           "line": fit_line}})
+    return path
+
+
+# ---------------------------------------------------------------------- C.21 sequence
+
+#: The three passes a sequence sheet needs, and the samples knob each renders at. Body and
+#: mask follow --preview the way --full does; the shadow has one sample count either way.
+SEQUENCE_PASSES = (("body", "render.samples", "render.preview_samples"),
+                   ("mask", "render.samples", "render.preview_samples"),
+                   ("shadow", "render.shadow_samples", "render.shadow_samples"))
+
+#: GIF delays are whole CENTISECONDS, so 24 fps (41.67 ms) cannot be one number. Five frames
+#: at 40 ms and one at 50 average exactly 41.67 -- the tempo the tuner and the game play at,
+#: with a 10 ms wobble once every quarter second that nobody can see.
+GIF_DELAYS_MS = (40, 40, 40, 40, 40, 50)
+
+
+def sequence_samples(cfg, which: str, preview: bool) -> int:
+    """Samples one pass of a sequence renders at. pack.py reads the same answer."""
+    full, quick = next((f, q) for w, f, q in SEQUENCE_PASSES if w == which)
+    return cfg[quick if preview else full]
+
+
+def render_sequence(seq, *, preview=False, jobs=4, force=False, verbose=False) -> dict:
+    """Every unique config of a C.21 sequence, at its one direction, through all three passes.
+
+    ONE BLENDER PER FRAME PER PASS, and that is the cost of one frame = one config = one
+    hash: a pass cannot render two configs. So the parallelism is ACROSS configs -- `jobs`
+    Blenders at once, each rendering one frame -- rather than across directions the way a
+    wheel renders. Everything lands in the ordinary per-config cache, so the frames the tuner
+    already rendered at this direction are served from it, and pack.py finds them by the
+    same pass_dir() rule the tuner used.
+    """
+    t0 = time.time()
+    tasks = [(k, cfg, which) for k, cfg in enumerate(seq.configs) for which, _, _ in SEQUENCE_PASSES]
+    stats = {which: {"rendered": 0, "cached": 0} for which, _, _ in SEQUENCE_PASSES}
+
+    def one(task):
+        k, cfg, which = task
+        _, st = render_pass(cfg, which, [seq.direction], sequence_samples(cfg, which, preview),
+                            jobs=1, force=force, verbose=verbose, quiet=True)
+        return which, st
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for which, st in pool.map(one, tasks):
+            stats[which]["rendered"] += st["rendered"]
+            stats[which]["cached"] += st["cached"]
+    for which, st in stats.items():
+        print(f"  {which:<7} {len(seq.configs)} frames: {st['rendered']} rendered, "
+              f"{st['cached']} cached")
+    stats["seconds"] = time.time() - t0
+    return stats
+
+
+def sequence_gif(seq, *, preview=False):
+    """The whole cycle as an animated GIF at 24 fps: shadow under body over the compare
+    ground, one frame per PLAYED frame, labelled with its beat. Returns the path.
+
+    THIS is how you watch a flop that is more than one clip. The tuner plays one clip's loop;
+    a sequence is several clips, holds and ramps, and the seams between beats are exactly
+    what needs watching. Same pixels the pack gathers, same order Factorio plays them in.
+
+    The two passes render on different canvases (6 and 11 tiles, same px-per-tile), so both
+    are placed on the shadow's canvas by their shared ORIGIN PIXEL, then the stack is cropped
+    to the union of everything visible across the cycle -- one box, so nothing moves in the
+    frame except him.
+    """
+    from PIL import Image, ImageDraw
+    base = seq.configs[0]
+    d = ac.derived(base)
+    body_px, shadow_px = d["body_resolution_px"], d["shadow_resolution_px"]
+    off = int(round(fc.origin_pixel(shadow_px) - fc.origin_pixel(body_px)))
+    frame_name = f"frame_{seq.direction:03d}.png"
+    cells = []
+    for cfg in seq.configs:
+        body = Image.open(pass_dir(cfg, "body", sequence_samples(cfg, "body", preview))
+                          / frame_name).convert("RGBA")
+        shadow = Image.open(pass_dir(cfg, "shadow", sequence_samples(cfg, "shadow", preview))
+                            / frame_name).convert("RGBA")
+        shadow = shadow.copy()      # the noise-floor surgery below writes its alpha
+        alpha = shadow.getchannel("A").point(lambda v: v if v >= RENDER_NOISE_FLOOR else 0)
+        shadow.putalpha(alpha)
+        layer = Image.new("RGBA", (shadow_px, shadow_px), (0, 0, 0, 0))
+        layer.alpha_composite(sheets.shadow_layer(shadow))
+        layer.alpha_composite(body, (off, off))
+        cells.append(layer)
+    box = None
+    for cell in cells:
+        b = cell.getchannel("A").point(lambda v: 255 if v >= SPRITE_VISIBLE_ALPHA else 0).getbbox()
+        if b:
+            box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]),
+                                         max(box[2], b[2]), max(box[3], b[3]))
+    pad = 12
+    box = (max(0, box[0] - pad), max(0, box[1] - pad),
+           min(shadow_px, box[2] + pad), min(shadow_px, box[3] + pad))
+    strip = 18
+    font = sheets._font(12)
+    ground = tuple(base["compare.background"]) + (255,)
+    frames = []
+    for n, (k, (beat, f)) in enumerate(zip(seq.order, seq.played)):
+        w, h = box[2] - box[0], box[3] - box[1]
+        out = Image.new("RGBA", (w, h + strip), ground)
+        out.alpha_composite(cells[k].crop(box))
+        ImageDraw.Draw(out).text(
+            (4, h + 3), "%-7s f%-2d  %3d/%d  %.2fs  %s"
+            % (beat, f, n + 1, len(seq.order), n / pose.FPS, ac.config_hash(seq.configs[k])),
+            font=font, fill=(206, 212, 218, 255))
+        frames.append(out.convert("RGB"))
+    root = out_root(base) / "sheets"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"sequence_{seq.name}_{seq.digest}.gif"
+    delays = [GIF_DELAYS_MS[i % len(GIF_DELAYS_MS)] for i in range(len(frames))]
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=delays, loop=0)
+    path.with_suffix(".json").write_text(json.dumps({
+        "sequence": seq.name, "digest": seq.digest, "direction": seq.direction,
+        "fps": pose.FPS, "played": [list(x) for x in seq.played], "order": list(seq.order),
+        "frame_hashes": list(seq.hashes), "preview_samples": preview,
+    }, indent=1))
     return path
 
 
@@ -697,6 +827,10 @@ def build_parser():
     m.add_argument("--compare", action="store_true",
                    help="jamaltron beside the stock spidertron at matched rotations, "
                         "with shadow and leg mounts. The one to look at")
+    m.add_argument("--sequence", action="store_true",
+                   help="the config's [sequence] (C.21): every unique frame through body, mask "
+                        "and shadow at its one direction, then an animated GIF of the whole "
+                        "cycle at 24 fps. Add --preview for preview samples")
     m.add_argument("--show", action="store_true", help="print the resolved config and exit")
 
     k = p.add_argument_group("knobs")
@@ -729,6 +863,9 @@ def main(argv=None):
 
     for w in ac.warnings(cfg):
         print("WARN " + w)
+
+    if args.sequence:
+        return run_sequence(args, cfg)
 
     if args.show or not (args.preview or args.full or args.shadow or args.compare
                          or args.mask):
@@ -796,6 +933,36 @@ def main(argv=None):
     print("TOTAL %.2fs" % (time.time() - t0))
     for p in made:
         print("  -> %s" % p)
+    return 0
+
+
+def run_sequence(args, cfg) -> int:
+    """`--sequence`: render a config's [sequence] and write the GIF. cfg is the file's own
+    resolved knobs (--set and --blend applied), which every beat inherits."""
+    from render import sequence
+    try:
+        table = ac.load_sequence(args.config)
+        if table is None:
+            sys.stderr.write("art.py: %s has no [sequence] table -- that lives in "
+                             "render/beached.toml (C.21)\n" % (args.config or "jamaltron.toml"))
+            return 2
+        seq = sequence.parse(table, cfg)
+    except ac.ConfigError as exc:
+        sys.stderr.write("art.py: %s\n" % exc)
+        return 2
+    print("jamaltron sequence %s  %s  %s samples"
+          % (seq.name, seq.digest, "preview" if args.preview else "full"))
+    for line in sequence.describe(seq):
+        print(line)
+    for w in dict.fromkeys(w for c in seq.configs for w in ac.warnings(c)):
+        print("WARN " + w)
+    t0 = time.time()
+    render_sequence(seq, preview=args.preview, jobs=args.jobs, force=args.force,
+                    verbose=args.verbose)
+    gif = sequence_gif(seq, preview=args.preview)
+    print("TOTAL %.2fs" % (time.time() - t0))
+    print("  -> %s" % gif)
+    print("  watch it: open -a Safari %s   (or Quick Look: qlmanage -p ...)" % shorten(gif))
     return 0
 
 

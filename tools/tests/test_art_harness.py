@@ -680,14 +680,36 @@ def test_the_drawn_mount_ring_is_the_one_the_prototype_ships():
         assert ground == ground_s
 
 
+def test_the_drawn_mount_ring_carries_the_prototype_lift():
+    """C.27 sat his belly on the floor, which drew him higher; entity.lua lifts the mounts by
+    the same screen offset. The sheet has to lift them too, or its coverage count checks a
+    ring the game does not draw -- 52/64 measured with the lift missing."""
+    import re
+    text = sheets.MOUNT_SHRINK_LUA.read_text()
+    declared = float(re.search(r"^\s*mount_lift\s*=\s*([0-9.]+)", text, re.M).group(1))
+    assert sheets.mount_lift() == declared
+    # 0.2602 tiles of world raise, through the 45-degree camera
+    assert declared == pytest.approx(0.2602 * fc.K, abs=0.001)
+    shrink = sheets.mount_shrink()
+    for (m, g), (ml, gl) in zip(sheets.mount_markers(64.0, shrink),
+                                sheets.mount_markers(64.0, shrink, declared)):
+        assert ml[0] == m[0]
+        assert ml[1] == pytest.approx(m[1] - declared * 64.0)
+        assert gl == g                      # the feet stay put; the legs get longer
+    entity = (sheets.MOUNT_SHRINK_LUA.parent / "entity.lua").read_text()
+    assert "- C.mount_lift" in entity
+
+
 def test_a_missing_prototype_falls_back_instead_of_exploding(monkeypatch, tmp_path):
     """sheets.py is imported by tests that never build a mod tree, and a missing ratio must
     degrade to stock's ring rather than stop you looking at the shark."""
     monkeypatch.setattr(sheets, "MOUNT_SHRINK_LUA", tmp_path / "gone.lua")
     assert sheets.mount_shrink() == 1.0
+    assert sheets.mount_lift() == 0.0
     (tmp_path / "there.lua").write_text("local C = {\n  mount_shrink = 0.5,\n}\n")
     monkeypatch.setattr(sheets, "MOUNT_SHRINK_LUA", tmp_path / "there.lua")
     assert sheets.mount_shrink() == 0.5
+    assert sheets.mount_lift() == 0.0
 
 
 def test_mount_extents_are_the_footprint_c4_has_to_cover():
@@ -987,10 +1009,16 @@ def test_girth_widens_only_the_width_report():
 #: MODEL's content, substituted in directly here so this runs with no .blend on the machine
 #: -- artconfig.hashable() passes an already-digested value straight through, which is the
 #: same property that lets a stamp read back off a PNG re-hash to itself.
+#: C.27 re-dated them on purpose (83d6be794998 -> bd71cb367d90): ground contact on, belly on
+#: the floor, mounts lifted to match.
 SHIPPED_BLEND_DIGEST = "sha256:0431897ccc701717"
-SHIPPED_CONFIG_HASH = "83d6be794998"
-SHIPPED_PASS_HASHES = {"body": "eadcbfceca50", "shadow": "c2fa4206163b",
-                       "mask": "2dbebe5a76b0", "compare": "4247c6a684a3"}
+SHIPPED_CONFIG_HASH = "bd71cb367d90"
+SHIPPED_PASS_HASHES = {"body": "7cda05af189a", "shadow": "bc16c97d6383",
+                       "mask": "4666e5e5bd20", "compare": "4247c6a684a3"}
+
+#: ADDITIVE knobs the committed standing config moves off their default ON PURPOSE. Each one
+#: is in the hash like any other knob; the rule below is about the ones left at default.
+SHIPPED_OFF_DEFAULT = {"model.ground_contact": True}      # C.27
 
 
 def _shipped_cfg():
@@ -1021,11 +1049,13 @@ def test_a_new_knob_at_its_default_is_not_in_any_hash():
     Checked by hashing a config that has never heard of them -- which is exactly what the
     shipped sheets were hashed from."""
     cfg = _shipped_cfg()
-    stripped = {k: v for k, v in cfg.items() if k not in ac.ADDITIVE}
-    assert ac.canonical(ac.hashable(cfg)) == ac.canonical(dict(
-        stripped, **{"model.blend": SHIPPED_BLEND_DIGEST}))
+    view = ac.hashable(cfg)
     for key in ac.ADDITIVE:
+        if key in SHIPPED_OFF_DEFAULT:
+            assert cfg[key] == SHIPPED_OFF_DEFAULT[key] and key in view, key
+            continue
         assert ac.is_default(key, cfg[key]), "%s: the committed file moves it off default" % key
+        assert key not in view, key
 
 
 @pytest.mark.parametrize("key,value", [
@@ -1033,7 +1063,7 @@ def test_a_new_knob_at_its_default_is_not_in_any_hash():
     ("model.pose_gain", 2.0),
     ("model.phase_lock", 1.0),
     ("model.reparent_head", True),
-    ("model.ground_contact", True),
+    ("model.ground_contact", False),
     ("bounce.height", 0.3),
     ("bounce.phase", 0.25),
     ("bounce.gravity", 4.0),
@@ -1047,8 +1077,8 @@ def test_a_new_knob_moves_every_hash_the_moment_it_is_touched(key, value):
     assert ac.config_hash(moved) != ac.config_hash(cfg)
     for name in ("body", "shadow", "mask"):
         assert ac.pass_hash(moved, name) != ac.pass_hash(cfg, name), name
-    # ... and back to the default is back to the shipped hash, not a third value
-    assert ac.config_hash(dict(moved, **{key: ac.SCHEMA[key][1]})) == SHIPPED_CONFIG_HASH
+    # ... and back to the shipped value is back to the shipped hash, not a third value
+    assert ac.config_hash(dict(moved, **{key: cfg[key]})) == SHIPPED_CONFIG_HASH
 
 
 def test_the_stamp_writes_the_new_knobs_even_though_the_hash_omits_them():
@@ -1219,17 +1249,14 @@ def test_phase_lock_says_when_it_cannot_do_anything():
         assert any("0..1" in w for w in ac.warnings(dict(base, **{"model.phase_lock": off_rail})))
 
 
-def test_ground_contact_on_the_standing_shark_says_what_it_does():
-    """Contact cancels offset z and re-seats him on his lowest vertex, which at the committed
-    config is 0.26 tiles BELOW the floor (C.27) -- so it RAISES the standing shark off the
-    height his shipped sheets came off. Legal, but never silent, and the warning has to say
-    which way he moves: the first draft said he would drop, which is backwards."""
-    standing = ac.resolve({"model": {"ground_contact": True}}, env={})
-    got = [w for w in ac.warnings(standing) if "ground_contact" in w]
-    assert len(got) == 1 and "STANDING" in got[0] and "RAISES" in got[0]
-    flop = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True,
-                                 "ground_contact": True}}, env={})
-    assert not [w for w in ac.warnings(flop) if "ground_contact" in w]
+def test_ground_contact_is_the_shipped_standing_config_and_does_not_warn():
+    """C.27: the standing shark ships with contact on -- at offset z 0.5 his belly sat 0.26
+    tiles under the floor. Contact on a rest pose used to WARN (it was the flop's knob and it
+    raised him off his shipped sheets); now it IS the shipped sheets, and a warning on the
+    committed config would be a warning nobody can act on."""
+    shipped = ac.load(env={})
+    assert shipped["model.ground_contact"] and shipped["model.action"] == "rest"
+    assert not [w for w in ac.warnings(shipped) if "ground_contact" in w]
 
 
 def test_offset_z_leaves_the_key_while_ground_contact_cancels_it():

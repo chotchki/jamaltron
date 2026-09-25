@@ -145,8 +145,12 @@ for i = 1, C.leg_count do
   -- ground_position is deliberately NOT scaled - that is where the feet LAND, and
   -- shrinking it too would give him a mincing little stance instead of the
   -- splayed-from-a-harness silhouette. Narrow mounts, stock-width footprint.
+  --
+  -- Then UP by mount_lift (screen y is south-positive, so up is minus). C.27 sat his
+  -- belly on the ground, which drew the whole body 0.184 tiles higher; the mounts ride
+  -- with him or the tail-down rotations lose their rear legs (52/64 measured without it).
   local mount = body.spider_engine.legs[i].mount_position
-  mount[1], mount[2] = mount[1] * C.mount_shrink, mount[2] * C.mount_shrink
+  mount[1], mount[2] = mount[1] * C.mount_shrink, mount[2] * C.mount_shrink - C.mount_lift
 end
 
 -- Cheap insurance on the cross-reference that breaks silently: a vehicle pointing at

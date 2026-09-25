@@ -1,0 +1,105 @@
+# The BEACHED shark (C.5, C.21, C.24): jamaltron.toml plus ONLY what the flop changes.
+#
+# AN OVERLAY. `base` resolves first and this file replaces keys on top of it -- a key, never
+# a whole table -- so every shared knob (scale, girth, pivot, sun, camera, mask, render) has
+# ONE home, and the standing and beached sheets cannot drift apart. Tune a shared knob in
+# jamaltron.toml; tune the flop here. The tuner knows the difference:
+#
+#   uv run --directory tools python render/tune.py --config render/beached.toml
+#
+# boots on this pose, and its export writes only the keys this file owns plus anything you
+# moved off the base, with a note on each shared knob you are overriding for the flop alone.
+#
+# Render and watch the whole cycle, then pack it:
+#
+#   uv run --directory tools python render/art.py --config render/beached.toml --sequence --preview
+#   uv run --directory tools python render/pack.py --config render/beached.toml --preview
+#
+# (drop --preview on both for the shipping samples, add --promote --crush to pack for real)
+base = "jamaltron.toml"
+
+[model]
+# chotchki's calls, 2026-09-23, off the tuner at 24 fps: SWIM_FAST at roll 85 with yaw 180
+# (his framing), phase_lock 0.5 with bounce phase 0.5 ("I think this looks good"), HEAD
+# reparented so the snout moves with the spine (C.18a), and ground contact (C.5.4) so no
+# frame of the thrash sinks through the floor -- the base has it on too since C.27, and it
+# is repeated here because the flop is wrong without it whatever the standing shark does.
+# The beats below override these per beat; these are what a beat inherits.
+action = "SWIM_FAST"
+rotation = [85.0, 0.0, 180.0]
+phase_lock = 0.5
+reparent_head = true
+ground_contact = true
+
+[bounce]
+height = 0.3
+phase = 0.5
+
+[sequence]
+# Sheets come out as jamaltron-beached-body.png etc, the Lua as beached_sprites_generated.lua.
+name = "beached"
+# ONE direction, per C.5's budget: repetition is noticed in time, not in heading. Wheel
+# index 16 is due east -- but yaw 180 above turns him round, so his NOSE POINTS WEST and his
+# belly (and mouth, for the complaining) faces the camera. chotchki, 2026-09-24.
+direction = 16
+
+# THE BEATS. A DRAFT for chotchki's eye (2026-09-24), not a call: C.5 decided on one long
+# cycle of varied beats and left the list open. Heave, heave, run down, lie there, snap at
+# nothing, let go, try again. 117 played frames (4.9 s at 24 fps), 72 unique renders -- a
+# repeated config is one cell of the sheet and Factorio's frame_sequence plays it again free.
+#
+# THE SEAMS ARE THE HARD PART. At bounce phase 0.5 the heave launches on f11 and its 0.495 s
+# of airtime WRAPS the loop: f20 is 0.22 tiles up, f1 0.16, and he lands on f3. So a beat that
+# hands back into the heave has to end mid-flight the same way, and a beat that follows the
+# heave has to finish that landing -- otherwise he pops 0.16 tiles in one frame.
+
+[[sequence.beat]]
+# The C.5.2 loop exactly as called, twice.
+name = "heave"
+
+[[sequence.beat]]
+name = "heave"
+
+[[sequence.beat]]
+# The thrash runs down: the same wave at half speed (SWIM_MEDIUM IS SWIM_FAST at half the
+# tempo, so MEDIUM f1 picks up exactly where FAST f20 wraps to), shrinking as it goes, and
+# no new launch. bounce.phase 0.75 puts MEDIUM's launch on f31 -- 10 frames before f1 -- so
+# f1-f2 finish the heave's landing at the same heights and the launch itself never comes.
+name = "settle"
+frames = [1, 20]
+set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.75 }
+ramp = { "model.pose_gain" = [1.0, 0.2] }
+
+[[sequence.beat]]
+# He lies there. The settle's last frame, held -- the same config, so it costs no render.
+name = "pause"
+frames = [20, 20]
+hold = 10
+set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.75, "model.pose_gain" = 0.2 }
+
+[[sequence.beat]]
+# Snaps at nothing. BITE_01 drives HEAD, JAW and the pectoral fins and NO spine bone, so the
+# body lies straight while the jaw works; its motion is all in f1-29 (C.19) and it needs gain
+# 2.0 to register at this size. No lock (a bite has no wave to lock) and no bounce.
+name = "snap"
+frames = [1, 29]
+stride = 2
+set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "bounce.height" = 0.0 }
+
+[[sequence.beat]]
+# ...and lets go. BITE_01 ENDS with the head still swung round (its f29 is the start of a
+# 50-frame hold, not a return), so going straight on would snap the head back in one frame.
+# The same frames backwards instead: every one is already a cell of the sheet.
+name = "release"
+frames = [27, 1]
+stride = 2
+set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "bounce.height" = 0.0 }
+
+[[sequence.beat]]
+# Tries again: a heave that starts weak and builds to the full one. Starts on f3, the first
+# frame the heave is on the ground, and ends on f20 IDENTICAL to the heave's own f20 -- same
+# gain, same flight -- so the loop back to the first heave is seamless and f20 is not even a
+# new render.
+name = "twitch"
+frames = [3, 20]
+ramp = { "model.pose_gain" = [0.4, 1.0] }

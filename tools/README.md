@@ -128,7 +128,7 @@ lock 0.5, bounce 0.3 at phase 0.5, HEAD reparented, ground contact on, broadside
 leaves scale, girth, pivot and pitch where you have them, because half the time those are
 mid-tuning. Yaw 180 and the lock/phase pair are chotchki's calls of 2026-09-23, the second one
 made off this page at 24 fps. The page still OPENS on the committed standing
-config (the header's `paste` hash reads `83d6be794998` on arrival, which is the live proof the
+config (the header's `paste` hash reads `bd71cb367d90` on arrival, which is the live proof the
 flop work has not touched the art that ships), so 85 is a button and not a boot value.
 
 AND THE LOOP WAS MEASURED BY DRIVING IT, which is the whole point - every call about this pose
@@ -170,7 +170,8 @@ a standing one. Two consequences worth knowing. The tuner's header names the has
 picture it is showing you, pose included (it used to say `pending bake`, because the pose
 lived in a temp `.blend` that did not exist until a render ran). And they are **hash-neutral
 at their defaults** - `ac.ADDITIVE` - so adding them did not move the `83d6be794998` the
-shipped sheets carry; move one off its default and it is in the hash like anything else.
+shipped sheets carried then; move one off its default and it is in the hash like anything else.
+`ground_contact` is the one the standing config moved on purpose (C.27, `bd71cb367d90`).
 
 ### The curl: phase lock
 
@@ -253,6 +254,17 @@ MEASURED at the call (lock 0.5, bounce phase 0.5, roll 85, yaw 180):
   +0.19 f16 -> f17, where the curl flips which part of him is lowest. Physically right (the
   down-curl arches his middle up), but those two are the frames most likely to read as a hitch
 
+THE STANDING SHARK HAS IT ON TOO (C.27, chotchki 2026-09-24). At offset z 0.5 his belly sat
+0.260 tiles under the floor on every one of the 64 rotations, so the shipped shadow was cast
+from a partly buried body. Contact raises him 0.2602 tiles, which the 45-degree camera draws
+**0.184 tiles higher** - and that alone drops the leg mounts off him: **412/512** mount
+samples land on the shark without a fix, worst 5/8 at N. So the mounts ride up by exactly the
+same screen offset (`mount_lift = 0.184` in `mod/jamaltron/prototypes/shared.lua`, read by
+`entity.lua` AND by the compare sheet's coverage count, one number in one place) and it is
+**512/512** again, every rotation. The feet stay where they were; his legs are 6 px longer.
+Config `83d6be794998` -> `bd71cb367d90`, all four sheets re-rendered fresh (which also retires
+the 09-20 cache drift C.27 found).
+
 It is exact because `world_box()` is now exact: it walks the evaluated vertices instead of
 transforming each mesh's LOCAL bound box, whose corners hang up to 0.109 tiles below anything
 the mesh reaches once he is rolled 85 and curled (six of the call's 20 frames, f01 and
@@ -276,6 +288,57 @@ both extremes and reads as floating; ballistic flight leaves at full speed and c
 accelerating, which is what being pulled looks like. Ground contact is a hard floor, so the
 frames he is not airborne for are frames spent lying on the ground - which is where the
 landing, and the joke, lives.
+
+### The beached sheet: a sequence of beats (C.21, C.24)
+
+The flop has its OWN config, and it is an overlay: `render/beached.toml` says
+`base = "jamaltron.toml"` and then only what the flop changes - the clip, roll 85 / yaw 180,
+phase lock 0.5, bounce 0.3 at 0.5, HEAD reparented, contact. A key, never a whole table, so
+every shared knob (scale, girth, pivot, sun, camera, mask) lives in exactly ONE file and the
+standing and beached sheets cannot drift apart. Every tool takes it with `--config`:
+
+```sh
+uv run --directory tools python render/tune.py --config render/beached.toml   # boots on the flop
+uv run --directory tools python render/art.py --config render/beached.toml --sequence --preview
+uv run --directory tools python render/pack.py --config render/beached.toml --preview
+```
+
+The tuner's export knows the difference. Opened on the overlay it writes only the overlay's
+own keys plus whatever you moved off the base, and it FLAGS a shared knob you moved on the
+flop page - a scale tuned there and pasted into beached.toml makes him a different size lying
+down. Opened on the standing file with a POSE selected, it writes the block for
+`render/beached.toml` instead: the old export told you to paste a flop over the standing
+shark, which re-dates the shipped sheets.
+
+ONE FRAME IS STILL ONE CONFIG, and that is why pack.py could not assemble a flop - it wanted N
+frames in one directory, and every flop frame lives in its own. The `[sequence]` table is the
+answer: a list of BEATS, each a run of one clip's frames with knob overrides on top of the
+file's own (`set`), linear ramps across the beat (`ramp`), a `stride`, a `hold`, and frames
+that can run backwards. `render/sequence.py` expands it into unique per-frame configs plus a
+play order; `art.py --sequence` renders each unique config once per pass at the one direction
+(one Blender per frame per pass, `--jobs` of them at a time), then writes
+`render-out/sheets/sequence_<name>_<digest>.gif` - **THAT is how you watch it**, at 24 fps,
+every frame labelled with its beat: `open -a Safari render-out/sheets/sequence_beached_*.gif`.
+`pack.py --config render/beached.toml` gathers the same frames out of the same cache dirs,
+checks each one against ITS OWN config's pass hash, and packs one sheet per pass as an
+`animation` with a Factorio `frame_sequence`.
+
+REPEATS ARE FREE, which is what makes a long varied cycle affordable. Identical configs are
+one render and one cell; `frame_sequence` plays a cell as often as the beats ask, and the
+engine loads a repeated cell into VRAM once. The committed draft plays **117 frames (4.9 s)
+off 72 cells** - heave, heave, settle, pause, snap at nothing, let go, try again - body 2120x1575
++ mask 472x1251 + shadow 2808x1044, **2238 KiB crushed, 26.2 MiB raw**, lint `--strict` clean,
+NOT promoted until chotchki calls the beats (C.5.5). `lint_sprites.py` checks the
+frame_sequence itself: 1-based indices inside frame_count, Factorio's 255-frame cap, and under
+`--strict` a cell the sequence never plays.
+
+THE SEAMS ARE THE HARD PART and they are tested, not eyeballed. At bounce phase 0.5 the
+heave's 0.495 s flight WRAPS its own loop (f20 at 0.22 tiles, f1 at 0.16, lands f3), so the
+beat after a heave has to finish that landing and the beat before one has to meet it
+mid-air. `test_sequence.py` fails any seam in the committed cycle whose lift step is bigger
+than the heave's own biggest in-loop step, and requires the last frame to hand back to the
+first. Direction: wheel index 16 is east, but yaw 180 turns him round - **nose WEST, belly
+and mouth to the camera** (chotchki's call).
 
 ## Shipping a sheet
 
@@ -304,15 +367,15 @@ translation layer for them to drift across, and `test_pack.py` reads both back t
 pack.py then runs that gate over its own output before it exits, so a sheet that would
 turn CI red turns the packer red first.
 
-MEASURED on the shipped config, crushed, four sheets out of three passes:
+MEASURED on the shipped config (`bd71cb367d90`, C.27), crushed, four sheets out of three passes:
 
 | sheet | frame | cells | grid | on disk | VRAM raw | stock's own |
 | --- | --- | --- | --- | --- | --- | --- |
-| `jamaltron-body` | 360x289 | 64 dir | 2880x2312, 8x8 | 1676 KiB | 25.40 MiB | 1308 KiB / 4.45 MiB |
-| `jamaltron-body-mask` | 166x121 | 64 dir | 1328x968, 8x8 | 324 KiB | 4.90 MiB | 1012 KiB / 3.17 MiB |
-| `jamaltron-body-shadow` | 405x256 | 64 dir | 3240x2048, 8x8 | 244 KiB | 25.31 MiB | 99 KiB / 4.41 MiB |
-| `jamaltron-body-water-reflection` | 332x192 | 1 var | 332x192 | 11 KiB | 0.24 MiB | 5 KiB / 0.77 MiB |
-| **total** | | | | **2255 KiB** | **55.86 MiB** | 2425 KiB / 12.8 MiB |
+| `jamaltron-body` | 362x289 | 64 dir | 2896x2312, 8x8 | 1685 KiB | 25.54 MiB | 1308 KiB / 4.45 MiB |
+| `jamaltron-body-mask` | 166x121 | 64 dir | 1328x968, 8x8 | 323 KiB | 4.90 MiB | 1012 KiB / 3.17 MiB |
+| `jamaltron-body-shadow` | 408x256 | 64 dir | 3264x2048, 8x8 | 266 KiB | 25.50 MiB | 99 KiB / 4.41 MiB |
+| `jamaltron-body-water-reflection` | 378x295 | 1 var | 378x295 | 13 KiB | 0.43 MiB | 5 KiB / 0.77 MiB |
+| **total** | | | | **2287 KiB** | **56.37 MiB** | 2425 KiB / 12.8 MiB |
 
 The mask frame is 20 px shorter than the body's box is tall, and that is the fix landing:
 the harness stops below the dorsal fin, so the union of its 64 rotations no longer reaches
@@ -395,11 +458,13 @@ The C.10 art harness, all from the repo root (`--set` takes TOML values, repeata
 | `uv run --directory tools python render/art.py --shadow` | the Cycles shadow-catcher pass on its own |
 | `uv run --directory tools python render/art.py --mask` | the runtime-tint pass (the harness) on its own; add `--full` for all 64 |
 | `uv run --directory tools python render/art.py --show` | print the resolved config, the derived numbers and the hashes; render nothing |
+| `... --config render/beached.toml --sequence [--preview]` | C.21: every unique frame of the `[sequence]` through body, mask and shadow at its one direction, then a 24 fps GIF of the whole cycle in `render-out/sheets/` |
 | `... --set model.scale=0.85 --set 'model.rotation=[0,6,0]'` | override knobs for one run |
 | `... --blend /path/to/HAMMERHEAD.blend` | the model, or set `$JAMALTRON_BLEND` |
 | `... --force` / `--jobs N` / `-v` | ignore the cache / parallel Blenders (default 4) / echo Blender's own report |
 | `uv run --directory tools python render/tune.py` | **the slider UI.** eleven sliders, the five shipped clips with a PLAY loop that holds 23.4 of 24 fps, the flop preset, the rig-fix and ground-contact toggles, live coverage count, copy-TOML button; shadow off by default |
 | `... --port N` / `--no-open` / `--set model.girth=1.3` | pick the port / do not launch a browser / start from a knob you already found |
+| `... --config render/beached.toml` | boot on the flop overlay; the export then writes overlay-shaped blocks for that file |
 
 The C.7 packer, also from the repo root:
 
@@ -412,9 +477,10 @@ The C.7 packer, also from the repo root:
 | `... --line-length N` / `--pad N` / `--max-side N` | columns per row (reduced to a divisor of the frame count) / margin around the union alpha box / sheet ceiling |
 | `... --targets body,shadow` / `--frames-dir body=DIR` | pack a subset (ids: `body`, `body_mask`, `shadow`, `reflection`) / point one target somewhere else |
 | `... --allow-clipped` / `--any-config` / `--no-verify` | pack frames that are CUT / frames from another config / skip the strict lint of our own output |
+| `... --config render/beached.toml` | pack the `[sequence]`: one frame out of each config's own cache dir, one `animation` sheet per pass with a `frame_sequence`, written beside the standing pair as `jamaltron-beached-*.png` + `beached-sprites.json` + `beached_sprites_generated.lua` |
 | `python3 tools/lint_sprites.py --strict --mod-root jamaltron=mod/jamaltron mod/jamaltron/graphics/sprites.json` | the sprite gate, exactly as CI runs it |
 | `uv run --directory tools python gen_lines.py --check` | B.5: validate `character/lines.md` against its own contract (and against the gitignored book extracts when they are on this machine) and report whether the generated `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` are current. Writes nothing |
-| `uv run --directory tools python gen_lines.py` | the same, then WRITES both files. The first run is the B.5 id freeze - chotchki's call, after the `character/REVIEW.md` decisions |
+| `uv run --directory tools python gen_lines.py` | the same, then WRITES both files. Run it after every catalog edit - CI fails a stale pair. Generating is NOT the id freeze: ids stay renumberable through playtesting, and freezing them is PLAN F.6, just before release |
 
 `Blender` is `/Applications/Blender.app/Contents/MacOS/Blender` on this machine.
 `blender_check.py` prints the Blender and bundled-Python versions plus the usable
@@ -528,6 +594,10 @@ gen_lines.py        entry point (B.5): character/lines.md -> scripts/lines.lua (
 render/
   jamaltron.toml       EVERY art knob, with what it defaults to and what it does to the
                        picture. The one file you edit while iterating
+  beached.toml         the flop (C.24): an OVERLAY on jamaltron.toml holding only what the
+                       beached shark changes, plus the [sequence] of beats its sheet plays
+  sequence.py          C.21: a [sequence] table -> unique per-frame configs + the order
+                       they play in. Pure arithmetic; art.py renders it, pack.py packs it
   art.py               entry point, uv side. THE art harness (C.10): resolves the config,
                        decides which frames are missing, shells out to N Blenders, builds
                        the compare and contact sheets, stamps provenance on everything
@@ -574,6 +644,9 @@ tests/
                             artifacts read through both of lint_sprites.py's front ends
   test_gen_lines.py         the line generator: the staleness gate CI runs, one test per
                             contract refusal, emission, fidelity, and main()'s exit codes
+  test_sequence.py          C.21/C.24: the overlay loader, beat expansion, the committed
+                            cycle's seams, sequence packing and the frame_sequence lint
+  test_mod_settings.py      D.3: every setting and dropdown value has its locale string
   test_env.py               python version, Pillow present, spritesheet.py still stdlib-only
 smoke.sh, build.sh  shell, not part of the uv project (PLAN A.2)
 ```

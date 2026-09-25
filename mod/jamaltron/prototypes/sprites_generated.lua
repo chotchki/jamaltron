@@ -6,7 +6,7 @@
 -- beside the sheets is these same tables plus an id, which is what
 -- tools/lint_sprites.py checks against the real PNGs.
 --
--- config 83d6be794998   packed 2026-09-20 17:01:31
+-- config bd71cb367d90   packed 2026-09-24 19:09:35
 
 local sprites = {}
 
@@ -19,7 +19,7 @@ sprites.body =
   direction_count = 64,
   frame_count = 1,
   scale = 0.5,
-  shift = {0, -0.4453125}
+  shift = {0, -0.6328125}
 }
 
 sprites.body_mask =
@@ -31,27 +31,27 @@ sprites.body_mask =
   direction_count = 64,
   frame_count = 1,
   scale = 0.5,
-  shift = {0, 0.1640625},
+  shift = {0, -0.0234375},
   apply_runtime_tint = true
 }
 
 sprites.shadow =
 {
   filename = "__jamaltron__/graphics/jamaltron-body-shadow.png",
-  width = 405,
+  width = 408,
   height = 256,
   line_length = 8,
   direction_count = 64,
   frame_count = 1,
   scale = 0.5,
-  shift = {0.6484375, 0},
+  shift = {0.890625, 0},
   draw_as_shadow = true
 }
 
 sprites.reflection =
 {
   filename = "__jamaltron__/graphics/jamaltron-body-water-reflection.png",
-  width = 380,
+  width = 378,
   height = 295,
   line_length = 1,
   variation_count = 1,
@@ -82,7 +82,7 @@ local clear =
 
 return
 {
-  config_hash = "83d6be794998",
+  config_hash = "bd71cb367d90",
   sprites = sprites,
   slots = slots,
   clear = clear,

@@ -66,17 +66,13 @@ def errors_of(text, extracts=None):
 def test_the_committed_files_are_what_the_catalog_generates_today():
     """The staleness gate. Runs without the gitignored extracts, which is exactly CI.
 
-    SKIPS until the generated files exist, and that is a DECISION, not a gap: running the
-    generator into the repo is the B.5 id freeze, which character/REVIEW.md names as one of
-    chotchki's one-way doors, sequenced after his D1-D10 calls. The generator is built and
-    tested; the freeze is his to take. Exactly ONE file present is never a skip -- that is
-    a half-committed generation, and it fails."""
+    Both files are committed (2026-09-24) and both must stay: a missing one is a failure,
+    never a skip, or deleting them would quietly switch this gate off. Generating is NOT the
+    id freeze -- chotchki's call: ids stay renumberable until playtesting settles them, and
+    the freeze is PLAN F.6, the last thing before release."""
     present = [p.exists() for p in (g.LUA_OUT, g.CFG_OUT)]
-    if not any(present):
-        pytest.skip("B.5 id freeze not taken yet (chotchki's call, character/REVIEW.md); "
-                    "run gen_lines.py to take it")
-    assert all(present), "only one generated file is committed: %s / %s" % (g.LUA_OUT.name,
-                                                                        g.CFG_OUT.name)
+    assert all(present), "generated file(s) missing -- run gen_lines.py: %s / %s" % (
+        g.LUA_OUT.name, g.CFG_OUT.name)
     lua, cfg, _, notes = g.build(g.CATALOG.read_text(encoding="utf-8"), None)
     assert g.LUA_OUT.read_text(encoding="utf-8") == lua, "run: uv run --directory tools " \
         "python gen_lines.py"

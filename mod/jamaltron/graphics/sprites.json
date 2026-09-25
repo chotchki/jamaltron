@@ -1,8 +1,8 @@
 {
   "version": 1,
   "generated_by": "tools/render/pack.py",
-  "generated_at": "2026-09-20T17:01:31",
-  "config_hash": "83d6be794998",
+  "generated_at": "2026-09-24T19:09:35",
+  "config_hash": "bd71cb367d90",
   "mod": "jamaltron",
   "mod_roots": {
     "jamaltron": ".."
@@ -35,7 +35,7 @@
       "scale": 0.5,
       "shift": [
         0.0,
-        -0.4453125
+        -0.6328125
       ]
     },
     {
@@ -49,21 +49,21 @@
       "scale": 0.5,
       "shift": [
         0.0,
-        0.1640625
+        -0.0234375
       ],
       "apply_runtime_tint": true
     },
     {
       "id": "shadow",
       "filename": "__jamaltron__/graphics/jamaltron-body-shadow.png",
-      "width": 405,
+      "width": 408,
       "height": 256,
       "line_length": 8,
       "direction_count": 64,
       "frame_count": 1,
       "scale": 0.5,
       "shift": [
-        0.6484375,
+        0.890625,
         0.0
       ],
       "draw_as_shadow": true
@@ -71,7 +71,7 @@
     {
       "id": "reflection",
       "filename": "__jamaltron__/graphics/jamaltron-body-water-reflection.png",
-      "width": 380,
+      "width": 378,
       "height": 295,
       "line_length": 1,
       "variation_count": 1,

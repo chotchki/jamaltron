@@ -183,7 +183,7 @@ ENUMS = {
 #: sit at their defaults. Read that twice, because it is the one deliberate hole in the
 #: provenance story and it exists for exactly one reason.
 #:
-#: mod/jamaltron/graphics/ ships four PNGs stamped `config 83d6be794998` plus a per-pass
+#: mod/jamaltron/graphics/ ships four PNGs stamped `config bd71cb367d90` plus a per-pass
 #: hash each, and pack.py REFUSES a sheet whose pass hash does not match the config being
 #: packed. A hash over "every key in SCHEMA" therefore means the schema can never grow
 #: again without invalidating art that is already correct: adding `bounce.height = 0.0` to
@@ -331,13 +331,92 @@ def resolve(raw: dict | None = None, overrides: dict | None = None, *,
     return cfg
 
 
-def load(path=None, overrides: dict | None = None, *, env: dict | None = None) -> dict:
-    """Read jamaltron.toml (or `path`) and resolve it."""
+#: The standing shark's overlay, C.24: the beached flop is jamaltron.toml plus only the
+#: knobs the flop is about, so a shared knob (scale, girth, sun, camera, mask) has ONE home
+#: and the two sheets cannot drift apart.
+BEACHED_CONFIG_PATH = DEFAULT_CONFIG_PATH.parent / "beached.toml"
+
+
+def read_layers(path=None) -> list:
+    """A config file and every file under it, BASE FIRST: [(path, raw TOML), ...].
+
+    A file whose top level says `base = "jamaltron.toml"` is an OVERLAY: the base resolves
+    first, relative to the overlay's own directory, and the overlay replaces keys on top of
+    it. A key, never a whole table -- an overlay that says `[model] action = "SWIM_FAST"`
+    changes the action and keeps the base's scale, which is the entire point. `base` is taken
+    out of the raw dict here, so nothing downstream ever sees it as a knob.
+
+    Chains are legal (an overlay on an overlay) and a cycle is an error, not a hang.
+    """
     import tomllib
-    p = pathlib.Path(path or DEFAULT_CONFIG_PATH)
-    with open(p, "rb") as fh:
-        raw = tomllib.load(fh)
-    return resolve(raw, overrides, env=env)
+    chain, seen = [], []
+    p = pathlib.Path(path or DEFAULT_CONFIG_PATH).resolve()
+    while True:
+        if p in seen:
+            raise ConfigError("config base cycle: %s"
+                              % " -> ".join(q.name for q in seen + [p]))
+        seen.append(p)
+        try:
+            with open(p, "rb") as fh:
+                raw = tomllib.load(fh)
+        except FileNotFoundError:
+            if len(seen) == 1:
+                raise
+            raise ConfigError(f"{seen[-2].name}: base {p.name!r} not found at {p}") from None
+        base = raw.pop("base", None)
+        chain.append((p, raw))
+        if base is None:
+            return chain[::-1]
+        if not isinstance(base, str):
+            raise ConfigError(f"{p.name}: base must be a file name, got {base!r}")
+        p = (p.parent / base).resolve()
+
+
+def merged(layers) -> tuple:
+    """(flat knobs, sequence table or None) out of read_layers(), base first.
+
+    Unknown keys are caught HERE, per file, so the error names the file the typo is in --
+    after the merge there is only one flat dict and no way to say whose line it was.
+    `sequence` is the one table that is not knobs (render/sequence.py reads it), and it is
+    taken whole from the topmost file that has one: a frame list does not merge key by key.
+    """
+    knobs, sequence = {}, None
+    for path, raw in layers:
+        raw = dict(raw)
+        if "sequence" in raw:
+            sequence = raw.pop("sequence")
+        flat = flatten(raw)
+        for key in flat:
+            if key not in SCHEMA:
+                raise ConfigError(f"unknown knob {key!r} in {path.name}{suggest(key)}")
+        knobs.update(flat)
+    return knobs, sequence
+
+
+def load(path=None, overrides: dict | None = None, *, env: dict | None = None) -> dict:
+    """Read jamaltron.toml (or `path`, and whatever it names as its base) and resolve it."""
+    knobs, _ = merged(read_layers(path))
+    return resolve(knobs, overrides, env=env)
+
+
+def load_sequence(path=None):
+    """The `[sequence]` table `path` carries (or inherits), or None. Raw TOML; render/
+    sequence.py is what validates and expands it."""
+    return merged(read_layers(path))[1]
+
+
+def overlay_of(path=None):
+    """(base knobs resolved, the overlay's own flat keys) for an overlay; None otherwise.
+
+    What the tuner's export needs to write an overlay-shaped block: the base to diff against
+    and the keys the overlay already owns."""
+    layers = read_layers(path)
+    if len(layers) < 2:
+        return None
+    base, _ = merged(layers[:-1])
+    top = dict(layers[-1][1])
+    top.pop("sequence", None)
+    return resolve(base, env={}), flatten(top)
 
 
 def parse_set(assignments) -> dict:
@@ -585,13 +664,6 @@ def warnings(cfg: dict) -> list[str]:
             "the head cannot lift off the ground however hard the spine thrashes. At roll "
             "80-90 that is the curl-up the whole pose depends on. Set "
             "model.reparent_head = true" % cfg["model.action"])
-    if cfg["model.ground_contact"] and not posed:
-        out.append(
-            "model.ground_contact with model.action=rest MOVES THE STANDING SHARK off the height "
-            "his shipped sheets were rendered at: contact cancels model.offset z (%.2f) and "
-            "re-seats him on his lowest vertex. At the committed config that vertex is 0.26 "
-            "tiles BELOW z=0 (C.27), so contact RAISES him about 12 px. It is the flop's knob; "
-            "pick a clip or turn it off" % cfg["model.offset"][2])
     if not posed and not cfg["model.rest_pose"]:
         out.append(
             "model.action=rest with model.rest_pose=false renders whatever pose the .blend "

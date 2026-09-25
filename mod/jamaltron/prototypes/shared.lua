@@ -18,6 +18,12 @@ local C = {
   -- See entity.lua: measured largest mount ring that keeps all 8 legs on the
   -- shark's silhouette at every rotation. C.13.
   mount_shrink = 0.45,
+  -- Tiles of SCREEN offset every mount moves UP, after the shrink. C.27 put his belly
+  -- on the ground (ground contact): at the tuned shark that raised the body 0.2602
+  -- tiles of world height, which the 45-degree camera draws 0.2602 * 0.7071 = 0.184
+  -- tiles up-screen. The mounts follow so they land on the same pixels of him C.13
+  -- measured. Re-measure (art.py --compare, coverage line) if scale or girth move.
+  mount_lift = 0.184,
   remnants = "jamaltron-remnants",
   explosion = "jamaltron-explosion",
 }
