@@ -2,6 +2,8 @@
 .claude/plan-bridge-state.json
 .claude/plan-bridge-state.json.lock
 .claude/plan-bridge-cleared.jsonl
+# Claude Code worktrees (workflow agents render and spike in these; never part of the tree)
+.claude/worktrees/
 
 # The bought 3D model, its textures and any .blend derived from them.
 # RenderHub license: renders ship, source does NOT. Nothing in here is ever committed.
@@ -11,9 +13,16 @@ assets/source/
 # must never land in a public repo - only the distilled profile and line catalog do.
 character/extracts/
 
-# Blender
+# Blender and the bought model's formats ANYWHERE in the tree: assets/source/ is their home,
+# these catch a copy saved elsewhere (a directory-only rule would let `git add -A` take it).
+*.blend
 *.blend1
 *.blend2
+*.fbx
+*.dae
+*.obj
+HAMMERHEAD*
+hammerhead_shark*
 
 # Python / uv tooling under tools/
 .venv/
@@ -23,9 +32,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Factorio smoke-test scratch (tools/smoke.sh) and build output (tools/build.sh)
+# Isolated Factorio profiles (tools/smoke.sh throwaway; play.sh, shot.sh kept between runs),
+# build output (build.sh), logs
 .smoketest/
 .playtest/
+.shottest/
 dist/
 jamaltron_*.zip
 factorio-current.log
@@ -34,19 +45,18 @@ factorio-current.log
 # macOS
 .DS_Store
 
-# FMTK-generated Factorio API type defs (1157 files / 7.0M, regenerate with tools/gen-defs.sh).
-# Only the generated tree is ignored - .ls-defs/supplement/ is hand-written source and IS committed.
+# FMTK-generated Factorio API type defs (1156 files / 7.0M, regenerate with tools/gen-defs.sh).
+# Only the generated tree: .ls-defs/supplement/ is hand-written source and IS committed.
 .ls-defs/factorio/
 
-# Per-book verbatim quote banks: ~22KB of tabulated Dinniman dialogue. These are the
-# intermediate the line catalog is authored FROM, not a deliverable. character/lines.md
-# ships (B.5 generates scripts/lines.lua + the locale file from it); the raw banks stay
-# local. Regenerate by re-running the Phase B pipeline against the gitignored extracts.
+# Per-book verbatim quote banks: ~22KB of tabulated Dinniman dialogue, the intermediate the
+# line catalog is authored FROM. character/lines.md ships (B.5 generates scripts/lines.lua +
+# the locale file from it); the raw banks stay local. Regenerate by re-running the Phase B
+# pipeline against the gitignored extracts.
 character/profiles/*_quote_bank.md
 character/profiles/book8_lines.md
 
-# C.10 art-iteration harness output (tools/render/art.py). Frames, contact sheets and
-# compare PNGs land here and STAY here. Promoting a sheet into mod/jamaltron/graphics/
-# is a deliberate act - that directory carries the RenderHub carve-out licence, and
-# git history is permanent, so nothing gets there by accident or by a wildcard.
+# C.10 art-iteration harness output (tools/render/art.py): frames, contact sheets and
+# compare PNGs STAY here. Promoting a sheet into mod/jamaltron/graphics/ is deliberate -
+# that directory carries the RenderHub carve-out licence and git history is permanent.
 render-out/

@@ -1,34 +1,28 @@
 #!/usr/bin/env bash
 # Headless smoke test for the jamaltron mod. The every-edit gate.
 #
-# Loads the mod in a THROWAWAY Factorio profile - its own config.ini, its own
-# write-data, and a mod directory holding nothing but our mod - so it can never
-# touch the real install under ~/Library/Application Support/factorio. Three
-# stages, cheapest first:
-#
+# Loads the mod in a THROWAWAY profile (own config.ini and write-data, a mod dir holding
+# only our mod), never the real ~/Library/Application Support/factorio. Cheapest first:
 #   1. base only   factorio --create     settings + data stage, control main chunk, on_init
 #   2. Space Age   factorio --create     the same, with the DLC prototypes loaded
 #   3. Space Age   factorio --benchmark  on_load plus N ticks of on_tick
 #
-# Exit status alone is NOT a gate. Factorio exits 0 on real failures: a malformed
-# info.json makes it silently SKIP the mod, and a typo'd prototype key is only a
-# Warning (and only with --check-unused-prototype-data). So every stage is judged
-# on three things - exit status, zero Error/Warning lines in the output, and a
-# positive "Loading mod <name>" line proving the mod loaded rather than being
-# quietly dropped.
+# Exit status alone is NOT a gate: Factorio exits 0 on real failures (a malformed
+# info.json silently SKIPS the mod; a typo'd prototype key is only a Warning, and only
+# with --check-unused-prototype-data). Each stage is judged on exit status, zero
+# Error/Warning lines and a positive "Loading mod <name>" line.
 #
-# Headless never loads sprites, so a missing PNG is invisible to all three stages.
-# The asset preflight below covers the literal-path case; the real graphics check
-# is `factorio --dump-icon-sprites`, which is accurate, mac-only and ~35s.
+# Headless never loads sprites, so a missing PNG is invisible to all three stages. The
+# asset preflight covers literal paths; the real graphics check is
+# `factorio --dump-icon-sprites` (accurate, mac-only, ~35s).
 #
 # Usage: tools/smoke.sh [--mod-dir PATH|--mod-zip PATH] [--ticks N] [--keep] [-v]
 #                       [--workdir PATH] [--harness DIR]
-#
-# --harness DIR loads a second, test-only mod (tools/harness/jamaltron-harness) into the
-# same throwaway profile and judges what it logs: any `HARNESS FAIL` line fails the run,
-# `HARNESS done` must appear, every `HARNESS need <ERE>` must match some line of the run and
-# no `HARNESS never <ERE>` may. Ticks default to 3800 with a harness (the idle timer needs
-# the better part of a minute).
+#   --harness DIR  also load a test-only mod (tools/harness/*) and judge its log: any
+#                  `HARNESS FAIL` fails, `HARNESS done` must appear, every `HARNESS need
+#                  <ERE>` must match a run line and no `HARNESS never <ERE>` may. --ticks
+#                  defaults to 3800 with one (the idle timer needs most of a minute)
+#   --keep         keep the scratch dir and its logs
 # Env:   FACTORIO_BIN=/path/to/factorio   binary override (FACTORIO also accepted)
 #        SMOKE_WORKDIR=PATH               scratch dir override
 #        SMOKE_TIMEOUT=SECONDS            per-stage kill, 0 disables (default 120)
@@ -80,9 +74,9 @@ READ_DATA="$(cd -- "$(dirname -- "$FACTORIO_BIN")/../data" 2>/dev/null && pwd)" 
   die "cannot find a data dir next to $FACTORIO_BIN"
 [ -d "$READ_DATA/base" ] || die "no base game data under $READ_DATA"
 
-# info.json is parsed HERE on purpose. Factorio's answer to malformed metadata is
-# to skip the mod and still exit 0, and "bad info.json, here is the JSON error"
-# beats "your mod never loaded, good luck".
+# info.json is parsed HERE on purpose: Factorio skips a mod with malformed metadata
+# and still exits 0, and "bad info.json, here is the JSON error" beats "your mod
+# never loaded, good luck".
 parse_info() {
   python3 -c 'import json, sys
 try:
@@ -98,11 +92,9 @@ case "$MOD_SRC" in
   *.zip)
     MOD_KIND=zip
     MOD_SRC="$(cd -- "$(dirname -- "$MOD_SRC")" && pwd)/$(basename -- "$MOD_SRC")"
-    # One top-level folder, because THIS SCRIPT needs one: it reads info.json out of
-    # the zip and runs the asset preflight against the unpacked tree. It is not an
-    # engine rule. MEASURED 2.1.17: Factorio never looks at the folder name inside a
-    # zip mod - it takes the name and version off the zip FILENAME, and a
-    # jamaltron_0.1.0.zip whose inner folder is wrongroot/ loads clean.
+    # One top-level folder because THIS SCRIPT needs one (info.json and the asset
+    # preflight read the unpacked tree), not the engine: MEASURED 2.1.17, Factorio
+    # never checks the inner folder name (see tools/build.sh).
     roots="$(unzip -Z1 "$MOD_SRC" | awk -F/ '{print $1}' | sort -u)"
     [ "$(printf '%s\n' "$roots" | grep -c .)" -eq 1 ] ||
       die "zip must hold exactly one top-level folder, found: $(printf '%s' "$roots" | tr '\n' ' ')"
@@ -123,10 +115,9 @@ MOD_NAME="${info%% *}"
 MOD_VER="${info##* }"
 
 # An UNPACKED mod directory must be named <name> or <name>_<version>, case
-# sensitive, or Factorio refuses it outright - that one is a real engine rule, and
-# answering it here takes 5ms instead of a log hunt. A zip's INNER folder is a
-# different story (see the zip branch below), so the caller says whose rule it is
-# invoking and gets the matching complaint.
+# sensitive, or Factorio refuses it - a real engine rule, answered here in 5ms
+# instead of a log hunt. A zip's INNER folder is only our convention, so the caller
+# says whose rule it invokes and gets the matching complaint.
 check_folder_name() { # check_folder_name <folder> <what it is> <engine|convention>
   local got="$1" what="$2" whose="${3:-engine}"
   if [ "$got" != "$MOD_NAME" ] && [ "$got" != "${MOD_NAME}_${MOD_VER}" ]; then
@@ -138,9 +129,8 @@ check_folder_name() { # check_folder_name <folder> <what it is> <engine|conventi
 }
 
 if [ "$MOD_KIND" = zip ]; then
-  # The FILENAME check is the one that mirrors the engine: a zip mod's name and
-  # version come from the filename, so jamaltron_0.1.0.zip is what gets loaded and
-  # anything else is a mod the game will not find. The inner-folder check is ours.
+  # The FILENAME check mirrors the engine (a zip mod's name and version come from
+  # the filename, anything else is not found); the inner-folder check is ours.
   check_folder_name "$ZIP_ROOT" "the folder inside the zip" convention
   zip_base="$(basename "$MOD_SRC" .zip)"
   [ "$zip_base" = "${MOD_NAME}_${MOD_VER}" ] ||
@@ -198,9 +188,9 @@ EOF
 fail=0
 
 # ---- stage 0: asset preflight, because headless cannot see missing images ----
-# Literal paths only. A path built by concatenation slips through, and existence
-# is all this proves - not that the sheet is the size the prototype claims. Both
-# of those belong to the Phase C sprite packer, which emits the numbers.
+# Literal paths only: a concatenated path slips through, and this proves existence,
+# not that the sheet is the size the prototype claims. Both belong to the sprite
+# packer (tools/render/pack.py), which emits the numbers.
 missing=0
 while IFS= read -r ref; do
   [ -n "$ref" ] || continue
@@ -213,10 +203,10 @@ if [ "$missing" -ne 0 ]; then
   fail=1
 fi
 
-# A log line reads "<seconds> <Level> <File.cpp>:<n>: <msg>", and only Error and
-# Warning are failures. The leading-timestamp anchor is what makes this safe: it
-# cannot fire on a message body or on a path that happens to contain the word.
-# Control-stage errors print with no timestamp at all, hence the alternatives.
+# A log line reads "<seconds> <Level> <File.cpp>:<n>: <msg>"; only Error and
+# Warning fail. The leading-timestamp anchor keeps it off message bodies and paths
+# containing the word. Control-stage errors print with no timestamp, hence the
+# alternatives.
 ERR_RE='^[[:space:]]*[0-9]+\.[0-9]+ (Error|Warning) |^-+ Error -+$|^Error([: ])|^Failed to load mod'
 
 judge() { # judge <label> <exit status> <logfile>
@@ -229,11 +219,10 @@ judge() { # judge <label> <exit status> <logfile>
     fi
     bad=1
   fi
-  # -A 3 because the line that MATCHES is almost never the line that tells you what
-  # broke. MEASURED on 2.1.17: "Error: <mod> errored when running a required file."
-  # puts "control.lua:3: unexpected symbol near <eof>" two lines later, and "Error
-  # while running event <mod>::on_tick" puts the file:line one line later. Without the
-  # context the gate says "something failed" and you go read the log anyway.
+  # -A 3 because the matching line is almost never the one that says what broke.
+  # MEASURED on 2.1.17: "Error: <mod> errored when running a required file." puts
+  # "control.lua:3: unexpected symbol near <eof>" two lines later, and "Error while
+  # running event <mod>::on_tick" puts the file:line one line later.
   hits="$(grep -nE -A 3 "$ERR_RE" "$log" || true)"
   if [ -n "$hits" ]; then
     echo "smoke: FAIL $label - error/warning lines in the output:"
@@ -247,8 +236,8 @@ judge() { # judge <label> <exit status> <logfile>
   if [ "$bad" -eq 0 ]; then
     [ "$VERBOSE" -eq 0 ] || echo "smoke: ok   $label"
   else
-    # Errors reach stdout only, never the log file, for anything control-stage.
-    # So dump the tail of what we captured rather than pointing at a path.
+    # Control-stage errors reach stdout only, never the log file, so dump the tail
+    # of what we captured instead of pointing at a path.
     if [ -z "$hits" ]; then
       echo "smoke:      last 30 lines of $label:"
       tail -n 30 "$log" | sed 's/^/    /'
@@ -258,10 +247,19 @@ judge() { # judge <label> <exit status> <logfile>
 }
 
 write_mod_list() { # write_mod_list <true|false, for the DLC mods>
-  # Without this the isolated dir enables everything it discovers, and the DLC
-  # ships inside the game's own data dir - so the default run is a Space Age run.
-  # The SPEC promises base-only works, so base-only gets tested every time.
-  local dlc="$1"
+  # Without this the isolated dir enables everything it discovers, and the DLC ships
+  # inside the game's data dir, so the default run is Space Age. The SPEC promises
+  # base-only works, so base-only gets tested every time.
+  #
+  # The harness entry is built OUTSIDE the heredoc. MEASURED (D.7): inside one, bash strips the
+  # quotes from a ${VAR:+word} and the word's first `}` closes the expansion, so the entry came
+  # out {name:jamaltron-harness,...} with a harness and the list ended `}}]}` without - invalid
+  # JSON both ways, which Factorio answers by enabling everything. Every "base only" stage since
+  # D.5 had run with Space Age loaded. Hence the parse below, and the base-only stage refusing
+  # a log that loaded space-age.
+  local dlc="$1" extra=""
+  [ -z "$HARNESS_NAME" ] || extra=",
+ {\"name\":\"$HARNESS_NAME\",\"enabled\":true}"
   cat > "$WORK/mods/mod-list.json" <<EOF
 {"mods":[
  {"name":"base","enabled":true},
@@ -269,16 +267,17 @@ write_mod_list() { # write_mod_list <true|false, for the DLC mods>
  {"name":"quality","enabled":$dlc},
  {"name":"recycler","enabled":$dlc},
  {"name":"space-age","enabled":$dlc},
- {"name":"$MOD_NAME","enabled":true}${HARNESS_NAME:+,
- {"name":"$HARNESS_NAME","enabled":true}}]}
+ {"name":"$MOD_NAME","enabled":true}$extra]}
 EOF
+  python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$WORK/mods/mod-list.json" ||
+    die "wrote an invalid $WORK/mods/mod-list.json - Factorio would ignore it and enable every mod"
 }
 
 run_factorio() { # run_factorio <logfile> <args...>
   local log="$1"; shift
   local rc=0
   # macOS has no timeout(1). perl's alarm survives exec, so the game itself takes
-  # the SIGALRM and dies with 142 - a hang fails instead of blocking the terminal.
+  # the SIGALRM and dies with 142: a hang fails instead of blocking the terminal.
   if [ "$TIMEOUT" -gt 0 ]; then
     perl -e 'alarm shift; exec @ARGV or die' -- "$TIMEOUT" \
       "$FACTORIO_BIN" --mod-directory "$WORK/mods" --config "$WORK/config.ini" \
@@ -298,6 +297,10 @@ write_mod_list false
 rc=0
 run_factorio "$WORK/create-base.log" --create "$WORK/write/base.zip" || rc=$?
 judge "create (base only)" "$rc" "$WORK/create-base.log"
+if grep -qE "^[[:space:]]*[0-9]+\.[0-9]+ Loading mod space-age " "$WORK/create-base.log"; then
+  echo "smoke: FAIL create (base only) - space-age loaded, so the stage tested nothing base-only"
+  fail=1
+fi
 
 # ---- stage 2: with Space Age ------------------------------------------------
 write_mod_list true
@@ -329,12 +332,17 @@ if [ -n "$HARNESS_NAME" ] && [ -f "$WORK/bench-sa.log" ]; then
     echo "smoke: FAIL harness - never reached 'HARNESS done' (a crash, or --ticks too short)"
     fail=1
   fi
+  # Filtered to files ONCE, never `grep -v | grep -q`: under pipefail grep -q's early exit
+  # SIGPIPEs upstream once ~64 KB of log follows the match, and the 141 reads as a miss - a
+  # false FAIL on need, a false PASS on never (measured, tests/test_smoke.py).
+  grep -v 'HARNESS need ' "$bench" > "$WORK/harness-need.log" || true
+  grep -v 'HARNESS never ' "$bench" > "$WORK/harness-never.log" || true
   while IFS= read -r pat; do
-    grep -v 'HARNESS need ' "$bench" | grep -qE -- "$pat" ||
+    grep -qE -- "$pat" "$WORK/harness-need.log" ||
       { echo "smoke: FAIL harness - nothing in the run matched: $pat"; fail=1; }
   done < <(sed -n 's/^.*HARNESS need //p' "$bench")
   while IFS= read -r pat; do
-    if grep -v 'HARNESS never ' "$bench" | grep -qE -- "$pat"; then
+    if grep -qE -- "$pat" "$WORK/harness-never.log"; then
       echo "smoke: FAIL harness - the run matched what it must never: $pat"; fail=1
     fi
   done < <(sed -n 's/^.*HARNESS never //p' "$bench")
