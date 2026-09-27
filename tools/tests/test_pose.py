@@ -1,21 +1,19 @@
-"""The clip table's promises, with no Blender and no model anywhere in the loop.
+"""The clip table's promises, with no Blender and no model.
 
-Three of them are load bearing and the rest is arithmetic:
+Three matter; the rest is arithmetic:
 
  1. THE TABLE CANNOT LIE FOR LONG. It is hardcoded knowledge about a file this repo does not
     ship, so pose.verify_clips() checks it against what Blender reports on every posed
-    render. These tests pin the checker, because a checker that cannot fail is decoration.
- 2. THE SCHEMA AND THE TABLE AGREE ON WHAT A CLIP IS CALLED. `model.action` takes its legal
-    values from ACTION_CHOICES; a clip that is in the table and not in the enum is a clip you
-    cannot select, and one in the enum and not the table is a fatal render halfway through.
+    render. These tests pin the checker: one that cannot fail is decoration.
+ 2. THE SCHEMA AND THE TABLE AGREE ON CLIP NAMES. `model.action` takes its legal values from
+    ACTION_CHOICES; a clip in the table but not the enum cannot be selected, and one in the
+    enum but not the table is a fatal render halfway through.
  3. A LOOP STARTS WHERE THE CLIP STARTS. Every stride keeps frame 1, or the loop stutters at
-    the seam that the stale-final-keyframe drop exists to remove.
+    the seam the stale-final-keyframe drop exists to remove.
 
-This module used to bake poses into temp .blends because the harness had no knob for which
-action. The knobs landed (artconfig.SCHEMA: model.action / model.pose_gain), so the bake and
-its cache are gone and the tests that pinned "a baked pose never lands in the repo" went with
-them -- there is nothing to write any more. The rule they protected is now structural: the
-only thing that ever opens the model is Blender, and it opens the bought file read-only.
+Poses used to be baked into temp .blends; with model.action / model.pose_gain in
+artconfig.SCHEMA the bake, its cache and its "never lands in the repo" tests are gone. That
+rule is now structural: only Blender opens the model, and it opens the bought file read-only.
 """
 
 from render import artconfig as ac
@@ -33,8 +31,8 @@ def test_the_clip_table_is_internally_consistent():
 
 
 def test_the_schema_offers_exactly_the_clips_the_table_knows():
-    """Two lists of the same thing is one list that rots. `model.action`'s enum IS this
-    table, so a clip added here is selectable from the CLI and the tuner the same minute."""
+    """`model.action`'s enum IS this table (two lists would rot), so a clip added here is
+    selectable from the CLI and the tuner immediately."""
     assert ac.ENUMS["model.action"] is pose.ACTION_CHOICES
     assert list(pose.ACTION_CHOICES) == [pose.REST] + [c.id for c in pose.CLIPS]
     assert ac.SCHEMA["model.action"][1] == pose.REST, "the schema must default to no pose"
@@ -43,8 +41,8 @@ def test_the_schema_offers_exactly_the_clips_the_table_knows():
 
 
 def test_an_action_the_table_does_not_know_is_fatal_not_silent():
-    """A misspelled clip that rendered the rest shark would be the worst outcome: the sheet
-    looks plausible and the footer names a pose that never happened."""
+    """A misspelled clip rendering the rest shark is the worst outcome: a plausible sheet
+    whose footer names a pose that never happened."""
     import pytest
     with pytest.raises(ac.ConfigError) as exc:
         ac.resolve({"model": {"action": "SWIM_FASTT"}}, env={})
@@ -52,8 +50,8 @@ def test_an_action_the_table_does_not_know_is_fatal_not_silent():
 
 
 def test_verify_clips_catches_a_range_that_moved_under_it():
-    """The whole point of the check: the model gets re-exported, a cycle grows a frame, and
-    the frame slider would quietly offer a frame that does not exist."""
+    """The check's purpose: the model gets re-exported, a cycle grows a frame, and the frame
+    slider would quietly offer a frame that does not exist."""
     good = {c.action: {"raw": [c.lo, c.hi + 1], "dropped": [c.lo, c.hi]} for c in pose.CLIPS}
     assert pose.verify_clips(good) == []
 
@@ -69,7 +67,7 @@ def test_verify_clips_catches_a_range_that_moved_under_it():
 def test_verify_clips_reads_the_dropped_range_not_the_raw_one():
     """render_jamal drops each action's duplicate final keyframe before anything is played,
     so the range a slider may offer is the DROPPED one. Checking `raw` would report every
-    clip as off by one, every run, and the check would get turned off."""
+    clip off by one on every run, and the check would get turned off."""
     raw_only = {c.action: {"raw": [c.lo, c.hi + 1], "dropped": [c.lo, c.hi]}
                 for c in pose.CLIPS}
     assert pose.verify_clips(raw_only) == []
@@ -110,16 +108,16 @@ def test_a_rest_loop_is_one_frame_and_cannot_play():
 
 
 def test_the_loop_plays_at_the_clips_own_tempo():
-    """Ten frames of a 20-frame cycle at stride 2, each held 2/24 s, is the 0.83 s the clip
-    runs at 24 fps. A loop that plays at the wrong speed is a different animation."""
+    """Ten frames of a 20-frame cycle at stride 2, each held 2/24 s, is the clip's 0.83 s at
+    24 fps; the wrong speed is a different animation."""
     frames = pose.loop_frames("SWIM_FAST", 2)
     assert len(frames) == 10
     assert abs(len(frames) * pose.loop_ms(2) / 1000.0 - pose.clip_of("SWIM_FAST").seconds) < 1e-9
 
 
 def test_the_table_digest_moves_for_a_range_and_not_for_a_comment():
-    """It is a label for reports, so it has to track what the table CLAIMS about the model
-    and ignore how the claim is worded -- a re-worded note must not look like a new table."""
+    """A label for reports: it tracks what the table CLAIMS about the model, not the wording,
+    so a re-worded note is not a new table."""
     before = pose.table_digest()
     reworded = pose.Clip("SWIM_FAST", "ArmatureAction.002", 1, 20, "SPINE", "different prose")
     moved = pose.Clip("SWIM_FAST", "ArmatureAction.002", 1, 21, "SPINE", "x")
@@ -135,8 +133,8 @@ def test_the_table_digest_moves_for_a_range_and_not_for_a_comment():
 
 
 def test_pose_imports_no_sibling_and_needs_no_blender():
-    """artconfig imports pose (for the action enum), so pose importing artconfig would be a
-    cycle -- and `bpy` in here would make the schema unloadable outside Blender."""
+    """artconfig imports pose (for the action enum), so pose importing artconfig is a cycle,
+    and `bpy` here would make the schema unloadable outside Blender."""
     source = (pose.__file__ and open(pose.__file__).read()) or ""
     body = "\n".join(line for line in source.splitlines()
                      if line.startswith(("import ", "from ")))
@@ -177,12 +175,11 @@ def test_wave_lags_recovers_the_measured_swim():
 
 
 def test_wave_lags_survive_the_atan2_cut_wherever_the_cycle_starts():
-    """The neighbour-step wrap is the line that decides the answer ON THE REAL RIG: SPINE_01's
-    fundamental phase sits right on atan2's +-pi cut (MEASURED -3.063 then +2.749 for
-    SPINE_02 on FAST, -3.142 on MEDIUM, +3.139 on SLOW), so the raw first step comes out
-    -18.5 frames instead of +1.5 and every lag behind it is garbage. A synthetic wave at one
-    comfortable phase never crosses the cut and cannot catch that -- so sweep the start phase
-    round the whole circle, the cut included."""
+    """The neighbour-step wrap decides the answer ON THE REAL RIG: SPINE_01's fundamental
+    phase sits on atan2's +-pi cut (MEASURED -3.063 then +2.749 for SPINE_02 on FAST, -3.142
+    on MEDIUM, +3.139 on SLOW), so the raw first step is -18.5 frames instead of +1.5 and
+    every lag behind it is garbage. A wave at one comfortable phase never crosses the cut,
+    so sweep the start phase round the whole circle."""
     for i in range(64):
         phi = -math.pi + 2 * math.pi * i / 64
         for span in (20, 40, 78):
@@ -203,8 +200,8 @@ def test_the_tail_at_exactly_half_a_cycle_is_not_a_coin_flip():
 
 
 def test_a_joint_that_does_not_move_inherits_its_neighbours_lag():
-    """No swing, no phase worth reading -- and a garbage phase would shift every joint
-    behind it, because the lags accumulate down the chain."""
+    """No swing, no phase worth reading, and a garbage phase would shift every joint behind
+    it since lags accumulate down the chain."""
     sig = _travelling([0.0, 1.5, 3.0], [5.0, 5.0, 5.0], 20)
     sig[1] = [0.0] * 20
     got = pose.wave_lags(sig, 20)

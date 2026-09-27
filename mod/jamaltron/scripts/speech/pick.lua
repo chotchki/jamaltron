@@ -1,10 +1,10 @@
--- The line PICKER (PLAN D.5.1): which row of a pool Jamal says next. Pure arithmetic over
--- the generated catalog table (scripts/lines.lua) and one entity's speech record - no game
--- API anywhere in this file, so tools/tests runs it under plain lua against the real table.
+-- The line PICKER (PLAN D.5.1): which row of a pool Jamal says next. Pure arithmetic over the
+-- generated catalog (scripts/lines.lua) and one entity's speech record, no game API, so
+-- tools/tests runs it under plain lua against the real table.
 --
--- The rules are character/lines.md's, not this file's; each function names the section it
--- implements. Nothing here decides WHETHER he speaks (cooldowns, silence windows, a pending
--- chain) - that is speech.lua, and it gates before this runs. This decides WHAT.
+-- The rules are character/lines.md's; each function names the section it implements. This
+-- decides WHAT he says. WHETHER (cooldowns, silence windows, a pending chain) is speech.lua's,
+-- gated before this runs.
 
 local M = {}
 
@@ -12,9 +12,9 @@ local M = {}
 ---every tier above it.
 M.TIER_RANK = {quiet = 1, normal = 2, unbearable = 3}
 
----How many of an entity's recent lines anti-repeat remembers, by GRP. `legs_break` and
----`flopping` share 15 strings and fire back to back, so the window has to outlast a break
----plus a few apology ticks; eight lines is roughly two minutes of flopping at the defaults.
+---How many recent lines (by GRP) anti-repeat remembers per entity. `legs_break` and `flopping`
+---share 15 strings and fire back to back, so the window must outlast a break plus a few
+---apology ticks; eight lines is ~two minutes of flopping at the defaults.
 M.RECENT = 8
 
 ---Does `row` answer the condition this roll was made under? (lines.md, "The `split:` line
@@ -59,13 +59,12 @@ function M.eligible(pool, verbosity, cond, fired, channel)
   return out
 end
 
----Anti-repeat (lines.md, "Anti-repeat - the GRP contract"): drop rows whose GROUP this
----entity said recently, across every pool. When that empties a small pool it RELAXES
----rather than going silent - first to "just not the last line", then to anything - because
----a pool of four at `quiet` cannot promise eight lines of variety, and saying nothing is the
----failure the silence rows were rewritten to avoid.
----The idle.01 -> idle.02 callback (`allow_repeat`, ordered) is exempt when its first half
----was the last thing said.
+---Anti-repeat (lines.md, "Anti-repeat - the GRP contract"): drop rows whose GROUP this entity
+---said recently, in any pool. When that empties a small pool it RELAXES, first to "just not the
+---last line", then to anything: a pool of four at `quiet` cannot promise eight lines of variety,
+---and saying nothing is the failure the silence rows were rewritten to avoid.
+---Exempt: the idle.01 -> idle.02 callback (`allow_repeat`, ordered) when its first half was the
+---last thing said.
 ---@param rows table[] eligible rows
 ---@param recent string[] this entity's recent groups, oldest first
 ---@param last_id string? the id of the last row he said
@@ -133,8 +132,8 @@ function M.remember(recent, grp)
   end
 end
 
----The whole pick for one event: eligible -> fresh -> roll. nil when nothing can be said,
----which is a real outcome (a gated sub nobody reports, a hushed channel with no narration).
+---The whole pick for one event: eligible -> fresh -> roll. nil when nothing can be said, a real
+---outcome (a gated sub nobody reports, a hushed channel with no narration).
 ---@param catalog table the whole generated table (for allow_repeat)
 ---@param pool table
 ---@param opts {verbosity: string, cond: string?, fired: table?, recent: string[], last_id: string?, channel: string?}

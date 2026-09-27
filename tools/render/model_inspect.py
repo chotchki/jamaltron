@@ -1,7 +1,7 @@
 """Headless Blender triage for the bought hammerhead model.
 
-Dumps one JSON report plus a human summary so C.3-C.7 can be planned against real
-numbers instead of impressions. Nothing here writes into the repo.
+Dumps one JSON report plus a human summary so C.3-C.7 plan against real numbers, not
+impressions. Nothing here writes into the repo.
 
 Usage, from the repo root (`Blender` is /Applications/Blender.app/Contents/MacOS/Blender):
     Blender -b FILE.blend --python tools/render/model_inspect.py -- --out report.json
@@ -10,16 +10,15 @@ Usage, from the repo root (`Blender` is /Applications/Blender.app/Contents/MacOS
 Point --out somewhere OUTSIDE the repo. The model lives under the gitignored assets/source/
 and the licence turns on it staying there; a report is derived from it, so treat it the same.
 
-The --import form starts from an empty scene and imports fbx/dae/obj/gltf, which is
-how the .blend / .fbx / .dae comparison in C.2 is done: same script, three inputs.
+The --import form starts from an empty scene and imports fbx/dae/obj/gltf -- C.2's
+.blend / .fbx / .dae comparison is the same script on three inputs.
 
-NAMED model_inspect, and the prefix is load-bearing. `render/inspect.py` SHADOWS the
-standard library's `inspect` for every sibling in this directory, because Python and
-Blender both put the running script's own directory on sys.path[0]. `dataclasses` imports
-`inspect`, so the shadow turned `from dataclasses import dataclass` in a sibling module
-into `import bpy` and killed spritesheet.py and blender_check.py outside Blender. Do not
-rename this back, and do not give any file under render/ a stdlib module's name --
-test_art_harness.py fails the whole suite if you do.
+NAMED model_inspect on purpose: `render/inspect.py` SHADOWS the stdlib's `inspect` for every
+sibling in this directory, because Python and Blender both put the running script's
+directory on sys.path[0]. `dataclasses` imports `inspect`, so the shadow turned
+`from dataclasses import dataclass` in a sibling into `import bpy` and killed
+spritesheet.py and blender_check.py outside Blender. Do not rename it back, and give no
+file under render/ a stdlib module's name -- test_art_harness.py fails the suite if you do.
 
 What it measures, and why each number matters downstream:
   * bbox dimensions + origin placement -> Factorio renders at fixed camera rotations,
@@ -71,9 +70,9 @@ def parse_args():
 
 
 def image_header(path):
-    """Read dimensions straight off disk. Blender reports size 0x0 for an image it has
-    not loaded yet, and loading a 4k texture in background mode just to learn its size
-    is a waste, so parse the container instead."""
+    """Read dimensions straight off disk. Blender reports 0x0 for an image it has not
+    loaded, and loading a 4k texture headless just for its size is waste, so parse the
+    container."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(64)
@@ -116,9 +115,9 @@ def image_header(path):
 
 
 def do_import(path):
-    # Purge the factory-startup cube/camera/light AND their orphaned datablocks. Without
-    # the purge the datablock counts report a default grey "Material" and a stray mesh that
-    # came from Blender, not from the file under test - which wrecks a format comparison.
+    # Purge the factory-startup cube/camera/light AND their orphaned datablocks. Otherwise
+    # the counts report a default grey "Material" and a stray mesh from Blender, not the
+    # file under test, which wrecks a format comparison.
     for ob in list(bpy.data.objects):
         bpy.data.objects.remove(ob, do_unlink=True)
     for coll in (bpy.data.meshes, bpy.data.materials, bpy.data.cameras, bpy.data.lights,
@@ -213,11 +212,10 @@ def bbox_world(obj, depsgraph=None):
 
 
 def axis_report(obj):
-    """Infer forward/up from the geometry. A shark is unambiguous if you look at the
-    right features: the caudal fin is a tall vertical blade, the hammerhead's cephalofoil
-    is a wide horizontal bar. So the TAIL slice is tall-and-narrow and the HEAD slice is
-    wide-and-short, which names the up axis, the width axis and which end is the nose --
-    all without trusting the exporter's axis convention."""
+    """Infer forward/up from the geometry, not the exporter's axis convention. The caudal
+    fin is a tall vertical blade and the cephalofoil a wide horizontal bar, so the TAIL
+    slice is tall-and-narrow and the HEAD slice wide-and-short -- which names the up axis,
+    the width axis and which end is the nose."""
     me = obj.data
     mat = obj.matrix_world
     co = [mat @ v.co for v in me.vertices]
@@ -339,11 +337,10 @@ def modifier_detail(m):
 
 
 def evaluated_report(obj, arm_objs):
-    """What the RENDERER actually sees. The raw mesh is 2.6k quads but a live Subdivision
-    modifier means the rendered surface is a different object entirely, and the object's
-    bound_box already reflects the posed+subdivided result - which is why the raw vertex
-    bbox and obj.dimensions disagree. Both numbers are wanted: rest dims size the sprite,
-    posed dims size the render frame."""
+    """What the RENDERER sees. The raw mesh is 2.6k quads, but a live Subdivision modifier
+    makes the rendered surface a different object, and bound_box already reflects the
+    posed+subdivided result (hence raw vertex bbox and obj.dimensions disagree). Both are
+    wanted: rest dims size the sprite, posed dims size the render frame."""
     out = {}
     dg = bpy.context.evaluated_depsgraph_get()
 
@@ -445,7 +442,7 @@ def walk_material(mat):
 
     def upstream_images(sock, depth=0, via=None):
         """Chase a shader input back through Normal Map / Bump / Mix / Separate nodes to
-        whatever image actually feeds it. Wired-up-ness is the question, not topology."""
+        the image that feeds it. The question is whether it is wired up, not topology."""
         via = via or []
         found = []
         if not sock.is_linked or depth > 8:
@@ -660,13 +657,13 @@ def action_report(act):
 
 
 def sample_action(arm_obj, act, mesh_objs, n_samples=12):
-    """Walk an action and measure what it actually does: tail-tip travel per frame (a swim
-    cycle sweeps laterally, a flop does not), whether first and last pose match (clean
-    loop for C.5), and the animated bbox (render framing).
+    """Measure what an action does: tail-tip travel per frame (a swim cycle sweeps
+    laterally, a flop does not), whether first and last pose match (clean loop for C.5)
+    and the animated bbox (render framing).
 
-    MUTES the NLA stack first. This file ships with all five tracks unmuted, so an
-    un-muted sample is the stack plus the active action, not the clip - measured that way
-    every clip reported the same tail sweep, which is how the bug was caught."""
+    MUTES the NLA stack first. The file ships with all five tracks unmuted, so an unmuted
+    sample is the stack plus the active action, not the clip -- every clip then reports
+    the same tail sweep."""
     fr = act.frame_range
     f0, f1 = int(round(fr[0])), int(round(fr[1]))
     scene = bpy.context.scene
@@ -728,9 +725,9 @@ def sample_action(arm_obj, act, mesh_objs, n_samples=12):
             return None
         return max((max(abs(x - y) for x, y in zip(m0, m1)) for m0, m1 in zip(poses[a], poses[b])), default=0.0)
 
-    # Two loop conventions in the wild: last frame IS the repeat of the first (so f1 vs f0
-    # matches) or last frame is the frame BEFORE the wrap (so f1+1 would match f0, and the
-    # f1-1..f0 gap equals one step). Test both rather than guessing.
+    # Two loop conventions in the wild: last frame IS the repeat of the first (f1 matches
+    # f0) or the frame BEFORE the wrap (f1+1 would match f0, and the f1-1..f0 gap is one
+    # step). Test both.
     loop_dev = dev(f0, f1)
     loop_dev_minus1 = dev(f0, f1 - 1)
 
@@ -753,11 +750,10 @@ def sample_action(arm_obj, act, mesh_objs, n_samples=12):
         d = [b - a for a, b in zip(v, v[1:])]
         reversals = sum(1 for a, b in zip(d, d[1:]) if a * b < 0)
 
-    # True cycle length by autocorrelation on the tail sweep. Two guards earned the hard
-    # way: a clip that does not move the tail at all (the BITE clips) has a constant series
-    # that correlates at EVERY period, and a baked strip drifts by a few tenths of a percent
-    # through interpolation, so the tolerance has to be relative to the sweep amplitude, not
-    # an absolute epsilon.
+    # True cycle length by autocorrelation on the tail sweep. Two guards: a clip that never
+    # moves the tail (the BITE clips) has a constant series that correlates at EVERY
+    # period, and a baked strip drifts a few tenths of a percent through interpolation, so
+    # the tolerance is relative to the sweep amplitude, not an absolute epsilon.
     period = period_resid = None
     if lat and series.get(lat) and len(series[lat]) > 6:
         ser = series[lat]
@@ -822,9 +818,9 @@ def nla_report(obj):
                 "blend_type": s.blend_type,
                 "extrapolation": s.extrapolation,
                 # The authoritative cycle length when repeat > 1: the strip plays the action
-                # span this many times, and the mapping sends strip frame (start + span)
-                # back to action_frame_start - so the action's LAST frame is never played
-                # and rendering it puts a pop in the loop.
+                # span this many times and maps strip frame (start + span) back to
+                # action_frame_start, so the action's LAST frame never plays and rendering
+                # it puts a pop in the loop.
                 "frames_per_cycle": (s.frame_end - s.frame_start) / s.repeat if s.repeat else None,
                 "action_span": s.action_frame_end - s.action_frame_start,
                 "render_frames_for_one_cycle": [s.action_frame_start, s.action_frame_end - 1]
