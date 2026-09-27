@@ -1,22 +1,25 @@
--- PLACEHOLDER technology. Phase D.2 owns the real cost and the localised strings in
--- Jamal's voice; the prerequisite and the unlock are already final.
+-- PLACEHOLDER cost. Phase D.2 owns the real count and the localised strings in Jamal's
+-- voice; the prerequisites and the unlock are final.
 --
--- prerequisites = {"spidertron"} alone is correct: the stock spidertron tech's own six
+-- prerequisites = {"spidertron", "flamethrower"}. The stock spidertron tech's own six
 -- prerequisites (military-4, exoskeleton-equipment, fission-reactor-equipment,
 -- rocketry, efficiency-module-3, radar) are transitively implied, and repeating them is
--- noise. It also means the spidertron remote's shortcut is already unlocked before a
--- jamaltron can exist, so there is no remote work to do.
+-- noise. The spidertron remote's shortcut is therefore unlocked before a jamaltron can
+-- exist: no remote work to do. flamethrower is NOT implied
+-- (MEASURED, D.7: outside spidertron's closure in base and Space Age), and it unlocks both
+-- the flamethrower his recipe eats and the flamethrower-ammo his guns fire - without it he
+-- could be researched and neither built nor armed.
 --
 -- The science packs match stock spidertron (all six) because Jamal IS a spidertron
 -- mod; count is the only knob D.2 should be turning. Stock is 2500 at 30s.
 --
--- Note the asymmetry with recipe.lua: technology unit.ingredients still uses the
--- POSITIONAL {"name", count} form. That is how base writes it (technology.lua :5377),
--- not a typo - and data.ResearchIngredient is declared as exactly that tuple, so the
--- ---@type below type-checks the positional pairs rather than tolerating them.
+-- Asymmetry with recipe.lua: technology unit.ingredients still uses the POSITIONAL
+-- {"name", count} form. That is how base writes it (technology.lua :5377), not a typo -
+-- data.ResearchIngredient is declared as exactly that tuple, so the ---@type below
+-- type-checks the positional pairs rather than tolerating them.
 --
--- Hoisted out of data:extend for the same reason as recipe.lua: the annotation is what
--- keeps later writes (D.2's cost pass) checked.
+-- Hoisted out of data:extend for recipe.lua's reason: the annotation keeps later writes
+-- (D.2's cost pass) checked.
 
 local C = require("prototypes.shared")
 
@@ -29,7 +32,7 @@ local technology =
   icon = "__base__/graphics/technology/spidertron.png",
   icon_size = 256,
   effects = {{type = "unlock-recipe", recipe = C.name}},
-  prerequisites = {"spidertron"},
+  prerequisites = {"spidertron", "flamethrower"},
   unit =
   {
     ingredients =

@@ -1,7 +1,6 @@
 -- PLACEHOLDER recipe. Phase D.2 owns the real one (spidertron + raw fish + whatever
--- reads funny, rebalanced); this exists to prove tech -> recipe -> item -> entity is
--- wired end to end. The shape is already the eventual target, only the numbers are
--- throwaway.
+-- reads funny, rebalanced); this proves tech -> recipe -> item -> entity is wired end
+-- to end. The shape is the eventual target, only the numbers are throwaway.
 --
 -- 2.0+ shapes, not interchangeable with pre-2.0 snippets: `ingredients` entries are
 -- tagged tables ({type=, name=, amount=}), never the positional {"name", n} form, and
@@ -25,6 +24,11 @@ local recipe =
   ingredients =
   {
     {type = "item", name = "spidertron", amount = 1},
+    -- D.7: his gun. The spidertron above still brings its own rockets (base's recipe eats four
+    -- rocket launchers, Space Age's one rocket turret - space-age/base-data-updates.lua:374), so
+    -- this is an ADDITION until D.2 builds the recipe from parts. technology.lua requires
+    -- flamethrower research for it
+    {type = "item", name = "flamethrower", amount = 1},
     {type = "item", name = "raw-fish", amount = 10}
   },
   results = {{type = "item", name = C.name, amount = 1}}

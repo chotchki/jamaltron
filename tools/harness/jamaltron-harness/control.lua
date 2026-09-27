@@ -7,12 +7,18 @@
 --   HARNESS never <ERE>                 no log line may match
 --   HARNESS done <n>                    the script reached the end; missing = a crash
 --
--- Speech logs every line said as `jamaltron speech <unit> <row id>` while debug is on, which
--- is what the need/never lines are written against. Chance is the enemy of a test, so the
--- checks that need a particular row FORCE it (the harness remote skips the roll and the
--- gates) and the checks about the roll assert on what a roll is allowed to produce.
+-- With debug on, speech logs every line said as `jamaltron speech <unit> <row id>`; the
+-- need/never lines match that. Chance is the enemy of a test: checks that need a particular
+-- row FORCE it (the harness remote skips the roll and the gates), checks about the roll
+-- assert on what a roll may produce.
+--
+-- The shore stall's lanes (E.2.4) are shore.lua's: terrain of their own far from these
+-- spawns, driven every tick, judged before `done`. The bubble cap's (F.3) are cap.lua's, in a
+-- window of their own.
 
 local lines = require("__jamaltron__/scripts/lines")
+local shore = require("shore")
+local cap = require("cap")
 
 local SAY, HARNESS = "jamaltron", "jamaltron-harness"
 
@@ -189,6 +195,9 @@ at(3700, function(s)
   log("HARNESS done " .. tostring(storage.passed))
 end)
 
+shore.register(at, check)
+cap.register(at, check)
+
 table.sort(steps, function(x, y) return x.dt < y.dt end)
 
 script.on_event(defines.events.on_tick, function(event)
@@ -199,6 +208,20 @@ script.on_event(defines.events.on_tick, function(event)
     if step.dt == dt then
       local ok, err = pcall(step.fn, s)
       if not ok then check("step at dt " .. dt .. " ran", false, err) end
+    end
+  end
+  if not s.cap_broke then
+    local ok, err = pcall(cap.tick, dt)
+    if not ok then
+      s.cap_broke = true
+      check("the cap lane ran at dt " .. dt, false, err)
+    end
+  end
+  if not s.shore_broke then
+    local ok, err = pcall(shore.tick, dt)
+    if not ok then
+      s.shore_broke = true               -- once: a broken lane every tick is 3000 lines of noise
+      check("the shore lanes ran at dt " .. dt, false, err)
     end
   end
 end)

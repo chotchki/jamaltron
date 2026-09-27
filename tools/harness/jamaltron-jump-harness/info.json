@@ -1,0 +1,9 @@
+{
+  "name": "jamaltron-jump-harness",
+  "version": "0.1.0",
+  "title": "Jamaltron jump harness",
+  "author": "chotchki",
+  "description": "Headless test driver for scripts/jump.lua (PLAN E.1-E.3, E.2.6). Never shipped: tools/smoke.sh --harness loads it into a throwaway profile.",
+  "factorio_version": "2.1",
+  "dependencies": ["jamaltron"]
+}

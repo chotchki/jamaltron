@@ -1,13 +1,13 @@
 """B.5's generator: the catalog in, two files out, and every refusal it promises.
 
-The load-bearing test is the first one. The generated files are COMMITTED, the catalog is
-edited by hand, and a catalog edit that is not followed by a regenerate ships a mod whose
-strings disagree with the file everyone reads -- so CI regenerates in memory and refuses a
-stale commit. The rest pin the contract the catalog documents in its own header, each
-refusal checked against a catalog built to trip exactly that one.
+The first test is the staleness gate: the generated files are COMMITTED and the catalog is
+hand-edited, so an edit without a regenerate ships strings that disagree with the file
+everyone reads. CI regenerates in memory and refuses a stale commit. The rest pin the
+contract in the catalog's own header, each refusal against a catalog built to trip only it.
 """
 
 import pathlib
+import re
 import textwrap
 
 import pytest
@@ -29,8 +29,8 @@ def section(title, key, split, rows):
                       "**fires:** whenever", "", HEADER, RULE] + rows + [""])
 
 
-#: Header prose plus a table that is NOT a pool -- the real catalog has several, and the
-#: parser has to walk past them.
+#: Header prose plus a table that is NOT a pool; the real catalog has several and the parser
+#: has to walk past them.
 PREAMBLE = "# Catalog\n\nprose, and a table:\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
 
 
@@ -45,9 +45,9 @@ real_catalog = pytest.mark.real_catalog
 @pytest.fixture(autouse=True)
 def no_real_catalog_lists(request, monkeypatch):
     """The allow-repeat pair and the two ruled over-cap rows name REAL catalog rows, and
-    validate() refuses a list naming a row that does not exist -- which is right for the
-    real catalog and noise for a three-row one built to trip something else. So every test
-    gets empty lists unless it is marked as running on the real catalog."""
+    validate() refuses a list naming a missing row: right for the real catalog, noise for a
+    three-row one built to trip something else. So every test not marked real_catalog gets
+    empty lists."""
     if request.node.get_closest_marker("real_catalog") is None:
         monkeypatch.setattr(g, "ALLOW_REPEAT", ())
         monkeypatch.setattr(g, "OVER_CAP_RULED", {})
@@ -64,12 +64,12 @@ def errors_of(text, extracts=None):
 
 @real_catalog
 def test_the_committed_files_are_what_the_catalog_generates_today():
-    """The staleness gate. Runs without the gitignored extracts, which is exactly CI.
+    """The staleness gate, run without the gitignored extracts (exactly CI).
 
-    Both files are committed (2026-09-24) and both must stay: a missing one is a failure,
-    never a skip, or deleting them would quietly switch this gate off. Generating is NOT the
-    id freeze -- chotchki's call: ids stay renumberable until playtesting settles them, and
-    the freeze is PLAN F.6, the last thing before release."""
+    Both files are committed (2026-09-24) and a missing one fails, never skips, or deleting
+    them would switch this gate off. Generating is NOT the id freeze (chotchki's call): ids
+    stay renumberable until playtesting settles them; the freeze is PLAN F.6, last before
+    release."""
     present = [p.exists() for p in (g.LUA_OUT, g.CFG_OUT)]
     assert all(present), "generated file(s) missing -- run gen_lines.py: %s / %s" % (
         g.LUA_OUT.name, g.CFG_OUT.name)
@@ -99,8 +99,8 @@ def test_the_generated_files_carry_the_header_and_fit_the_linter():
 
 @real_catalog
 def test_the_locale_file_is_not_the_hand_written_one():
-    """jamaltron.cfg is hand-written and says the lines land in their own file; a generator
-    writing into it would eat the entity names on its first run."""
+    """jamaltron.cfg is hand-written and says the lines land in their own file; writing into
+    it would eat the entity names on the first run."""
     assert g.CFG_OUT.name == "jamaltron-lines.cfg"
     hand = (g.CFG_OUT.parent / "jamaltron.cfg").read_text(encoding="utf-8")
     assert "GENERATED" not in hand and "[jamaltron-line]" not in hand
@@ -140,6 +140,22 @@ def test_gated_dash_and_any_are_the_same_value_and_none_drops_sub():
     assert "sincere" not in lua, "an advisory SUB on a `none` split must not reach the picker"
 
 
+def test_a_gated_values_list_too_long_for_the_linter_wraps_between_values():
+    """jump_refused's ten reasons put its `values` line at 125 against luacheck's 120. It
+    wraps between values, and every value still reaches the Lua, in order."""
+    values = ["reason-%02d-%s" % (i, "x" * 8) for i in range(12)]
+    split = "gated — `reason`: `any` | %s." % " | ".join("`%s`" % v for v in values)
+    text = catalog(section("jump refused", "`jump_refused`", split,
+                           [row("jump_refused.01"),
+                            row("jump_refused.02", "Not here.", sub=values[-1])]))
+    lua, _, _, _ = g.build(text, None)
+    assert max(len(line) for line in lua.splitlines()) <= g.LUA_WIDTH
+    block = lua[lua.index("values = {"):]
+    block = block[:block.index("},") + 2]
+    assert "\n" in block, "12 values fit one line? then this test proves nothing"
+    assert re.findall(r'"([^"]+)"', block) == values
+
+
 def test_n_becomes_the_locale_parameter_and_the_row_asks_for_the_count():
     text = catalog(section("repaired", "`repaired`", "none",
                            [row("repaired.01", "Set {N} is fitted.")]))
@@ -165,9 +181,10 @@ def test_a_chain_emits_the_computed_delay_and_the_tail_flag():
 
 
 @pytest.mark.parametrize("length,ticks", [(54, 180), (36, 120), (44, 150), (32, 120),
-                                          (50, 180), (41, 150), (33, 120), (15, 60), (5, 60)])
+                                          (50, 180), (41, 150), (33, 120), (15, 60), (31, 120),
+                                          (5, 60)])
 def test_chain_delay_is_the_catalogs_formula(length, ticks):
-    """The nine shipped chains' own numbers, plus the floor."""
+    """The ten shipped chains' own numbers, plus the floor."""
     assert g.chain_delay("x" * length) == ticks
 
 
@@ -239,7 +256,7 @@ def test_a_chain_across_pools_is_refused():
 
 
 def test_every_problem_is_reported_at_once():
-    """A generator that stops at the first problem turns one pass of fixes into ten."""
+    """Stopping at the first problem turns one pass of fixes into ten."""
     text = one(row("built.01", ch="whisper"), row("built.02", "B.", tier="loud"))
     out = errors_of(text)
     assert "CH 'whisper'" in out and "TIER 'loud'" in out
@@ -318,7 +335,7 @@ def test_the_catalog_header_names_the_file_the_generator_writes():
 
 def test_every_emitted_field_reaches_the_lua():
     """Each field D.5 reads, emitted where the contract says. Mutation-checked: dropping any
-    one of them used to leave this suite passing."""
+    one used to leave this suite passing."""
     head = "Jamal is quite excited to battle with his new upgrades"
     text = catalog(
         section("land", "`land`", "gated — `outcome`: `any` | `held` | `broke`.",
