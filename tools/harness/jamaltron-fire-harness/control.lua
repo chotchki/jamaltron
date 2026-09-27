@@ -4,7 +4,9 @@
 --   P        prototypes: four jamaltron-flamethrowers on the vehicle and airborne, four
 --            disarmed twins on beached (D.7.3: his ammo, range 0, never warm), the signal on
 --            flamethrower ammo's vehicle stream, the flamethrower in the recipe and its research
---            among his prerequisites
+--            among his prerequisites, his research on spidertron's science packs (Space
+--            Age's eight: Gleba's agricultural pack among them) and all three bodies on
+--            spidertron's surface conditions (Space Age's one gravity: no platform placing)
 --   FL       the damage filter's fire half: absent before anyone fires, there while he does
 --   O        where the stream starts (D.7.4): ONE point under his belly, (0, -1.36) screen tiles
 --            from his position, +-0.1, read back off the stream entity - at 8 aims with him
@@ -73,6 +75,22 @@ local function check(name, ok, detail)
   log(ok and ("HARNESS ok " .. name) or ("HARNESS FAIL " .. name .. ": " .. tostring(detail)))
 end
 local function f3(x) return string.format("%.3f", x) end
+---A technology's science packs as "name x amount,...", in its order.
+local function packs(tech)
+  local out = {}
+  for _, i in ipairs(prototypes.technology[tech].research_unit_ingredients) do
+    out[#out + 1] = i.name .. " x" .. i.amount
+  end
+  return table.concat(out, ",")
+end
+---An entity's surface conditions as "property min..max,...", in its order ("" for none).
+local function conds(name)
+  local out = {}
+  for _, c in ipairs(prototypes.entity[name].surface_conditions or {}) do
+    out[#out + 1] = c.property .. " " .. tostring(c.min) .. ".." .. tostring(c.max)
+  end
+  return table.concat(out, ",")
+end
 
 local function paint(surface, x0, y0, x1, y1)
   local tiles = {}
@@ -139,6 +157,8 @@ script.on_init(function()
   end
   L("tech: jamaltron's prerequisite closure has flamethrower =", seen["flamethrower"] == true,
     "(space-age loaded:", script.active_mods["space-age"] ~= nil, ")")
+  L("tech: jamaltron's packs", packs("jamaltron"), "| spidertron's", packs("spidertron"))
+  L("surface: jamaltron's", conds("jamaltron"), "| spidertron's", conds("spidertron"))
 end)
 
 at(0, function(s)
@@ -218,6 +238,21 @@ at(1, function()
   local pre = prototypes.technology[VEHICLE].prerequisites
   check("P his research requires flamethrower (his recipe's gun, his guns' ammo)",
         pre["flamethrower"] ~= nil, line(pre))
+  -- compat.lua's copy: the same packs in the same order, and the run is Space Age (the benchmark
+  -- stage always is), so equal has to mean Gleba's pack - base's six on both sides would pass
+  local mine, stock = packs(VEHICLE), packs("spidertron")
+  check("P his research costs spidertron's packs, Gleba's among them (Space Age)",
+        mine == stock and script.active_mods["space-age"] ~= nil
+        and mine:find("agricultural-science-pack", 1, true) ~= nil
+        and mine:find("space-science-pack", 1, true) ~= nil, mine .. " vs " .. stock)
+  -- compat.lua's M.surface: all three bodies (bodies.lua copies the vehicle after it) where the
+  -- spidertron can go, and under Space Age that is one gravity - never empty, so a refactor that
+  -- drops them can't pass as "none on both"
+  local where = conds("spidertron")
+  for _, body in ipairs({VEHICLE, BEACHED, AIRBORNE}) do
+    check("P " .. body .. " on spidertron's surface conditions (no space platform)",
+          conds(body) == where and where:find("gravity", 1, true) ~= nil, conds(body) .. " vs " .. where)
+  end
   -- D.7.5 (b): every body's eight legs fire-proof (beached and airborne copy the vehicle's), the
   -- rest of stock's leg resistances kept, and the vehicle's own untouched (stock fire 15/60)
   local function pct(r, want) return r ~= nil and math.abs(r.percent - want) < 1e-4 end  -- floats

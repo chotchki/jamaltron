@@ -28,6 +28,7 @@ local function stage(opts)
                 equipment_categories = {"armor", "buoyant"}}
   local raw = {
     ["equipment-grid"] = {[grid.name] = grid},
+    technology = {},
     ["spider-vehicle"] = {
       [C.name] = {name = C.name, equipment_grid = (not opts.no_grid) and grid.name or nil},
       spidertron = {name = "spidertron", equipment_grid = grid.name},
@@ -152,6 +153,64 @@ test("W1 layers: a leg with no parts to layer, or no vehicle, is skipped, not an
   local raw = stage()
   raw["spider-vehicle"][C.name] = nil
   assert(compat.w1_layers() == 0)
+end)
+
+---A stage with his research and, unless `no_stock`, spidertron's - costing `packs`, the way Space
+---Age's data.lua leaves it.
+local function tech_stage(packs, no_stock)
+  local raw = stage()
+  raw.technology = {
+    [C.name] = {name = C.name, unit = {count = 500, time = 30, ingredients = {{"automation-science-pack", 1}}}},
+  }
+  if not no_stock then
+    raw.technology.spidertron = {name = "spidertron", unit = {count = 2500, time = 30, ingredients = packs}}
+  end
+  return raw
+end
+
+test("science: his packs become a COPY of spidertron's, his count and time kept", function()
+  local sa = {{"automation-science-pack", 1}, {"space-science-pack", 1}, {"agricultural-science-pack", 1}}
+  local raw = tech_stage(sa)
+  local got = compat.science()
+  local mine = raw.technology[C.name]
+  assert(got == mine.unit.ingredients and #got == 3, "set")
+  for i, pack in ipairs(sa) do assert(got[i][1] == pack[1] and got[i][2] == pack[2], pack[1]) end
+  assert(got ~= sa and got[3] ~= sa[3], "a copy: a later edit to spidertron's must not move his")
+  assert(mine.unit.count == 500 and mine.unit.time == 30, "D.2's knobs untouched")
+end)
+
+test("science: no spidertron tech, or one with no unit (a trigger tech): he keeps his own", function()
+  local raw = tech_stage(nil, true)
+  assert(compat.science() == nil)
+  assert(raw.technology[C.name].unit.ingredients[1][1] == "automation-science-pack")
+  raw = tech_stage(nil)
+  raw.technology.spidertron.unit = nil
+  assert(compat.science() == nil)
+  assert(#raw.technology[C.name].unit.ingredients == 1)
+end)
+
+test("surface: his conditions become a COPY of spidertron's, even after a data-updates edit to them", function()
+  local raw = stage()
+  local stock = raw["spider-vehicle"].spidertron
+  stock.surface_conditions = {{property = "gravity", min = 1}}
+  raw["spider-vehicle"][C.name].surface_conditions = {{property = "gravity", min = 1}}
+  stock.surface_conditions[2] = {property = "pressure", min = 10}  -- a later mod's edit
+  local got = compat.surface()
+  local mine = got and got.surface_conditions
+  assert(got == raw["spider-vehicle"][C.name] and mine and #mine == 2, "set")
+  assert(mine[2].property == "pressure" and mine[2].min == 10)
+  assert(mine ~= stock.surface_conditions and mine[1] ~= stock.surface_conditions[1], "a copy")
+end)
+
+test("surface: base (none on spidertron) leaves him none; no spidertron: he keeps his own", function()
+  local raw = stage()
+  raw["spider-vehicle"][C.name].surface_conditions = {{property = "gravity", min = 1}}
+  assert(compat.surface() and raw["spider-vehicle"][C.name].surface_conditions == nil)
+  raw = stage()
+  raw["spider-vehicle"][C.name].surface_conditions = {{property = "gravity", min = 1}}
+  raw["spider-vehicle"].spidertron = nil
+  assert(compat.surface() == nil)
+  assert(raw["spider-vehicle"][C.name].surface_conditions[1].min == 1)
 end)
 
 test("data-final-fixes runs compat BEFORE bodies: the beached and airborne copies inherit the grid", function()
