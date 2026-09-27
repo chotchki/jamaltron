@@ -1,7 +1,9 @@
 -- Other spider mods, at the data stage (PLAN E.6). Loaded from data-final-fixes.lua BEFORE
 -- prototypes/bodies.lua, so the beached and airborne copies inherit whatever this does to him.
 -- Every guard is keyed on `mods[...]` and is a no-op without that mod - except W1's layers
--- (M.w1_layers, D.7.4), which answer ANY mod that re-skins him and are a no-op when none did.
+-- (M.w1_layers, D.7.4), which answer ANY mod that re-skins him and are a no-op when none did,
+-- and his research's science packs (M.science) and surface conditions (M.surface), copied off
+-- spidertron's whoever set them.
 --
 -- LOAD ORDER is info.json's: SpidertronEnhancements, spidertron-dock and buoyant-spidertrons are
 -- hidden optional dependencies, so their data-final-fixes always runs before ours - they build
@@ -81,7 +83,43 @@ function M.w1_layers()
   return fixed
 end
 
+---His research costs the spidertron's science packs, read HERE so any mod's data-updates edit to
+---spidertron's cost carries over; his count and time stay technology.lua's (D.2 owns them).
+---MEASURED (2.1.17): Space Age gives spidertron 8 packs (+ space, + agricultural) and he cost
+---base's 6 - Gleba gated him only through his spidertron prerequisite, never in his own cost.
+---Returns the ingredients it set, or nil when there is no spidertron unit to copy (a mod removed
+---the tech or made it a trigger): he keeps his own.
+---@return data.ResearchIngredient[]?
+function M.science()
+  local tech = data.raw.technology[C.name]
+  local stock = data.raw.technology["spidertron"]
+  local from = stock and stock.unit and stock.unit.ingredients
+  if not (tech and tech.unit and from) then return nil end
+  tech.unit.ingredients = util.copy(from)
+  return tech.unit.ingredients
+end
+
+---Where he can be placed is the spidertron's: its surface_conditions, read HERE for the same
+---reason as M.science, copied onto the vehicle before bodies.lua copies him (chotchki, D.2: "he
+---shouldn't be placable on a space platform, spidertron can't either").
+---MEASURED (2.1.17): Space Age sets spidertron's {gravity min 1} in its DATA stage (space-age
+---data.lua requires base-data-updates), before our data.lua, so entity.lua's copy already had it;
+---this keeps it true when a mod's data-updates changes spidertron's afterwards. The engine refuses
+---manual, ghost and blueprint placement on a platform; script placement ignores surface conditions.
+---Base has none on either. Returns the vehicle, or nil when there is no spidertron or no him (he
+---keeps his own).
+---@return data.SpiderVehiclePrototype?
+function M.surface()
+  local vehicle = data.raw["spider-vehicle"][C.name]
+  local stock = data.raw["spider-vehicle"]["spidertron"]
+  if not (vehicle and stock) then return nil end
+  vehicle.surface_conditions = util.copy(stock.surface_conditions)
+  return vehicle
+end
+
 M.no_buoys()
 M.w1_layers()
+M.science()
+M.surface()
 
 return M

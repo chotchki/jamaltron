@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "title": "Jamaltron",
   "author": "chotchki",
-  "description": "Adds Jamal, the spider-legged hammerhead shark from Dungeon Crawler Carl, as a spidertron variant. He jumps, he breaks his legs, he apologizes about it constantly.",
+  "description": "Jamal is so very sorry to offer up a Jamaltron to you, the loyal Factorio-playing, Dungeon Crawler Carl fan. Jamal knows you would much rather have a spidertron, but Jamal must jump!",
   "factorio_version": "2.1",
   "dependencies": [
     "base >= 2.1",

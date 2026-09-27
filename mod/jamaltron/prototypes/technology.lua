@@ -10,8 +10,10 @@
 -- the flamethrower his recipe eats and the flamethrower-ammo his guns fire - without it he
 -- could be researched and neither built nor armed.
 --
--- The science packs match stock spidertron (all six) because Jamal IS a spidertron
--- mod; count is the only knob D.2 should be turning. Stock is 2500 at 30s.
+-- The science packs below are base's six, a stand-in: prototypes/compat.lua replaces them in
+-- data-final-fixes with whatever spidertron's research costs by then (Space Age: eight, Gleba's
+-- among them), because Jamal IS a spidertron. Count is the only knob D.2 should be turning.
+-- Stock is 2500 at 30s.
 --
 -- Asymmetry with recipe.lua: technology unit.ingredients still uses the POSITIONAL
 -- {"name", count} form. That is how base writes it (technology.lua :5377), not a typo -

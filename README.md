@@ -7,7 +7,7 @@ Jamal is so very sorry to offer up a Jamaltron to you the loyal Factorio-playing
 Jamal is playtesting it but it still needs the following work:
 
 - sounds: haven't decided yet
-- the recipe (it eats a whole spidertron plus a flamethrower and 10 raw fish) and the research cost are placeholders, and no item or technology description is in Jamal's voice yet
+- the recipe (it eats a whole spidertron plus a flamethrower and 10 raw fish) and the research cost are placeholders
 - his legs and lights are still the stock spidertron's (his own leg sheets are not rendered yet)
 - the flamethrower's tweaking
 - removing the mod from a save that has him in it is not checked yet
