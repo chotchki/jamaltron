@@ -18,7 +18,7 @@
     ".ls-defs/factorio/library",
     ".ls-defs/supplement"
   ],
-  "workspace.ignoreDir": [".ls-defs", "tools", "assets", "character", ".venv"],
+  "workspace.ignoreDir": [".ls-defs", "tools", "assets", "character", ".venv", ".claude", ".playtest", ".smoketest", "dist", "render-out"],
   "workspace.checkThirdParty": false,
 
   "diagnostics.globals": ["__DebugAdapter", "__Profiler"],
