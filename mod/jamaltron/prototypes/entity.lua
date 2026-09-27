@@ -14,7 +14,7 @@
 -- Left pointing at shared base prototypes on purpose - correct until Phase D:
 --   * equipment_grid = "spidertron-equipment-grid" (10x6; only clone it if the size
 --     changes, and D.4's lossless swap needs jamaltron-beached to keep the same one)
---   * every icon path, including the item's icon_tintable pair (see item.lua)
+--   * the remnants' and the dying explosion's icons (the vehicle's and the item's are ours)
 --
 -- The ---@type on each copy names the data.raw slot it came from. util.copy is
 -- generic, so lua-language-server already infers these; writing them down is what
@@ -41,6 +41,36 @@ body.corpse = C.remnants
 body.dying_explosion = C.explosion
 body.localised_name = {"entity-name." .. C.name}
 body.localised_description = {"entity-description." .. C.name}
+
+-- C.6, OURS (tools/render/icons.py --promote, the portrait): the entity icon - alerts, the
+-- map tooltip, kill statistics - is the item's, and the map marker is his top-down silhouette
+-- in base's flat style (white fill, red rim; the selected one a grey rim). Same shape as
+-- stock's map art (entities.lua :9954): one 128x128 frame, flags {"icon"}, scale 0.5.
+-- One literal, then copied, for item.lua's reason: lint_sprites.py reads literals only.
+-- beached and airborne (bodies.lua) copy the vehicle and so keep all of it: a map marker says
+-- WHERE he is, and the one body a player has to go find on the map is the beached one.
+local marks =
+{
+  icon = "__jamaltron__/graphics/jamaltron-icon.png",
+  icon_size = 64,
+  minimap_representation =
+  {
+    filename = "__jamaltron__/graphics/jamaltron-minimap.png",
+    flags = {"icon"},
+    size = {128, 128},
+    scale = 0.5
+  },
+  selected_minimap_representation =
+  {
+    filename = "__jamaltron__/graphics/jamaltron-minimap-selected.png",
+    flags = {"icon"},
+    size = {128, 128},
+    scale = 0.5
+  }
+}
+body.icon, body.icon_size, body.icons = marks.icon, marks.icon_size, nil
+body.minimap_representation = marks.minimap_representation
+body.selected_minimap_representation = marks.selected_minimap_representation
 
 -- The Factoriopedia entity name lives inside a Lua source STRING, so no amount of
 -- grepping for `name =` finds it and a copy renders a stock spidertron on Jamal's page.

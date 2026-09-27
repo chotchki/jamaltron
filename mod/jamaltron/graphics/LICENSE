@@ -1,4 +1,7 @@
 Sprites in this directory are NOT covered by the repository's MIT license.
+Neither is ../thumbnail.png (mod/jamaltron/thumbnail.png): it is a render of the
+same model, and it sits at the mod root only because Factorio reads the mod-list
+thumbnail from nowhere else. Everything below applies to it as to the sprites here.
 
 They are renders of "Animated Hammerhead Shark" by Pig Scales Studio, licensed
 from RenderHub (https://www.renderhub.com/pig-scales-studio/animated-hammerhead-shark)

@@ -1,5 +1,5 @@
 -- PLACEHOLDER cost. Phase D.2 owns the real count and the localised strings in Jamal's
--- voice; the prerequisites and the unlock are final.
+-- voice; the prerequisites, the unlock and the icon (C.6's portrait) are final.
 --
 -- prerequisites = {"spidertron", "flamethrower"}. The stock spidertron tech's own six
 -- prerequisites (military-4, exoskeleton-equipment, fission-reactor-equipment,
@@ -28,8 +28,9 @@ local technology =
 {
   type = "technology",
   name = C.name,
-  -- Stock tech icon, 256px. C.6 replaces it; icon_size is required alongside icon.
-  icon = "__base__/graphics/technology/spidertron.png",
+  -- OURS (C.6, tools/render/icons.py --promote): 480x256, a 256px icon and its 4-level mip
+  -- chain, base's own tech layout. icon_size is required - the default is 64.
+  icon = "__jamaltron__/graphics/jamaltron-technology.png",
   icon_size = 256,
   effects = {{type = "unlock-recipe", recipe = C.name}},
   prerequisites = {"spidertron", "flamethrower"},
