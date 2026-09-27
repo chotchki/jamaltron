@@ -1,6 +1,6 @@
 """C.21 and C.24: the beached flop's config home and the sequence it packs from.
 
-Three layers, tested bottom up, none of them launching Blender:
+Three layers, bottom up, no Blender:
 
   * artconfig's OVERLAY loader (C.24) -- render/beached.toml is jamaltron.toml plus only
     what the flop changes, key by key
@@ -8,8 +8,8 @@ Three layers, tested bottom up, none of them launching Blender:
   * pack.py's sequence mode -- one frame out of each config's own cache dir, one sheet, a
     frame_sequence, and lint_sprites checking that frame_sequence like any other field
 
-Plus the committed draft itself: whatever beats chotchki settles on, a seam that makes him
-jump in one frame is a bug in the file, and it is cheap to catch here rather than by eye.
+Plus the committed draft: whatever beats chotchki settles on, a seam that makes him jump
+in one frame is a bug in the file, cheaper caught here than by eye.
 """
 
 import json
@@ -35,8 +35,8 @@ def write(path: pathlib.Path, text: str) -> pathlib.Path:
 
 
 def test_an_overlay_replaces_keys_not_tables(tmp_path):
-    """`[model] action = ...` in the overlay changes the action and KEEPS the base's scale.
-    A table-level replace would silently reset every shared knob to its schema default."""
+    """`[model] action = ...` in the overlay changes the action and KEEPS the base's scale; a
+    table-level replace would silently reset every shared knob to its schema default."""
     write(tmp_path / "base.toml", "[model]\nscale = 0.6\ngirth = 1.4\n[bounce]\nheight = 0.1\n")
     top = write(tmp_path / "top.toml", 'base = "base.toml"\n[model]\naction = "SWIM_FAST"\n'
                                        "[bounce]\nheight = 0.3\n")
@@ -48,8 +48,8 @@ def test_an_overlay_replaces_keys_not_tables(tmp_path):
 
 
 def test_an_overlay_hashes_exactly_like_the_same_knobs_in_one_file(tmp_path):
-    """The hash is over resolved knobs, not over how many files they came from -- so a frame
-    rendered off the overlay and one rendered off a pasted single file share a cache dir."""
+    """The hash is over resolved knobs, not the files they came from, so frames rendered off
+    the overlay and off a pasted single file share a cache dir."""
     write(tmp_path / "base.toml", "[model]\nscale = 0.6\n")
     top = write(tmp_path / "top.toml", 'base = "base.toml"\n[model]\nphase_lock = 0.5\n')
     one = write(tmp_path / "one.toml", "[model]\nscale = 0.6\nphase_lock = 0.5\n")
@@ -74,8 +74,8 @@ def test_a_base_cycle_and_a_missing_base_are_errors_not_hangs(tmp_path):
 
 
 def test_sequence_is_not_a_knob_and_comes_from_the_topmost_file(tmp_path):
-    """[sequence] is the one non-knob table a config file may carry. It must not trip the
-    unknown-knob check, and it does not merge key by key -- a frame list is one statement."""
+    """[sequence] is the one non-knob table a config file may carry: it skips the
+    unknown-knob check and does not merge key by key (a frame list is one statement)."""
     write(tmp_path / "base.toml", '[sequence]\nname = "a"\ndirection = 0\n')
     top = write(tmp_path / "top.toml", 'base = "base.toml"\n[sequence]\nname = "b"\n')
     assert ac.load_sequence(top) == {"name": "b"}
@@ -103,9 +103,18 @@ def test_the_committed_beached_config_is_the_c52_call_on_the_standing_shark():
         assert beached[key] == standing[key], key
     assert beached["model.action"] == "SWIM_FAST"
     assert beached["model.rotation"] == [85.0, 0.0, 180.0]
-    assert beached["model.phase_lock"] == 0.5 and beached["bounce.phase"] == 0.5
+    # C.5.8's V5 (chotchki 2026-09-26): the standing wave (lock + recentre + evened swing),
+    # lower fin held to the floor so the U does not swing it into a spike. C.5.9 toned it to
+    # gain 1.25 and re-phased the bounce to land where the midsection starts to push
+    assert beached["model.phase_lock"] == 1.0 and beached["bounce.phase"] == 0.4
+    assert beached["model.recentre"] == beached["model.amplitude_even"] == 1.0
+    assert beached["model.pose_gain"] == 1.25
+    assert beached["model.fin_floor"] and not standing["model.fin_floor"]
     assert beached["bounce.height"] == 0.3
     assert beached["model.reparent_head"] and beached["model.ground_contact"]
+    # C.5.6: he lies on his body, not a fin tip, and the standing shark does not
+    assert beached["model.ground_ignore"] and not standing["model.ground_ignore"]
+    assert not standing["model.spine_sag"]
     _, own = ac.overlay_of(ac.BEACHED_CONFIG_PATH)
     assert "model.scale" not in own and "model.girth" not in own
 
@@ -225,10 +234,10 @@ def test_the_committed_sequence_expands_inside_factorios_limits(beached):
 
 
 def test_no_seam_in_the_committed_sequence_pops_the_bounce(beached):
-    """THE SEAM CHECK. At bounce phase 0.5 the heave's flight wraps the loop, so a beat that
-    hands into or out of it has to meet it mid-air. The largest lift step anywhere in the
-    cycle -- wrap included -- must be one the heave itself already makes inside its own loop:
-    anything bigger is him jumping between two frames that were meant to be continuous."""
+    """THE SEAM CHECK. At bounce phase 0.4 the heave's flight ends on its last frame and he
+    lands on f1, so a beat handing into a heave falls the same way and a beat following one
+    starts on the ground. No lift step in the cycle (wrap included) may exceed the heave's
+    own in-loop step; anything bigger is a jump between frames meant to be continuous."""
     lifts = [ac.bounce_lift(beached.configs[k]) for k in beached.order]
     heave = [ac.bounce_lift(dict(beached.configs[0], **{"model.frame": f}))
              for f in range(1, 21)]
@@ -239,12 +248,165 @@ def test_no_seam_in_the_committed_sequence_pops_the_bounce(beached):
                                             beached.played[worst], steps[worst], in_loop)
 
 
+def test_the_tail_sags_only_where_he_lies_still(beached):
+    """C.5.6: model.spine_sag lays the tail on the sand, but where the tail ALREADY seats him
+    it only stands the rest of him up (MEASURED, 0.33-0.41 tiles of trunk on the heave's
+    flicks at 3.25). So the heave carries none (its cells stay chotchki's C.5.2 call), the
+    lying beats carry it, and every value is inside the rail."""
+    by_beat = {}
+    for k, (name, _) in zip(beached.order, beached.played):
+        by_beat.setdefault(name, set()).add(beached.configs[k]["model.spine_sag"])
+    assert by_beat["heave"] == {0.0}
+    assert by_beat["pause"] == {4.0} and by_beat["snap"] == by_beat["release"] == {2.5}
+    assert min(by_beat["settle"]) == 0.0 and max(by_beat["settle"]) == 4.0, "ramps into the pause"
+    assert max(by_beat["twitch"]) <= 2.5 and min(by_beat["twitch"]) == 0.0, "ramps back out"
+    for cfg in beached.configs:
+        assert 0.0 <= cfg["model.spine_sag"] <= ac.SPINE_SAG_LEVEL
+
+
+#: C.5.8 V5's seat lists. HEAD takes his weight on the ARCHES; on a flat beat the lowest thing
+#: HEAD owns is the hammer's lower tip, and seating on it props him 0.14-0.22 up (C.5.6).
+V5_SEAT = ["FIN_LEFT", "FIN_RIGHT", "JAW"]
+FLAT_SEAT = ["FIN_LEFT", "FIN_RIGHT", "HEAD", "JAW"]
+
+
+def test_v5_lets_the_head_seat_only_on_the_arching_frames(beached):
+    """The heave, the settle's first five frames (carrying the heave's arch in) and the
+    twitch from f10 take the V5 list; everything nearer rest keeps the C+ one. At the switch
+    frames (twitch f9/f10, gain 1.25) BOTH lists seat him on the same vertex (MEASURED in
+    Blender, not checkable here), so this pins the cut where it was measured. The settle's
+    f5/f6 has no such frame below gain 2.0; the ground_sink ramp closes that gap instead
+    (test_the_settle_sinks_across_its_seat_switch)."""
+    seat = {}
+    for k, (name, f) in zip(beached.order, beached.played):
+        seat.setdefault((name, f), beached.configs[k]["model.ground_ignore"])
+    for (name, f), got in seat.items():
+        arch = (name == "heave" or (name == "settle" and f <= 5)
+                or (name == "twitch" and f >= 10))
+        assert got == (V5_SEAT if arch else FLAT_SEAT), (name, f, got)
+
+
+@pytest.mark.parametrize("beat,first,last", [("settle", 1, 20), ("twitch", 3, 20)])
+def test_a_split_beat_is_still_one_ramp(beached, beat, first, last):
+    """The settle and twitch are cut in two for the seat list, each half with its own
+    hand-written ramp that could kink at the cut. Every ramped knob across both halves lies
+    on ONE line from first frame to last (inside the 4-place rounding) -- except the
+    settle's ground_sink, a deliberate per-half seat correction owned by
+    test_the_settle_sinks_across_its_seat_switch."""
+    by_frame = {}
+    for k, (name, f) in zip(beached.order, beached.played):
+        if name == beat:
+            by_frame[f] = beached.configs[k]
+    assert sorted(by_frame) == list(range(first, last + 1))
+    ramped = set()
+    for b in beached.beats:
+        if b.name == beat:
+            ramped |= set(b.ramps)
+    assert ramped, beat
+    for key in sorted(ramped - {"model.ground_sink"}):
+        a, z = by_frame[first][key], by_frame[last][key]
+        for f, cfg in by_frame.items():
+            want = a + (z - a) * (f - first) / (last - first)
+            assert cfg[key] == pytest.approx(want, abs=2e-4), (beat, key, f)
+
+
+def test_the_u_runs_down_into_the_c_plus_pause_and_the_bite_carries_none_of_it(beached):
+    """MEASURED: at V5's knobs the pause stood 0.11 tiles higher on its tail than the snap's
+    rest shape and the hammer dropped 7 px into the bite; the C+ pause meets it within 0.01.
+    So the settle ramps the U out and the pause is C+'s. The bite has no curl or body turn
+    for the U to act on, so snap and release are the C+ renders, hash for hash (bounce.phase
+    pinned to C+'s 0.5 there: at height 0 it moves no pixel, but it is in the hash)."""
+    pause = {beached.configs[k]["model.phase_lock"] for k, (n, _) in
+             zip(beached.order, beached.played) if n == "pause"}
+    assert pause == {0.5}
+    for k, (name, _) in zip(beached.order, beached.played):
+        cfg = beached.configs[k]
+        if name in ("pause", "snap", "release"):
+            assert cfg["model.recentre"] == cfg["model.amplitude_even"] == 0.0, name
+        if name in ("snap", "release"):
+            assert not cfg["model.fin_floor"] and cfg["model.phase_lock"] == 0.0, name
+    settle = [beached.configs[k] for k, (n, _) in zip(beached.order, beached.played)
+              if n == "settle"]
+    assert settle[0]["model.recentre"] == 1.0 and settle[-1]["model.recentre"] == 0.0
+    assert settle[0]["model.pose_gain"] == beached.configs[0]["model.pose_gain"] == 1.25, \
+        "it starts where the heave is"
+    # the pause IS the settle's last frame, and the twitch's f20 IS the heave's: no new render
+    idx = {(n, f): k for k, (n, f) in zip(beached.order, beached.played)}
+    assert idx[("pause", 20)] == idx[("settle", 20)]
+    assert idx[("twitch", 20)] == idx[("heave", 20)]
+
+
+def test_the_bite_cells_are_the_c_plus_renders_whatever_the_bounce_does(shipped_model):
+    """C.5.9's re-phase moved every snap/release hash (same pixels, 15 redundant renders)
+    because they inherited [bounce].phase at height 0. Now pinned: re-phasing or
+    re-heighting the bounce leaves the bite alone and its ends are the C+ cells. Hashed on
+    the shipped model's digest, so a runner with no model matches this machine."""
+    def bite(overrides=None):
+        base = shipped_model(ac.load(ac.BEACHED_CONFIG_PATH, overrides, env={}))
+        seq = sequence.parse(ac.load_sequence(ac.BEACHED_CONFIG_PATH), base)
+        return {(n, f): ac.pass_hash(seq.configs[k], "body")
+                for k, (n, f) in zip(seq.order, seq.played) if n in ("snap", "release")}
+    shipped = bite()
+    assert shipped[("snap", 1)] == "0ebbaa54d210" and shipped[("snap", 29)] == "d011942b99a0"
+    assert bite({"bounce.phase": 0.33, "bounce.height": 0.5}) == shipped
+
+
+def test_the_twitch_starts_from_the_release_rest_shape(beached):
+    """V5's f3 is the deep arch, so a twitch opening at any real gain starts on a pose the
+    release never passed through (MEASURED at the draft's 0.8: 0.45 tiles, 23 px, of trunk
+    in one frame). At gain 0 it is the rest shape the release ends on."""
+    first = next(beached.configs[k] for k, (n, _) in zip(beached.order, beached.played)
+                 if n == "twitch")
+    assert first["model.pose_gain"] == 0.0
+    assert first["model.ground_ignore"] == FLAT_SEAT
+
+
+def test_the_heave_lands_on_the_push_and_leaves_off_it(beached):
+    """C.5.9, chotchki 2026-09-26: "he should be lowest as he starts to push down with his
+    midsection". MEASURED at gain 1.25 (Blender, the trunk against the hammer-tail chord):
+    the midsection tops out on f1 and drives down f1 -> f11, 94% of it by f9. So the heave
+    is on the sand f1-f9 (landing ON the onset) and airborne f10-f20. At the old 0.5 he
+    launched off the U (f11) and landed on f3, pushing in mid-air."""
+    heave = [ac.bounce_lift(dict(beached.configs[0], **{"model.frame": f}))
+             for f in range(1, 21)]
+    assert heave[:9] == [0.0] * 9, "on the sand from the landing through the push"
+    assert all(h > 0.0 for h in heave[9:]), "airborne from f10 until he lands on f1"
+    assert max(heave) == pytest.approx(beached.configs[0]["bounce.height"], abs=1e-3)
+
+
+def test_the_settle_starts_on_the_heaves_landing_and_never_launches(beached):
+    """SWIM_MEDIUM is the swim at half tempo, a 40-frame cycle; bounce.phase 0.7 puts its
+    launch on f29, 12 frames before f1 like the heave's f9, so the settle opens on the same
+    landing and its own launch falls past the beat's last frame."""
+    for k, (name, _) in zip(beached.order, beached.played):
+        if name in ("settle", "pause"):
+            assert ac.bounce_lift(beached.configs[k]) == 0.0, name
+
+
+def test_the_settle_sinks_across_its_seat_switch(beached):
+    """Below gain 2.0 the settle's f5/f6 has no frame where both seat lists agree: at 1.25 the
+    V5 list seats f5 on the hammer 0.1366 below where the C+ list seats it on the tail
+    (MEASURED), a 0.219-tile trunk jump. So ground_sink ramps 0.04 -> 0.04 + 0.1366 over
+    f1-f5 (f1 still the heave's 0.04) and f6 continues from f5; the hammer sinks that much
+    under the sand at f5, hidden by the holdout ground."""
+    sink = {}
+    for k, (name, f) in zip(beached.order, beached.played):
+        if name == "settle":
+            sink[f] = beached.configs[k]["model.ground_sink"]
+    base = beached.configs[0]["model.ground_sink"]
+    assert sink[1] == base == 0.04
+    assert sink[5] == pytest.approx(base + 0.1366, abs=1e-4)
+    assert [sink[f] for f in range(1, 6)] == sorted(sink[f] for f in range(1, 6))
+    assert all(sink[f] == base for f in range(6, 21))
+
+
 def test_the_cycle_ends_where_it_starts(beached):
-    """The last played frame hands to the first: same clip, next frame, same gain -- so the
-    loop Factorio plays forever has no seam of its own."""
+    """The last played frame hands to the first (same clip, next frame, same gain), so the
+    loop Factorio plays forever has no seam."""
     first, last = beached.configs[beached.order[0]], beached.configs[beached.order[-1]]
     assert first["model.action"] == last["model.action"] == "SWIM_FAST"
     assert first["model.pose_gain"] == last["model.pose_gain"]
+    assert first["model.spine_sag"] == last["model.spine_sag"]
     clip = pose.clip_of("SWIM_FAST")
     assert (last["model.frame"] % clip.span) + 1 == first["model.frame"]
 
@@ -253,10 +415,12 @@ def test_the_cycle_ends_where_it_starts(beached):
 
 
 def fake_render(seq):
-    """Synthetic frames in each unique config's OWN cache dir, at exactly the path art.py
-    would have written them, for all three passes at preview samples."""
+    """Synthetic frames in each unique config's OWN cache dir, at art.py's exact path, for
+    every pass the sequence ships at preview samples."""
     for k, c in enumerate(seq.configs):
         for which, _, _ in art.SEQUENCE_PASSES:
+            if which not in seq.passes:
+                continue
             samples = art.sequence_samples(c, which, True)
             d = art.pass_dir(c, which, samples)
             d.mkdir(parents=True)
@@ -286,6 +450,8 @@ def test_pack_gathers_one_frame_per_config_and_plays_them_in_order(rendered):
         assert item.fields["frame_count"] == 3
         assert item.fields["frame_sequence"] == [1, 2, 3, 2, 1]
         assert "direction_count" not in item.fields
+        # end to end, not just sprite_fields: without it the engine plays a cell a tick
+        assert item.fields["animation_speed"] == pack.sequence_speed()
         assert item.paths[0].name.startswith("jamaltron-flop-")
     # and the linter reads the frame_sequence it was handed, through BOTH front ends
     manifest = out / "graphics" / "flop-sprites.json"
@@ -395,9 +561,9 @@ def test_the_preview_gif_plays_every_played_frame_at_24fps(rendered):
 
 
 def test_a_sequence_sheet_is_stamped_with_the_sequence_not_one_frame(rendered):
-    """The PNG chunk is the provenance. For a sequence it used to be frame 0's config -- one
-    of N, and a different id from the manifest and the Lua. Now all three say the digest, and
-    the chunk holds every frame's hash, the order and the samples."""
+    """The PNG chunk is the provenance. For a sequence it was frame 0's config (one of N, a
+    different id from the manifest and the Lua); now all three say the digest and the chunk
+    holds every frame's hash, the order and the samples."""
     seq, tmp = rendered
     packed = pack.pack_sequence(seq, tmp / "mod", mod_name="jamaltron", preview=True)
     text = Image.open(packed[0].paths[0]).text
@@ -449,3 +615,132 @@ def test_lint_refuses_a_sparse_or_keyed_lua_frame_sequence(tmp_path):
             "frame_count = 3, frame_sequence = %s}\n" % body)
         specs = lint.specs_from_lua(tmp_path / "s.lua")
         assert any(k == "frame_sequence" for k, _ in specs[0].bad_fields), why
+
+
+# ------------------------------------------- the harness broke off with his legs (2026-09-26)
+
+
+def test_a_sequence_ships_all_three_passes_unless_it_says_less():
+    seq = sequence.parse(table({"name": "a", "frames": [1, 2]}), base_cfg())
+    assert seq.passes == sequence.PASSES == ("body", "mask", "shadow")
+    some = sequence.parse(dict(table({"name": "a", "frames": [1, 2]}),
+                               passes=["shadow", "body"]), base_cfg())
+    assert some.passes == ("body", "shadow")                   # PASSES order, not the file's
+    assert some.provenance()["passes"] == ["body", "shadow"]
+
+
+@pytest.mark.parametrize("passes,match", [
+    (["body", "harness"], "unknown pass"),
+    (["shadow"], "must include body"),
+    (["body", "body"], "twice"),
+    ([], "list of pass names"),
+    ("body", "list of pass names"),
+])
+def test_a_bad_passes_list_is_refused(passes, match):
+    with pytest.raises(ac.ConfigError, match=match):
+        sequence.parse(dict(table({"name": "a"}), passes=passes), base_cfg())
+
+
+def test_dropping_a_pass_moves_no_hash():
+    """Why it is config-level: the body and shadow frames that stay are the SAME cache
+    entries, so dropping the harness re-packs with no Blender launch."""
+    raw = table({"name": "a", "frames": [1, 3]})
+    every = sequence.parse(raw, base_cfg())
+    fewer = sequence.parse(dict(raw, passes=["body", "shadow"]), base_cfg())
+    assert fewer.hashes == every.hashes and fewer.digest == every.digest
+    for a, b in zip(every.configs, fewer.configs):
+        for which in ("body", "shadow"):
+            assert ac.pass_hash(a, which) == ac.pass_hash(b, which)
+
+
+def test_the_committed_beached_sequence_ships_no_harness(beached):
+    """chotchki 2026-09-26: "the beached jamal shouldn't have the harness on it anymore"."""
+    assert beached.passes == ("body", "shadow")
+    assert [t.id for t in pack.sequence_targets(beached.name, beached.passes)] == [
+        "body", "shadow"]
+
+
+def test_render_sequence_renders_only_the_passes_it_ships(monkeypatch):
+    seq = sequence.parse(dict(table({"name": "a", "frames": [1, 3]}, direction=9),
+                              passes=["body", "shadow"]), base_cfg())
+    calls = []
+
+    def fake(cfg, which, frames, samples, **kw):
+        calls.append(which)
+        return None, {"rendered": 1, "cached": 0}
+
+    monkeypatch.setattr(art, "render_pass", fake)
+    stats = art.render_sequence(seq, preview=True, jobs=2)
+    assert sorted(calls) == ["body"] * 3 + ["shadow"] * 3
+    assert "mask" not in stats
+
+
+@pytest.fixture
+def unharnessed(tmp_path):
+    """The `rendered` sequence shipping body + shadow, with NO mask frame on disk at all."""
+    cfg = base_cfg(**{"output.dir": str(tmp_path / "render-out")})
+    seq = sequence.parse(dict(table({"name": "a", "frames": [1, 3]},
+                                    {"name": "b", "frames": [2, 1]}, direction=5),
+                              passes=["body", "shadow"]), cfg)
+    return fake_render(seq), tmp_path
+
+
+def test_a_sequence_that_ships_no_mask_packs_none_and_lints_clean(unharnessed):
+    seq, tmp = unharnessed
+    out = tmp / "mod"
+    packed = pack.pack_sequence(seq, out, mod_name="jamaltron", preview=True)
+    assert [p.target.id for p in packed] == ["body", "shadow"]
+    assert pack.slot_map(packed) == {"animation": ["body"], "shadow_animation": ["shadow"]}
+    assert not any(p.fields.get("apply_runtime_tint") for p in packed)
+    manifest = out / "graphics" / "flop-sprites.json"
+    manifest.write_text(json.dumps(pack.manifest_blob(
+        seq.configs[0], packed, mod_name="jamaltron", seq=seq,
+        samples=pack.sequence_samples_of(seq, True))))
+    blob = json.loads(manifest.read_text())
+    assert blob["sequence"]["passes"] == ["body", "shadow"]
+    assert set(blob["sequence"]["samples"]) == {"body", "shadow"}
+    lua = out / "prototypes" / "flop_sprites_generated.lua"
+    lua.parent.mkdir(parents=True)
+    lua.write_text(pack.lua_blob(seq.configs[0], packed, seq=seq, origin="render/x.toml"))
+    assert "body_mask" not in lua.read_text()
+    mods = lint.ModPaths()
+    mods.add("jamaltron", out)
+    findings, declarations, _ = lint.lint([manifest, lua], mods, strict=True)
+    assert declarations == 4 and not findings, [f.render() for f in findings]
+
+
+def test_drop_unshipped_takes_the_dropped_sheet_and_nothing_else(unharnessed):
+    seq, tmp = unharnessed
+    graphics = tmp / "mod" / "graphics"
+    graphics.mkdir(parents=True)
+    keep = ["jamaltron-flop-body.png", "jamaltron-flop-body-shadow.png",
+            "jamaltron-flop-body-2.png", "jamaltron-flop-body-mask-x.png",
+            "jamaltron-body-mask.png"]                    # the STANDING mask is not ours
+    drop = ["jamaltron-flop-body-mask.png", "jamaltron-flop-body-mask-2.png"]
+    for name in keep + drop:
+        (graphics / name).write_bytes(b"x")
+    gone = pack.drop_unshipped(seq, tmp / "mod")
+    assert sorted(p.name for p in gone) == sorted(drop)
+    assert sorted(p.name for p in graphics.iterdir()) == sorted(keep)
+    everything = sequence.parse(dict(table({"name": "a"})), base_cfg())
+    assert pack.drop_unshipped(everything, tmp / "mod") == []      # ships all: drops nothing
+
+
+def test_pack_main_removes_the_mask_sheet_a_harnessless_sequence_left(tmp_path, capsys):
+    flop = tmp_path / "flop.toml"
+    rows = ['base = "%s"' % ac.DEFAULT_CONFIG_PATH,
+            '[model]', 'action = "SWIM_FAST"',
+            '[output]', 'dir = "%s"' % (tmp_path / "render-out"),
+            '[sequence]', 'name = "flop"', "direction = 5", 'passes = ["body", "shadow"]',
+            '[[sequence.beat]]', 'name = "a"', "frames = [1, 3]"]
+    flop.write_text("\n".join(rows) + "\n")
+    fake_render(sequence.load(flop))
+    stale = tmp_path / "mod" / "graphics" / "jamaltron-flop-body-mask.png"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"from an earlier pack")
+    assert pack.main(["--config", str(flop), "--preview", "--out", str(tmp_path / "mod")]) == 0
+    out = capsys.readouterr().out
+    assert not stale.exists() and "removed" in out and "body+shadow" in out
+    manifest = json.loads((tmp_path / "mod" / "graphics" / "flop-sprites.json").read_text())
+    assert [s["id"] for s in manifest["sprites"]] == ["body", "shadow"]
+    assert manifest["slots"] == {"animation": ["body"], "shadow_animation": ["shadow"]}

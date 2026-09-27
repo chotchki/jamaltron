@@ -1,19 +1,17 @@
 """The C.7 packer's arithmetic and its two output artifacts.
 
-Nothing here launches Blender or opens the bought model: frames are drawn with Pillow,
-which is the whole reason the geometry lives in pure functions. The parts that can be
-quietly wrong -- a shift half a pixel off, a line_length that leaves blank cells, a Lua
-table that has drifted from the manifest beside it -- are exactly the parts a render
-never tells you about.
+No Blender and no bought model: frames are drawn with Pillow, which is why the geometry
+lives in pure functions. The parts that can be quietly wrong (a shift half a pixel off, a
+line_length leaving blank cells, a Lua table drifted from the manifest beside it) are the
+parts a render never reports.
 
-Fixtures come from somewhere real wherever one exists: the stock spidertron torso's own
-132x138 frame and by_pixel(0, -19) shift, Factorio's 8192 px sheet ceiling, and
-lint_sprites.py's own two front ends reading our two artifacts.
+Fixtures come from real sources where one exists: the stock spidertron torso's 132x138
+frame and by_pixel(0, -19) shift, Factorio's 8192 px sheet ceiling, and lint_sprites.py's
+two front ends reading our two artifacts.
 """
 
 import json
 import pathlib
-import shutil
 import subprocess
 
 import pytest
@@ -39,9 +37,8 @@ def write_frames(directory: pathlib.Path, cfg, boxes, *, canvas=128, pass_name="
                  samples=64, alpha=255, sidecar=True):
     """One opaque rectangle per frame, at `boxes[i]` = (x0, y0, x1, y1).
 
-    Returns the directory. A rectangle is the right fixture here: its alpha bounding box
-    is exactly the rectangle, so every geometry assertion has a closed-form answer rather
-    than a measured one.
+    Returns the directory. A rectangle's alpha bounding box is the rectangle, so every
+    geometry assertion has a closed-form answer.
     """
     directory.mkdir(parents=True, exist_ok=True)
     for index, box in boxes.items():
@@ -82,16 +79,16 @@ def packed_tree(tmp_path):
 
 
 def test_shift_reproduces_the_stock_torso_declaration():
-    """The one fixture that is not ours: Wube's own spidertron torso.
+    """The one fixture that is not ours: Wube's spidertron torso.
 
-    spidertron-animations.lua declares 132x138 at shift by_pixel(0, -19), which puts the
-    entity origin at pixel (65.5, 106.5) of the frame. Place a crop so the origin lands
-    exactly there and the packer must hand back that same shift -- otherwise our sheets
-    sit somewhere else on the entity than every stock sprite they stand next to.
+    spidertron-animations.lua declares 132x138 at shift by_pixel(0, -19), putting the entity
+    origin at frame pixel (65.5, 106.5). A crop placing the origin exactly there must get
+    that same shift back, or our sheets sit elsewhere on the entity than every stock sprite
+    beside them.
     """
     canvas = (384, 384)
-    # 191.5 - 65.5 and 191.5 - 106.5 are both integers, so the placement is exact and the
-    # test is measuring the arithmetic rather than a rounding.
+    # 191.5 - 65.5 and 191.5 - 106.5 are integers, so the placement is exact and this
+    # measures the arithmetic, not a rounding.
     box = (126, 85, 126 + 132, 85 + 138)
     width, height, shift = pack.sheet_shift(box, canvas, fc.px_per_tile(0.5))
     assert (width, height) == (132, 138)
@@ -101,8 +98,8 @@ def test_shift_reproduces_the_stock_torso_declaration():
 
 @pytest.mark.parametrize("box", [(100, 50, 300, 200), (0, 0, 384, 384), (191, 191, 193, 194)])
 def test_shift_round_trips_through_origin_in_frame(box):
-    """sheets.origin_in_frame() is the compare sheet's reader, written before this module.
-    Feeding it our declaration must put the origin back where the crop actually had it."""
+    """sheets.origin_in_frame() (the compare sheet's reader, older than this module) fed our
+    declaration must put the origin back where the crop had it."""
     canvas, ppt = (384, 384), 64.0
     width, height, shift = pack.sheet_shift(box, canvas, ppt)
     want = (fc.origin_pixel(canvas[0]) - box[0], fc.origin_pixel(canvas[1]) - box[1])
@@ -121,7 +118,7 @@ def test_shift_is_scale_relative():
 
 
 def test_union_box_is_the_union_not_the_first_frame():
-    """A box fitted to frame 0 clips frame 32. This is the bug the union exists to stop."""
+    """A box fitted to frame 0 clips frame 32; the union exists to stop that."""
     images = [(0, _blob((10, 10, 20, 20))), (1, _blob((40, 30, 60, 50)))]
     box, per_frame = pack.union_box(images)
     assert box == (10, 10, 60, 50)
@@ -129,9 +126,9 @@ def test_union_box_is_the_union_not_the_first_frame():
 
 
 def test_the_box_keeps_the_faint_fringe_the_engine_still_draws():
-    """THE FIN. An antialiased edge ramp is 1..7 alpha and Factorio composites every bit of
-    it, so the box has to contain it. Measuring at 8 -- which is what C.4 shipped -- puts
-    the ramp OUTSIDE the box that is supposed to hold the sprite, and the crop shaves it."""
+    """THE FIN. An antialiased edge ramp is alpha 1..7 and Factorio composites all of it, so
+    the box has to contain it. Measuring at 8 (what C.4 shipped) puts the ramp OUTSIDE the
+    box and the crop shaves it."""
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     img.paste((200, 80, 80, 255), (20, 20, 30, 30))
     img.paste((200, 80, 80, 3), (30, 24, 36, 26))          # the fin tip's own ramp
@@ -142,13 +139,54 @@ def test_the_box_keeps_the_faint_fringe_the_engine_still_draws():
 
 def test_a_shadow_frame_is_denoised_in_the_pixels_not_by_the_threshold():
     """Cycles scatters alpha 1..7 over the whole shadow plane, so at the visible threshold a
-    RAW shadow frame's box is the canvas. The packer does not answer that with a higher
-    threshold -- it ZEROES the noise first, and then one threshold governs everything."""
+    RAW shadow frame's box is the canvas. The packer ZEROES the noise first rather than
+    raising the threshold, so one threshold governs everything."""
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 3))
     img.paste((0, 0, 0, 255), (20, 20, 30, 30))
     assert pack.union_box([(0, img)])[0] == (0, 0, 64, 64)
     clean = pack.blacken(img, pack.RENDER_NOISE_FLOOR)
     assert pack.union_box([(0, clean)])[0] == (20, 20, 30, 30)
+
+
+def test_a_mask_speck_does_not_stretch_the_box_but_a_real_pixel_does():
+    """THE BEACHED MASK. A render speck at alpha 1..5 far off the harness band stretched the
+    flop's mask box from 56 to 251 px. denoise drops it; a pixel at the floor survives, and
+    the survivors keep their RGB -- the grey is what the runtime tint multiplies."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    img.paste((128, 128, 128, 255), (20, 20, 30, 30))      # the band
+    img.putpixel((2, 60), (128, 128, 128, 5))               # the speck
+    assert pack.union_box([(0, img)])[0] == (2, 20, 30, 61)
+    clean = pack.denoise(img, pack.RENDER_NOISE_FLOOR)
+    assert pack.union_box([(0, clean)])[0] == (20, 20, 30, 30)
+    assert clean.getpixel((2, 60)) == (0, 0, 0, 0)
+    assert clean.getpixel((25, 25)) == (128, 128, 128, 255)
+    img.putpixel((2, 60), (128, 128, 128, pack.RENDER_NOISE_FLOOR))   # a real pixel
+    assert pack.union_box([(0, pack.denoise(img, pack.RENDER_NOISE_FLOOR))])[0] == (2, 20, 30, 61)
+
+
+def test_both_mask_targets_are_denoised_and_nothing_else_is():
+    """The standing and the sequence mask, by the flag; the shadow is denoised inside blacken,
+    and a BODY must never be -- its 1..7 ramp is the fin tip the engine draws."""
+    for targets in (pack.TARGETS, pack.SEQUENCE_TARGETS):
+        assert {t.id for t in targets if t.denoise} == {"body_mask"}
+
+
+def test_mask_frames_are_denoised_before_the_box(tmp_path):
+    cfg = make_cfg(**{"rotations.count": 4})
+    frames = tmp_path / "f"
+    frames.mkdir()
+    for i in range(4):
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        img.paste((128, 128, 128, 255), (20, 20, 40, 40))  # the band
+        img.putpixel((1 + i, 60), (128, 128, 128, 3))       # one speck per frame
+        img.save(frames / f"frame_{i:03d}.png")
+    (frames / "config.json").write_text(json.dumps(ac.stamp(cfg, {"pass": "mask"})))
+    item = pack.pack_target(cfg, pack.TARGETS[1], tmp_path / "out", mod_name="jamaltron",
+                            explicit_dir=frames)
+    assert item.fields["width"] == 22 and item.fields["height"] == 22   # 20x20 + 1px pad
+    sheet = Image.open(item.paths[0]).convert("RGBA")
+    assert {px[:3] for _, px in sheet.getcolors(1 << 24) if px[3]} == {(128, 128, 128)}
+    assert any("mask surgery" in n for n in item.notes)
 
 
 def test_empty_frames_do_not_move_the_box():
@@ -191,8 +229,8 @@ def _sheet_of(cells, frame_w, frame_h, line_length):
 
 
 def test_cell_margins_measures_every_edge_of_every_cell():
-    """The margin is per CELL, so it has to survive the grid: frame 3 sits in another
-    column and frame 5 on another row, and a reader of the whole sheet's bbox sees neither."""
+    """The margin is per CELL: frame 3 sits in another column and frame 5 on another row,
+    and the whole sheet's bbox sees neither."""
     cells = [(5, 5, 15, 15)] * 8
     cells[3] = (1, 4, 19, 16)        # tight on the left, in column 3
     cells[5] = (4, 2, 16, 18)        # tight on the top, in row 1
@@ -217,13 +255,13 @@ def test_tight_frames_names_the_frames_that_lost_their_margin():
     _, per_frame = pack.cell_margins(sheets_, layout)
     assert [i for i, _ in pack.tight_frames(per_frame, 1)] == [1]
     assert [i for i, _ in pack.tight_frames(per_frame, 2)] == [0, 1]
-    # pad 0 makes the check vacuous, which is the honest reason DEFAULT_PAD is 1
+    # pad 0 makes the check vacuous, which is why DEFAULT_PAD is 1
     assert pack.tight_frames(per_frame, 0) == []
 
 
 def test_a_faint_cell_edge_pixel_is_measured_like_any_other():
-    """Measured at the visible threshold, so the gate cannot be fooled by the same faint
-    alpha that fooled the box. The 3 here is the fin tip's own ramp."""
+    """Measured at the visible threshold, so the faint alpha that fooled the box cannot fool
+    the gate. The 3 is the fin tip's ramp."""
     sheets_, layout = _sheet_of([(5, 5, 15, 15)], 20, 20, 1)
     sheets_[0].putpixel((0, 10), (255, 255, 255, 3))
     worst, per_frame = pack.cell_margins(sheets_, layout)
@@ -256,11 +294,9 @@ def test_choose_line_length(count, requested, columns, expect):
 
 @pytest.mark.parametrize("count", range(1, 65))
 def test_chosen_line_length_never_leaves_an_unused_frame(count):
-    """The property --strict actually checks, run over every count we could ship.
-
-    lint_sprites' unused-frames warning is (sheet_w // frame_w) * (sheet_h // frame_h)
-    against the declared frames. Reproduce that arithmetic off the layout and it must come
-    out equal, or a shipped sheet fails its own gate.
+    """The property --strict checks, over every count we could ship: lint_sprites'
+    unused-frames warning compares (sheet_w // frame_w) * (sheet_h // frame_h) against the
+    declared frames, and off the layout they must be equal or a shipped sheet fails its gate.
     """
     columns, _ = pack.choose_line_length(count, pack.DEFAULT_LINE_LENGTH, 1000)
     layout = plan_sheet(count, 40, 30, line_length=columns)
@@ -281,9 +317,9 @@ def test_line_length_refuses_a_frame_too_wide_for_the_sheet():
 
 def test_the_three_kinds_spell_the_count_differently():
     """Factorio multiplies direction_count x frame_count x variation_count, all defaulting
-    to 1. 64 rotations, a 64-frame flop loop and 64 variations are the same 64 cells and
-    three different declarations -- and each kind writes ONLY the field its own struct
-    owns, because `direction_count` on a SpriteVariations is a field that does not exist.
+    to 1. 64 rotations, a 64-frame flop loop and 64 variations are the same 64 cells in
+    three declarations, and each kind writes ONLY its own struct's field (`direction_count`
+    does not exist on SpriteVariations).
     """
     layout = plan_sheet(64, 40, 30, line_length=8)
     rot = pack.sprite_fields(pack.TARGETS[0], ["a.png"], layout, (0.0, 0.0), 0.5)
@@ -297,6 +333,22 @@ def test_the_three_kinds_spell_the_count_differently():
     assert not {"direction_count", "frame_count"} & set(kinds["variations"])
 
 
+def test_a_sequence_sheet_carries_its_own_speed():
+    """THE FLOP RAN 2.5x FAST: the speed lived in a header comment, nobody retyped it, and the
+    engine played one cell a tick. It rides in the sheet now, on animation sheets only."""
+    assert pack.sequence_speed() == 0.4            # 24 fps / 60 ticks
+    layout = plan_sheet(8, 40, 30, line_length=8)
+    flop = pack.sprite_fields(pack.SEQUENCE_TARGETS[0], ["a.png"], layout, (0.0, 0.0), 0.5,
+                              [1, 2, 2, 3], 0.4)
+    assert flop["animation_speed"] == 0.4
+    order = [k for k in pack.FIELD_ORDER if k in flop]
+    assert list(flop) == order, "emitted in FIELD_ORDER"
+    assert "animation_speed" not in pack.sprite_fields(pack.SEQUENCE_TARGETS[0], ["a.png"],
+                                                       layout, (0.0, 0.0), 0.5)
+    with pytest.raises(pack.PackError, match="animation_speed on a rotations sheet"):
+        pack.sprite_fields(pack.TARGETS[0], ["a.png"], layout, (0.0, 0.0), 0.5, None, 0.4)
+
+
 def test_an_unknown_kind_is_fatal():
     layout = plan_sheet(8, 40, 30, line_length=8)
     bogus = pack.Target(id="x", slot="animation", order=0, pass_name="body", stem="f",
@@ -306,7 +358,7 @@ def test_an_unknown_kind_is_fatal():
 
 
 def test_line_length_is_always_emitted():
-    """Without it the engine's default depends on the prototype field being loaded and the
+    """Without it the engine default depends on the prototype field being loaded and the
     linter can only check a frame budget. Every target, every count."""
     for count in (1, 8, 64):
         layout = plan_sheet(count, 40, 30,
@@ -354,8 +406,8 @@ def test_target_ids_are_unique_and_every_slot_has_a_wrap():
 
 
 def test_clear_names_every_stock_slot_no_sheet_covers():
-    """entity.lua deepcopies the spidertron. A slot we neither fill nor clear keeps
-    drawing Wube's art under ours -- which is the whole base_animation question."""
+    """entity.lua deepcopies the spidertron, so a slot we neither fill nor clear keeps
+    drawing Wube's art under ours (the base_animation question)."""
     slots = {"animation": ["body"], "shadow_animation": ["shadow"]}
     assert pack.clear_list(slots) == ["base_animation", "shadow_base_animation",
                                       "water_reflection"]
@@ -363,8 +415,9 @@ def test_clear_names_every_stock_slot_no_sheet_covers():
 
 
 def test_a_target_whose_pass_does_not_exist_yet_is_skipped_not_fatal(tmp_path, capsys):
-    """A row may name a render pass nobody has written -- C.5's flop clip is the next one.
-    The row documents the slot; the run says so out loud instead of failing or going quiet.
+    """A row may name a render pass nobody has written yet (C.5's flop clip, for one: it has
+    no pass of its own). The row documents the slot; the run says so instead of failing or
+    going quiet.
     """
     cfg = make_cfg()
     future = pack.Target(id="flop", slot="animation", order=9, pass_name="flop",
@@ -375,9 +428,8 @@ def test_a_target_whose_pass_does_not_exist_yet_is_skipped_not_fatal(tmp_path, c
 
 
 def test_every_shipped_target_names_a_pass_that_exists():
-    """The other half. body_mask named a pass that did not exist for as long as C.4 took
-    to write it, which is fine while it is a TODO and a silently empty tint layer once the
-    sheets ship."""
+    """The other half: body_mask named a missing pass until C.4 wrote it, fine as a TODO
+    and a silently empty tint layer once the sheets ship."""
     for target in pack.TARGETS:
         assert target.pass_name in ac.PASSES, target.id
 
@@ -386,8 +438,8 @@ def test_every_shipped_target_names_a_pass_that_exists():
 
 
 def test_a_part_rendered_directory_is_refused(tmp_path):
-    """48 of 64 frames looks identical to a finished render on disk, and packs into a
-    sheet whose rotations are silently wrong."""
+    """48 of 64 frames looks like a finished render on disk and packs into a sheet whose
+    rotations are silently wrong."""
     cfg = make_cfg()
     frames = write_frames(tmp_path / "f", cfg, {i: (10, 10, 20, 20) for i in range(48)})
     with pytest.raises(pack.PackError, match="not a complete set"):
@@ -406,8 +458,8 @@ def test_an_evenly_spaced_subset_is_accepted(tmp_path):
 
 
 def test_stale_frames_are_refused(tmp_path):
-    """The sidecar pins which knobs made these pixels. Moving the shark and packing the
-    old frames is the failure this whole harness exists to prevent."""
+    """The sidecar pins which knobs made these pixels; moving the shark and packing the old
+    frames is the failure the harness exists to prevent."""
     cfg = make_cfg(**{"rotations.count": 8})
     frames = write_frames(tmp_path / "f", cfg, ring(8, (10, 10, 20, 20)))
     moved = make_cfg(**{"rotations.count": 8, "model.scale": 0.9})
@@ -420,8 +472,8 @@ def test_stale_frames_are_refused(tmp_path):
 
 def test_a_missing_model_says_so_instead_of_blaming_a_knob(tmp_path):
     """model.blend is hashed by CONTENT, so "the model is not on this machine" and "a knob
-    moved" produce the same mismatch and want completely different fixes. The frames here
-    were written with the model present and are packed with it gone."""
+    moved" give the same mismatch with different fixes. Frames written with the model
+    present, packed with it gone."""
     present = tmp_path / "HAMMERHEAD.blend"
     present.write_bytes(b"SHARK")
     cfg = make_cfg(**{"rotations.count": 8, "model.blend": str(present)})
@@ -446,9 +498,8 @@ def test_clipped_frames_are_fatal_unless_allowed(tmp_path):
 def write_finned_frames(directory: pathlib.Path, cfg, body, fin, *, canvas=64, count=4):
     """An opaque body plus a FAINT alpha-3 fringe: the tail fin's antialiasing ramp.
 
-    Alpha 3 is the whole fixture. Factorio composites it, so it is part of the sprite; the
-    old alpha >= 8 reading could not see it at all, which is how C.4's sheets passed their
-    own gate with the fin sliced off at the frame edge.
+    Alpha 3 is the point: Factorio composites it, so it is sprite, and the old alpha >= 8
+    reading could not see it -- how C.4's sheets passed their gate with the fin sliced off.
     """
     directory.mkdir(parents=True, exist_ok=True)
     for index in range(count):
@@ -461,10 +512,9 @@ def write_finned_frames(directory: pathlib.Path, cfg, body, fin, *, canvas=64, c
 
 
 def test_a_faint_fringe_at_the_canvas_edge_is_refused(tmp_path):
-    """THE REGRESSION TEST. The render ran out of canvas for pixels the engine still draws.
-
-    At the old alpha >= 8 reading this frame is 12 px clear of the edge and packs without a
-    word -- asserted below, because that is the failure being fixed, not a hypothetical.
+    """THE REGRESSION TEST: the render ran out of canvas for pixels the engine still draws.
+    At the old alpha >= 8 reading this frame is 12 px clear of the edge and packs silently
+    (asserted below: the real failure, not a hypothetical).
     """
     cfg = make_cfg(**{"rotations.count": 4})
     frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (0, 30, 12, 34))
@@ -483,8 +533,8 @@ def test_a_faint_fringe_at_the_canvas_edge_is_refused(tmp_path):
 
 
 def test_a_faint_fringe_inside_the_canvas_is_kept_by_the_frame_box(tmp_path):
-    """C.4's actual defect: the CANVAS had 12 px to spare, so the canvas check had nothing
-    to say, and the fin was cut by the FRAME BOX instead. The box has to hold the ramp."""
+    """C.4's actual defect: the CANVAS had 12 px to spare, so the FRAME BOX cut the fin. The
+    box has to hold the ramp."""
     cfg = make_cfg(**{"rotations.count": 4})
     frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (52, 30, 58, 34))
     item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
@@ -500,10 +550,10 @@ def test_a_faint_fringe_inside_the_canvas_is_kept_by_the_frame_box(tmp_path):
 
 
 def test_the_finished_cells_are_checked_even_when_the_box_is_wrong(tmp_path, monkeypatch):
-    """THE GATE THAT WAS MISSING, and the one thing it must not lean on is the box being
-    right -- a gate that shares its input with the thing it guards is how a clipped sheet
-    passed. Derive the box the way C.4 did, at the noise floor, and the refusal still comes,
-    because it is measured off the cells that were about to be written.
+    """THE GATE THAT WAS MISSING must not lean on the box being right: a gate sharing its
+    input with the thing it guards is how a clipped sheet passed. With the box derived as
+    C.4 did (at the noise floor) the refusal still comes, measured off the cells about to be
+    written.
     """
     cfg = make_cfg(**{"rotations.count": 4})
     frames = write_finned_frames(tmp_path / "f", cfg, (12, 20, 52, 44), (52, 30, 58, 34))
@@ -523,8 +573,8 @@ def test_the_finished_cells_are_checked_even_when_the_box_is_wrong(tmp_path, mon
 
 
 def test_every_pack_reports_its_tightest_margin(tmp_path):
-    """The measurement goes in the notes on every run, clipped or not. Finding the sliced
-    fin took opening the shipped PNG in a script; the tool should just hand you the number."""
+    """Every run notes the margin, clipped or not, so nobody has to open the shipped PNG in a
+    script to find a sliced fin again."""
     cfg = make_cfg(**{"rotations.count": 4})
     frames = write_frames(tmp_path / "f", cfg, ring(4, (20, 18, 44, 40)))
     item = pack.pack_target(cfg, pack.TARGETS[0], tmp_path / "out", mod_name="jamaltron",
@@ -547,8 +597,8 @@ def test_mismatched_canvases_are_refused(tmp_path):
 
 
 def test_every_frame_lands_in_its_own_cell(tmp_path):
-    """Frame k must be at column k % line_length, row k // line_length. A marker pixel per
-    frame is the only way to catch a sheet that is correct in aggregate and shuffled."""
+    """Frame k sits at column k % line_length, row k // line_length. Only a per-frame marker
+    pixel catches a sheet correct in aggregate but shuffled."""
     cfg = make_cfg(**{"rotations.count": 8})
     frames = tmp_path / "f"
     frames.mkdir()
@@ -569,10 +619,9 @@ def test_every_frame_lands_in_its_own_cell(tmp_path):
 
 
 def test_the_declared_shift_puts_the_packed_frame_back_where_it_was(tmp_path):
-    """END TO END, and the strongest claim this module makes: read the manifest's own
-    width/height/shift/scale, place the packed frame on the render canvas, and the pixels
-    land byte-identically on the render they came from. Nothing else in the pipeline gets
-    to have an opinion about where the sprite sits."""
+    """END TO END, this module's strongest claim: placed on the render canvas by the
+    manifest's own width/height/shift/scale, the packed frame lands byte-identical on the
+    render it came from."""
     from PIL import ImageChops
     cfg = make_cfg(**{"rotations.count": 4})
     boxes = {0: (20, 18, 44, 40), 1: (18, 22, 40, 44), 2: (24, 20, 46, 42),
@@ -636,10 +685,9 @@ def test_manifest_entry_is_the_lua_table_plus_an_id(packed_tree):
 
 
 def test_the_lua_and_the_manifest_read_identically(packed_tree):
-    """THE anti-drift test. lint_sprites has two independent front ends -- a JSON reader
-    and a Lua table reader -- and pointing both at our two artifacts must produce the same
-    normalised declaration, field for field. Two serializers of one dict cannot drift; this
-    is what proves they are still two serializers of one dict."""
+    """THE anti-drift test: lint_sprites' two independent front ends (a JSON reader and a
+    Lua table reader) must read our two artifacts as the same normalised declaration, field
+    for field -- proof they are still two serializers of one dict."""
     out, manifest, lua, _ = packed_tree
     from_json = lint.specs_from_manifest(manifest, lint.ModPaths())
     from_lua = lint.specs_from_lua(lua)
@@ -665,11 +713,9 @@ def test_the_manifest_passes_the_strict_gate(packed_tree):
 
 
 def test_a_corrupted_number_fails_the_strict_gate(packed_tree):
-    """Deliberate corruption, because a gate nobody has watched fail is not a gate.
-
-    A wrong width is the failure mode with no other symptom: Factorio loads it, slices the
-    shark across two cells and says nothing, and the linter's message is Factorio's own
-    crash wording so grepping either one lands in the same place."""
+    """Deliberate corruption: a gate nobody has watched fail is not a gate. A wrong width
+    has no other symptom (Factorio loads it and slices the shark across two cells), and the
+    linter uses Factorio's crash wording so grepping either lands in the same place."""
     out, manifest, _, _ = packed_tree
     blob = json.loads(manifest.read_text())
     blob["sprites"][0]["width"] += 1
@@ -690,16 +736,16 @@ def test_a_wrong_line_length_cannot_hide(packed_tree):
 
 
 def test_the_manifest_resolves_its_own_mod_root(packed_tree):
-    """`mod_roots` is relative to the manifest, so the tree lints with no flags at all --
-    which is what makes the gitignored dry-run tree worth having."""
+    """`mod_roots` is relative to the manifest, so the gitignored dry-run tree lints with no
+    flags."""
     out, manifest, _, _ = packed_tree
     findings, declarations, _ = lint.lint([manifest], lint.ModPaths(), strict=True)
     assert declarations == 1 and not findings
 
 
 def test_the_manifest_is_what_ci_classifies_as_ours():
-    """ci.yml recognises a manifest by CONTENT, not filename: a dict with a `sprites`
-    list. Rename the output and the gate must still bite."""
+    """ci.yml recognises a manifest by CONTENT (a dict with a `sprites` list), not
+    filename, so a renamed output is still gated."""
     blob = pack.manifest_blob(make_cfg(), [], mod_name="jamaltron")
     assert isinstance(blob, dict) and isinstance(blob.get("sprites"), list)
 
@@ -728,8 +774,8 @@ def test_generated_lua_fits_the_repo_luacheck_line_limit(packed_tree):
 
 
 def test_generated_lua_wraps_each_slot_the_way_stock_does(packed_tree):
-    """`animation` is a layer stack, `shadow_animation` is a bare sprite. Getting that
-    backwards is a data-stage error with a useless message."""
+    """`animation` is a layer stack, `shadow_animation` a bare sprite; backwards is a
+    data-stage error with a useless message."""
     cfg = make_cfg(**{"rotations.count": 8})
     _, _, _, packed = packed_tree
     shadow = pack.Packed(target=pack.TARGETS[2], fields=packed[0].fields,
@@ -755,21 +801,20 @@ def test_a_bare_slot_refuses_two_layers():
         pack.lua_blob(cfg, two)
 
 
-@pytest.mark.skipif(shutil.which("lua") is None, reason="no lua interpreter on PATH")
-def test_generated_lua_loads_and_shares_its_tables(packed_tree):
-    """Run it in a real interpreter. `sprites.body` and `slots.animation.layers[1]` must be
-    the SAME table, not two copies -- one dict in Python, one table in Lua, all the way to
-    the data stage. Skipped where lua is not installed (CI); locally it is the only check
-    that the emitted file is more than plausible-looking text."""
-    _, _, lua, _ = packed_tree
+def test_generated_lua_loads_and_shares_its_tables(packed_tree, lua):
+    """Run in a real interpreter: `sprites.body` and `slots.animation.layers[1]` must be the
+    SAME table (one dict in Python, one table in Lua) through the data stage. The only check
+    that the emitted file is more than plausible text; CI runs it under JAMALTRON_LUA,
+    skipped only on a machine with no Lua and none named."""
+    _, _, generated, _ = packed_tree
     script = """
     local g = dofile("%s")
     assert(g.slots.animation.layers[1] == g.sprites.body, "layer is a copy, not the table")
     assert(g.sprites.body.line_length == 8)
     assert(#g.clear == %d, "clear list length")
     print(g.config_hash)
-    """ % (lua, len(pack.clear_list({"animation": ["body"]})))
-    out = subprocess.run([shutil.which("lua"), "-e", script], capture_output=True, text=True)
+    """ % (generated, len(pack.clear_list({"animation": ["body"]})))
+    out = subprocess.run([lua, "-e", script], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == ac.config_hash(make_cfg(**{"rotations.count": 8}))
 
@@ -778,15 +823,15 @@ def test_generated_lua_loads_and_shares_its_tables(packed_tree):
 
 
 def test_crush_says_so_when_no_optimizer_is_installed(tmp_path, monkeypatch):
-    """The branch a fresh clone and CI both hit. Silence here would read as "crushed"."""
+    """The branch a fresh clone and CI both hit; silence would read as "crushed"."""
     monkeypatch.setattr(pack.shutil, "which", lambda name: None)
     lines = pack.crush([tmp_path / "x.png"])
     assert len(lines) == 1 and "SKIPPED" in lines[0] and "oxipng" in lines[0]
 
 
 def test_crush_is_reverted_when_the_optimizer_is_not_lossless(tmp_path):
-    """A "lossless" optimizer is a claim. This pipeline has no in-game validation to catch
-    a broken one, so the bytes are compared and a changed pixel loses."""
+    """"Lossless" is a claim, and nothing in-game would catch a broken optimizer, so the
+    output is compared and a changed pixel reverts the file."""
     path = tmp_path / "sheet.png"
     Image.new("RGBA", (16, 16), (200, 30, 30, 255)).save(path)
     before = path.read_bytes()
@@ -800,8 +845,8 @@ def test_crush_is_reverted_when_the_optimizer_is_not_lossless(tmp_path):
 
 
 def test_sheet_size_ceiling_is_the_measured_one():
-    """8192 is not folklore: no PNG in core/base/space-age/quality/elevated-rails exceeds
-    it across 8965 files, and Factorio loads a sheet as one GPU texture."""
+    """MEASURED, not folklore: no PNG among 8965 in core/base/space-age/quality/elevated-rails
+    exceeds 8192, and Factorio loads a sheet as one GPU texture."""
     assert MAX_SHEET_SIDE == 8192
     assert pack.build_parser().parse_args([]).max_side == MAX_SHEET_SIDE
 
@@ -814,11 +859,9 @@ def _reflection_target():
 
 
 def test_the_reflection_reduces_a_whole_ring_to_one_variation(tmp_path):
-    """64 rotations in, ONE blob out, declared as a variation and not as 64 directions.
-
-    The count field is the whole point: stock's water_reflection is variation_count 1 and
-    a sheet that declared direction_count 64 over a single cell is a sprite the engine
-    slices into 64 slivers.
+    """64 rotations in, ONE blob out, declared as a variation, not 64 directions: stock's
+    water_reflection is variation_count 1, and direction_count 64 over a single cell gets
+    sliced into 64 slivers.
     """
     cfg = make_cfg(**{"rotations.count": 8})
     frames = write_frames(tmp_path / "f", cfg, ring(8, (40, 40, 88, 80)), canvas=128)
@@ -832,9 +875,8 @@ def test_the_reflection_reduces_a_whole_ring_to_one_variation(tmp_path):
 
 
 def test_the_reflection_grows_its_canvas_so_the_blur_cannot_clip(tmp_path):
-    """A blur pushes alpha outward. Run it in place on a body that already fills the
-    canvas and the packer's own clipped-frames check correctly refuses the result -- and
-    the fix for THAT must not be loosening the check, which is what guards the real thing.
+    """A blur pushes alpha outward: in place on a body filling the canvas, the clipped-frames
+    check correctly refuses it. The fix is a bigger canvas, never a looser check.
     """
     cfg = make_cfg(**{"rotations.count": 4, "reflection.blur_tiles": 0.3})
     # a rectangle running right up to the canvas edge: clipped as a body, fine as a blob
@@ -849,14 +891,14 @@ def test_the_reflection_grows_its_canvas_so_the_blur_cannot_clip(tmp_path):
 
 def test_recentring_puts_the_blob_on_the_entity_origin():
     """model.offset lifts the shark, so his mean alpha sits HIGH in an origin-centred
-    canvas. Stock declares the spidertron's reflection at shift 0; recentring is what lets
-    ours be declared the same way instead of writing the body's lift down twice."""
+    canvas. Stock declares the reflection at shift 0; recentring lets ours match instead of
+    writing the body's lift down twice."""
     lifted = Image.new("L", (129, 129), 0)
     lifted.paste(255, (40, 10, 88, 40))          # rows 10..39, centroid 24.5, origin 64.0
     moved, (dx, dy) = pack.recentre_on_origin(lifted, 8)
     assert (dx, dy) == (0, 40)
     # getbbox's upper bound is exclusive, so the last opaque ROW is box[3] - 1. Half a
-    # pixel is the floor here: the offset is an integer and the centroid is not.
+    # pixel is the floor: the offset is an integer, the centroid is not.
     box = moved.point(lambda v: 255 if v >= 8 else 0).getbbox()
     assert abs((box[1] + box[3] - 1) / 2 - fc.origin_pixel(129)) <= 0.5
 
@@ -878,8 +920,8 @@ def test_an_unknown_reducer_is_fatal(tmp_path):
 
 def test_the_reflection_is_pure_red_with_the_shape_in_the_alpha(tmp_path):
     """MEASURED off stock: every non-transparent pixel of spidertron-body-water-reflection
-    .png is exactly (255, 0, 0). The engine reads the alpha; the colour is a convention,
-    and a blob that carried the shark's own grey would be a different convention."""
+    .png is exactly (255, 0, 0). The engine reads the alpha; the colour is convention, so
+    we match it rather than carry the shark's grey."""
     cfg = make_cfg(**{"rotations.count": 4})
     frames = write_frames(tmp_path / "f", cfg, ring(4, (40, 40, 88, 80)), canvas=128)
     item = pack.pack_target(cfg, _reflection_target(), tmp_path / "mod",
@@ -890,9 +932,8 @@ def test_the_reflection_is_pure_red_with_the_shape_in_the_alpha(tmp_path):
 
 
 def test_water_reflection_wraps_one_sprite_under_pictures_not_a_list():
-    """`pictures` is SpriteVariations, and only its single-sheet form may carry
-    variation_count. Wrapping ours in a list declares an array of Sprites instead, and a
-    Sprite has no variation_count for the engine to read."""
+    """`pictures` is SpriteVariations and only its single-sheet form carries
+    variation_count; a list declares an array of Sprites, which have none."""
     cfg = make_cfg(**{"rotations.count": 8})
     layout = plan_sheet(1, 40, 30, line_length=1)
     target = _reflection_target()
@@ -918,13 +959,12 @@ def committed_sprites():
 @pytest.mark.parametrize("sprite_id,graphics,entry", committed_sprites(),
                          ids=[row[0] for row in committed_sprites()])
 def test_the_committed_sheets_keep_a_transparent_margin(sprite_id, graphics, entry):
-    """THE SHIPPED ARTIFACT, measured. Every frame of every sheet in the repo, alpha > 0,
-    against its own cell -- which is the hand measurement that found the sliced tail fin.
+    """THE SHIPPED ARTIFACT, measured: every frame of every sheet in the repo, alpha > 0,
+    against its own cell (the hand measurement that found the sliced tail fin).
 
-    This runs where the other sprite gate cannot: tools/lint_sprites.py is stdlib-only and
-    reads sizes out of the 24-byte IHDR, so it can check that a sheet is the size the
-    prototype claims and never that the sprite inside it is whole. Here there is Pillow and
-    the sheets are committed, so CI gets to look at the alpha of what actually ships.
+    tools/lint_sprites.py is stdlib-only and reads sizes from the 24-byte IHDR, so it checks
+    a sheet's size, never that the sprite inside is whole. Here Pillow is available and the
+    sheets are committed, so CI reads the alpha of what actually ships.
     """
     sheet = Image.open(graphics / entry["filename"].split("/")[-1]).convert("RGBA")
     alpha = sheet.getchannel("A")
@@ -948,13 +988,11 @@ def test_the_committed_sheets_keep_a_transparent_margin(sprite_id, graphics, ent
 
 
 def test_the_generated_lua_is_what_ci_classifies_as_ours(packed_tree):
-    """C.16: ci.yml recognises the generated Lua by CONTENT too -- `generated_lua()` there
-    requires literal substrings of the banner lua_blob writes. The JSON half of that contract
-    is pinned above; this is the Lua half, and it is the file the GAME reads. Change the banner
-    and CI silently stops treating the module as ours (it falls out of the gate), so read
-    ci.yml's own literals rather than a copy of them, and check both the fresh pack and the
-    committed module. A ci.yml this regex can no longer find the classifier in is a failure
-    too: that is the tripwire."""
+    """C.16: ci.yml recognises the generated Lua by CONTENT too: `generated_lua()` requires
+    literal substrings of lua_blob's banner. The JSON half is pinned above; this is the Lua
+    half, the file the GAME reads. A changed banner silently drops the module out of the
+    gate, so read ci.yml's own literals (not a copy) and check the fresh pack and the
+    committed module. A ci.yml whose classifier this regex cannot find fails too."""
     import re
     ci = (pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
     body = re.search(r"def generated_lua\(path\):(.*?)\n\s*\n", ci, re.S)

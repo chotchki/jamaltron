@@ -1,14 +1,14 @@
 # The BEACHED shark (C.5, C.21, C.24): jamaltron.toml plus ONLY what the flop changes.
 #
-# AN OVERLAY. `base` resolves first and this file replaces keys on top of it -- a key, never
-# a whole table -- so every shared knob (scale, girth, pivot, sun, camera, mask, render) has
-# ONE home, and the standing and beached sheets cannot drift apart. Tune a shared knob in
-# jamaltron.toml; tune the flop here. The tuner knows the difference:
+# AN OVERLAY. `base` resolves first and this file replaces keys on top of it -- a key, never a
+# whole table -- so every shared knob (scale, girth, pivot, sun, camera, mask, render) has ONE
+# home and the standing and beached sheets cannot drift apart. Tune a shared knob in
+# jamaltron.toml, the flop here. The tuner knows the difference:
 #
 #   uv run --directory tools python render/tune.py --config render/beached.toml
 #
 # boots on this pose, and its export writes only the keys this file owns plus anything you
-# moved off the base, with a note on each shared knob you are overriding for the flop alone.
+# moved off the base, with a note on each shared knob overridden for the flop alone.
 #
 # Render and watch the whole cycle, then pack it:
 #
@@ -22,69 +22,181 @@ base = "jamaltron.toml"
 # chotchki's calls, 2026-09-23, off the tuner at 24 fps: SWIM_FAST at roll 85 with yaw 180
 # (his framing), phase_lock 0.5 with bounce phase 0.5 ("I think this looks good"), HEAD
 # reparented so the snout moves with the spine (C.18a), and ground contact (C.5.4) so no
-# frame of the thrash sinks through the floor -- the base has it on too since C.27, and it
-# is repeated here because the flop is wrong without it whatever the standing shark does.
+# frame of the thrash sinks through the floor -- on in the base too since C.27, repeated here
+# because the flop is wrong without it whatever the standing shark does.
 # The beats below override these per beat; these are what a beat inherits.
 action = "SWIM_FAST"
 rotation = [85.0, 0.0, 180.0]
-phase_lock = 0.5
 reparent_head = true
 ground_contact = true
+# C.5.8, THE U: chotchki 2026-09-26 off the in-game flop at lock 0.5, "I don't think the u
+# shaped flop animation rendered, looks like the sine wave" -- MEASURED, head/tail screen
+# height correlation -0.81 over the heave, a travelling wave. The standing wave takes all
+# four: lock 1 puts every joint in step with the tail (-1.00 alone, a seesaw hinged at the
+# pinned nose), recentre 1 turns the body back against the curl so head and tail rise
+# TOGETHER (+1.00), amplitude_even 1 puts the bend's bottom in his middle instead of behind
+# it, and gain 2.0 makes it read at game zoom -- a 93 deg U then arch. That is V4; he picked
+# V5, which is V4 with the HEAD allowed to seat the floor on the arches (the heave and twitch
+# beats below), so the middle lifts instead of the snout burying 0.49 under the sand.
+# C.5.9, TONED DOWN: chotchki 2026-09-26 watching V5 in game, "I think the motion is too
+# unnatural because its too exaggerated. I would reduce the amplitude but keep the same
+# bounce amount" -- 93 deg read "unmistakably" in a still and as cartoon in motion. He picked
+# 1.25 off the sweep: a 53 deg U and 58 deg arch, head/tail correlation still +1.00. The hop
+# is untouched (contact seats him before the lift is added); only the belly's apex drops.
+phase_lock = 1.0
+recentre = 1.0
+amplitude_even = 1.0
+pose_gain = 1.25
+# C.5.6, chotchki 2026-09-25 off the caed815d2940 draft: "only the tip of his side fin is
+# touching the ground which isn't realistic since that would bend and his main mass would be
+# touching. it may be better to clip him into the ground." So the lower pectoral folds 50 deg
+# (level on the sand), his TRUNK takes the floor instead of the fin tip (the pectorals and the
+# hammer are left out of the seat; the caudal stays in, it is the flick's push-off), and he
+# sinks 0.04 tiles into it. The fin root and the hammer's lower tip go under and are not
+# drawn. model.spine_sag lays his tail on the sand too, set PER BEAT below because no one
+# value does it. MEASURED: the tail reaches his trunk's level at 2.57 deg a joint on the rest
+# shape (snap/release) and 4.23 at the pause, and on any frame the tail ALREADY seats him a
+# sag only stands the rest of him up -- the best single value, 3.25 (rest trunk 0.05 up on
+# its tail, pause tail 0.07 up), lifts his trunk 0.33-0.41 tiles on every tail-seated frame
+# of the heave and lands heave f3 on the tail with the trunk 0.22 up.
+ground_ignore = ["FIN_LEFT", "FIN_RIGHT", "HEAD", "JAW"]
+ground_sink = 0.04
+fin_fold = 50.0
+# ...and the fold must be held LEVEL, not off the chest. chotchki 2026-09-26 off V4/V5's
+# white spike under his chest on the U frames: "fix it". The fixed 50 deg is from wherever
+# the pose left the fin, and the U moves that twice -- the evened, doubled curl swings the
+# chest (the fin dives 25-62 deg before the fold, 46-52 on C+) and the recentre turns the
+# whole body up to 60 deg more -- so on the U's bottom the folded fin pointed due SOUTH at the
+# camera, 51 px straight down the screen. fin_floor pins the lower fin's orientation to the
+# one it has on a REST spine with no body turn (its own clip rotation kept) and folds from
+# there: level (-3.8 deg) and heading where C+ had it on EVERY frame of the heave, the root
+# still riding his chest. ORIENTATION, NOT CONTACT: on the U frames (f07-f11) the tip is
+# 0.01-0.17 tiles off the sand, on the arch frames (f1-f4, f17-f20) it rides his lifted chest
+# up to ~1 tile -- reaching it down to the floor would point it back at the camera. It is on
+# for EVERY posed frame, recentre or not, so the pause (gain 0.2, recentre 0) is a new cell,
+# not C+'s. MEASURED; render_jamal says how, and tools/render/fin_probe.py re-measures it on
+# the real rig (test_fin_floor.py).
+fin_floor = true
 
 [bounce]
+# C.5.9, THE BOUNCE LANDS ON THE PUSH: chotchki 2026-09-26, "it also highlights the bounce and
+# flop are out of phase with each other some, he should be lowest as he starts to push down
+# with his midsection". At 0.5 he launched off the U (f11) and landed on f3, two frames after
+# the arch's top -- in the air while his middle started driving down. MEASURED at gain 1.25,
+# the trunk (SPINE_03/05) against the hammer-tail chord: it tops out on f1 (+0.44 tiles) and
+# drives down to the U on f11 (-0.40), fastest f4-f8 (0.11-0.13 a frame), 94% done by f9.
+# The 0.3-tile hop is 11.9 frames of air, so 9 on the sand (the launch frame is one of them).
+# 0.4 launches on f9: on the sand f1-f9, landing ON the onset and pushing through the whole
+# stroke, the mid-trunk seating the floor from f7; airborne f10-f20, curling back up into the
+# arch he lands on. 0.35 lands a frame early but launches with 0.13 of the stroke left; 0.45
+# lands a frame late, after the push has started.
+# ON SCREEN (MEASURED, for chotchki's eye, not a bug): the curl's own swing is as big as the
+# 0.3 hop and hides the fall. His screen centroid RISES all through the flight, peaking at f18
+# with the lift already falling, and he touches down on f1 near the top of it; his lowest on
+# screen is f7-f9, the middle hitting the sand. So the landing reads as a touch down at the top
+# of the arc and the thump is the midsection's -- still on the sand, so 0.4 fits "lowest"
+# either way. V5's head-seated arch does it, and 0.5 did too. Levers for a visible drop onto
+# f1: a taller hop (he said keep 0.3) or less arch prop on the landing frames.
 height = 0.3
-phase = 0.5
+phase = 0.4
 
 [sequence]
 # Sheets come out as jamaltron-beached-body.png etc, the Lua as beached_sprites_generated.lua.
 name = "beached"
-# ONE direction, per C.5's budget: repetition is noticed in time, not in heading. Wheel
-# index 16 is due east -- but yaw 180 above turns him round, so his NOSE POINTS WEST and his
-# belly (and mouth, for the complaining) faces the camera. chotchki, 2026-09-24.
+# ONE direction, per C.5's budget: repetition is noticed in time, not heading. Wheel index 16
+# is due east -- but yaw 180 above turns him round, so his NOSE POINTS WEST and his belly (and
+# mouth, for the complaining) faces the camera. chotchki, 2026-09-24.
 direction = 16
+# NO HARNESS: body and shadow only, no runtime-tint mask. chotchki 2026-09-26, looking at the
+# flop in game: "the beached jamal shouldn't have the harness on it anymore" -- it broke off
+# with his legs. So art.py --sequence renders no mask pass and pack.py packs none (and removes
+# a mask sheet an earlier pack left). The cost: the entity colour no longer shows on a beached
+# Jamal; D.4 still carries entity.color across the swap, so it is back on repair.
+# Config-level, not [mask] mode, on purpose: no body or shadow pass hash moves, so dropping the
+# harness re-packs from the cache with no Blender launch.
+passes = ["body", "shadow"]
 
 # THE BEATS. A DRAFT for chotchki's eye (2026-09-24), not a call: C.5 decided on one long
 # cycle of varied beats and left the list open. Heave, heave, run down, lie there, snap at
 # nothing, let go, try again. 117 played frames (4.9 s at 24 fps), 72 unique renders -- a
-# repeated config is one cell of the sheet and Factorio's frame_sequence plays it again free.
+# repeated config is one sheet cell, and Factorio's frame_sequence replays it free.
 #
-# THE SEAMS ARE THE HARD PART. At bounce phase 0.5 the heave launches on f11 and its 0.495 s
-# of airtime WRAPS the loop: f20 is 0.22 tiles up, f1 0.16, and he lands on f3. So a beat that
-# hands back into the heave has to end mid-flight the same way, and a beat that follows the
-# heave has to finish that landing -- otherwise he pops 0.16 tiles in one frame.
+# THE SEAMS ARE THE HARD PART. At bounce phase 0.4 the heave launches on f9 and its 0.495 s of
+# airtime runs to the loop's end: f20 is 0.08 tiles up and he lands ON f1. So a beat handing
+# back into the heave must be falling the same way on its last frame, and a beat following
+# the heave must start on the ground, or he pops in one frame. MEASURED over the 1.25 cycle,
+# every seam moves the hammer, trunk and tail 4.0 px or less on screen except the twitch's
+# f9/f10 split (5.9 px, also its launch), all under the 9.8 inside the heave itself.
+
+# V5'S SEAT LIST, per beat: HEAD may take his weight on the arches (V5), but on a flat beat --
+# a still or near-rest body -- the lowest thing HEAD owns is the hammer's lower tip, and
+# seating on it props the trunk 0.14-0.22 up (C.5.6's hammer prop). So the list goes only on
+# the frames that arch, and each beat crossing between the two lists SPLITS at a frame where
+# both seat him on the same vertex, so the switch cannot pop (MEASURED per beat).
 
 [[sequence.beat]]
-# The C.5.2 loop exactly as called, twice.
+# The V5 loop, twice. No spine_sag: his tail is the push-off here, and a sag on a frame the
+# tail already seats only stands the rest of him up. MEASURED: head/tail screen correlation
+# +1.00, and the fin level (-3.8 deg) on all 20 frames.
 name = "heave"
+set = { "model.ground_ignore" = ["FIN_LEFT", "FIN_RIGHT", "JAW"] }
 
 [[sequence.beat]]
 name = "heave"
+set = { "model.ground_ignore" = ["FIN_LEFT", "FIN_RIGHT", "JAW"] }
 
 [[sequence.beat]]
 # The thrash runs down: the same wave at half speed (SWIM_MEDIUM IS SWIM_FAST at half the
-# tempo, so MEDIUM f1 picks up exactly where FAST f20 wraps to), shrinking as it goes, and
-# no new launch. bounce.phase 0.75 puts MEDIUM's launch on f31 -- 10 frames before f1 -- so
-# f1-f2 finish the heave's landing at the same heights and the launch itself never comes.
+# tempo, so MEDIUM f1 picks up exactly where FAST f20 wraps to), shrinking, no new launch.
+# SWIM_MEDIUM's cycle is 40 frames, and bounce.phase 0.7 puts its launch on f29 -- 12 frames
+# before f1, as the heave's f9 is -- so f1 is the same landing and the next launch falls past
+# the beat's end (0.75 did this for C.5.8's phase 0.5).
+# The tail sags as the thrash runs down, 0 -> 4 deg a joint, so the pause lies on it.
+# The U RUNS DOWN WITH IT: gain 1.25 -> 0.2 (starting where the heave is), lock 1 -> 0.5,
+# recentre and amplitude_even 1 -> 0, landing on the C+ pause, which meets the snap's rest
+# shape within 0.01 tiles (MEASURED; at V5's knobs the pause stood 0.11 higher on its tail
+# and the snap dropped the hammer 7 px). ONE ramp, cut in two at f5/f6 for the seat list: it
+# CARRIES THE ARCH IN (heave f1 seats on HEAD), and on the C+ list settle f1 would drop the
+# whole shark 0.42 tiles. At gain 2.0 f5 seated on the TAIL under either list; at 1.25 NO
+# frame of the settle agrees (MEASURED: V5 seats f5 on the hammer 0.1366 below where C+ seats
+# it on the tail, a 0.219-tile trunk jump at the cut). So ground_sink ramps 0.04 -> 0.1766
+# over f1-f5: f1 is still the heave's 0.04, f5 sits exactly where the C+ list would put it,
+# and the cut is pose alone (4.0 px, MEASURED). The price: the hammer's lower tip up to 0.137
+# under the sand at f5, which the holdout ground hides.
 name = "settle"
-frames = [1, 20]
-set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.75 }
-ramp = { "model.pose_gain" = [1.0, 0.2] }
+frames = [1, 5]
+set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.7, "model.ground_ignore" = ["FIN_LEFT", "FIN_RIGHT", "JAW"] }
+ramp = { "model.ground_sink" = [0.04, 0.1766], "model.pose_gain" = [1.25, 1.0289], "model.spine_sag" = [0.0, 0.8421], "model.phase_lock" = [1.0, 0.8947], "model.recentre" = [1.0, 0.7895], "model.amplitude_even" = [1.0, 0.7895] }
+
+[[sequence.beat]]
+name = "settle"
+frames = [6, 20]
+set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.7 }
+ramp = { "model.pose_gain" = [0.9737, 0.2], "model.spine_sag" = [1.0526, 4.0], "model.phase_lock" = [0.8684, 0.5], "model.recentre" = [0.7368, 0.0], "model.amplitude_even" = [0.7368, 0.0] }
 
 [[sequence.beat]]
 # He lies there. The settle's last frame, held -- the same config, so it costs no render.
 name = "pause"
 frames = [20, 20]
 hold = 10
-set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.75, "model.pose_gain" = 0.2 }
+set = { "model.action" = "SWIM_MEDIUM", "bounce.phase" = 0.7, "model.pose_gain" = 0.2, "model.spine_sag" = 4.0, "model.phase_lock" = 0.5, "model.recentre" = 0.0, "model.amplitude_even" = 0.0 }
 
 [[sequence.beat]]
 # Snaps at nothing. BITE_01 drives HEAD, JAW and the pectoral fins and NO spine bone, so the
 # body lies straight while the jaw works; its motion is all in f1-29 (C.19) and it needs gain
-# 2.0 to register at this size. No lock (a bite has no wave to lock) and no bounce.
+# 2.0 to register at this size. No lock (a bite has no wave) and no bounce. The spine is his
+# REST shape, whose tail meets his trunk's level at 2.57 deg a joint (MEASURED; 0.01 over it
+# at 2.5); the pause's 4.0 would stand his trunk 0.15 up on the tail. None of the U's knobs:
+# a bite has no curl to recentre or even out, and no chest swing or body turn for fin_floor
+# to take out -- on a rest spine the hold is the pose it already has -- so it is off here and
+# these stay the C+ renders (hashes unmoved).
+# bounce.phase 0.5 is PINNED here for the same reason: at height 0 it moves no pixel but is
+# still in the hash, so C.5.9's re-phase to 0.4 re-rendered all 15 cells identical (MEASURED,
+# max abs diff 0). Pinned, the bounce can be re-phased without touching the bite.
 name = "snap"
 frames = [1, 29]
 stride = 2
-set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "bounce.height" = 0.0 }
+set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "model.recentre" = 0.0, "model.amplitude_even" = 0.0, "model.fin_floor" = false, "bounce.height" = 0.0, "bounce.phase" = 0.5, "model.spine_sag" = 2.5 }
 
 [[sequence.beat]]
 # ...and lets go. BITE_01 ENDS with the head still swung round (its f29 is the start of a
@@ -93,13 +205,26 @@ set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" 
 name = "release"
 frames = [27, 1]
 stride = 2
-set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "bounce.height" = 0.0 }
+set = { "model.action" = "BITE_01", "model.pose_gain" = 2.0, "model.phase_lock" = 0.0, "model.recentre" = 0.0, "model.amplitude_even" = 0.0, "model.fin_floor" = false, "bounce.height" = 0.0, "bounce.phase" = 0.5, "model.spine_sag" = 2.5 }
 
 [[sequence.beat]]
-# Tries again: a heave that starts weak and builds to the full one. Starts on f3, the first
-# frame the heave is on the ground, and ends on f20 IDENTICAL to the heave's own f20 -- same
-# gain, same flight -- so the loop back to the first heave is seamless and f20 is not even a
-# new render.
+# Tries again: a heave that starts from NOTHING and builds to the full one, f3 -> f20, ending
+# IDENTICAL to the heave's own f20 (same gain, flight and seat list), so the loop back to the
+# first heave is seamless and f20 is not even a new render.
+# FROM ZERO, not the draft's 0.4: V5's f3 is the deep arch, so at any real gain the twitch
+# opened on a pose the release never passed through -- MEASURED at 0.8, the trunk jumped 0.45
+# tiles (23 px) in one frame. At 0 f3 is the release's rest shape (0.04 tiles of sag apart).
+# The sag goes back out as the heave builds, 2.0 -> 0. Cut at f9/f10 for the seat list, like
+# the settle: near rest the hammer would prop him, and at gain 1.25 from f10 the U seats his
+# mid-trunk (SPINE_05) under either list (f9 is 0.006 apart, f10 identical, MEASURED). No
+# bounce.phase of its own: it inherits 0.4, so it is on the sand f3-f9 as the heave builds,
+# launches on f9 like the heave and falls into heave f1's landing.
 name = "twitch"
-frames = [3, 20]
-ramp = { "model.pose_gain" = [0.4, 1.0] }
+frames = [3, 9]
+ramp = { "model.pose_gain" = [0.0, 0.4412], "model.spine_sag" = [2.0, 1.2941] }
+
+[[sequence.beat]]
+name = "twitch"
+frames = [10, 20]
+set = { "model.ground_ignore" = ["FIN_LEFT", "FIN_RIGHT", "JAW"] }
+ramp = { "model.pose_gain" = [0.5147, 1.25], "model.spine_sag" = [1.1765, 0.0] }

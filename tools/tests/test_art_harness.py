@@ -1,13 +1,12 @@
-"""The C.10 harness's pure logic: config resolution, hashing, and sheet layout.
+"""The C.10 harness's pure logic: config resolution, hashing and sheet layout.
 
-None of this launches Blender or opens the model. That split is deliberate -- the parts
-most likely to be quietly wrong (a knob that resolves to the wrong value, a cache key
-that does not change when it should, a crop that is half a pixel off) are exactly the
-parts that a render never tells you about. A wrong sprite just looks a bit off.
+None of this launches Blender or opens the model, on purpose: the parts most likely to be
+quietly wrong (a knob resolving to the wrong value, a cache key that does not change when
+it should, a crop half a pixel off) are the parts a render never reports. A wrong sprite
+just looks a bit off.
 
-Fixtures come from somewhere real wherever one exists: the stock spidertron's declared
-frame size and shift, the leg mount positions out of entities.lua, Factorio's own
-projection constant.
+Fixtures come from real sources where one exists: the stock spidertron's declared frame
+size and shift, the leg mount positions in entities.lua, Factorio's projection constant.
 """
 
 import hashlib
@@ -18,6 +17,7 @@ import re
 
 import pytest
 
+from conftest import SHIPPED_BLEND_DIGEST
 from render import artconfig as ac
 from render import factorio_camera as fc
 from render import sheets
@@ -36,8 +36,7 @@ def test_defaults_resolve_without_a_file():
 
 
 def test_shipped_toml_loads_and_covers_every_knob():
-    """The config file is the interface. A knob that exists in the schema but not in the
-    file is a knob nobody will ever find."""
+    """The config file is the interface: a schema knob missing from it is one nobody finds."""
     cfg = ac.load(TOML, env={})
     assert set(cfg) == set(ac.SCHEMA)
     import tomllib
@@ -60,10 +59,8 @@ def _toml_default(value):
 
 
 def test_every_knob_comment_states_its_real_default():
-    """`# default 0.75` above a line that says 0.8 is fine -- the default IS 0.75 and the
-    current value is 0.8, which is the whole reason both are written down. `# default 0.7`
-    is a lie, and a lie in a comment is worse than no comment, because it is the thing you
-    reach for when you want to put a knob back."""
+    """`# default 0.75` above `= 0.8` is fine: both values are written down on purpose. A
+    wrong default is worse than none, because it is what you reach for to put a knob back."""
     text = TOML.read_text().splitlines()
     section = None
     seen = set()
@@ -113,11 +110,9 @@ def test_typo_that_lands_on_a_real_leaf_name_gets_a_hint():
     ("output.directory", "output.dir"),
 ])
 def test_misspelled_knob_is_suggested_by_edit_distance(typo, want):
-    """An exact-leaf-match hint only fires on the typo you would have spotted anyway.
-
-    `model.scal` is a fat finger on the knob you actually reach for most, and the original
-    hint said nothing about it. Both entry points have to answer, because `--set` is the
-    one you type while iterating.
+    """An exact-leaf-match hint only fires on typos you would spot anyway; `model.scal`, a
+    fat finger on the most-used knob, got nothing. Both entry points answer, since `--set`
+    is what you type while iterating.
     """
     assert ac.suggest(typo) == f"; did you mean {want}?"
     section, leaf = typo.split(".")
@@ -132,7 +127,7 @@ def test_misspelled_knob_is_suggested_by_edit_distance(typo, want):
 @pytest.mark.parametrize("nonsense", ["model.zzz", "zzz.yyy", "render.wobble"])
 def test_a_knob_nothing_is_close_to_gets_no_hint(nonsense):
     """A wrong suggestion costs more than none. At cutoff 0.6 the shared `model.` prefix
-    alone was enough to make `model.zzz` come back as "did you mean model.scale?"."""
+    alone made `model.zzz` suggest model.scale."""
     assert ac.suggest(nonsense) == ""
     with pytest.raises(ac.ConfigError) as e:
         ac.parse_set([f"{nonsense}=1"])
@@ -152,8 +147,7 @@ def test_wrong_types_are_fatal(bad):
 
 
 def test_int_is_accepted_where_a_float_is_declared():
-    # TOML writes `energy = 16` readily enough; coercing keeps the hash stable whichever
-    # way it was spelled.
+    # `energy = 16` is valid TOML; coercing keeps the hash stable however it is spelled.
     cfg = ac.resolve({"sun": {"energy": 16}}, env={})
     assert cfg["sun.energy"] == 16.0
     assert isinstance(cfg["sun.energy"], float)
@@ -161,8 +155,8 @@ def test_int_is_accepted_where_a_float_is_declared():
 
 
 def test_bool_is_not_an_int():
-    # Python says True == 1. A config parser that agrees will happily take
-    # `samples = true` and render one sample.
+    # True == 1 in Python, so a parser that agrees takes `samples = true` and renders one
+    # sample.
     with pytest.raises(ac.ConfigError):
         ac.resolve({"render": {"samples": True}}, env={})
 
@@ -204,8 +198,8 @@ def test_config_hash_is_stable_and_order_independent():
         ac.canonical(ac.hashable(a)).encode()).hexdigest()[:12]
 
 
-#: `model.blend` is hashed by CONTENT, so nudging the path is not a knob change at all --
-#: that is the whole point of hashable(). It gets its own tests below instead.
+#: `model.blend` is hashed by CONTENT (hashable()), so nudging the path is not a knob
+#: change. It has its own tests below.
 _NOT_A_PIXEL: tuple = ("model.blend",)
 
 
@@ -221,11 +215,9 @@ def test_config_hash_moves_when_any_knob_moves():
 
 
 def test_the_config_hash_is_about_the_models_BYTES_not_its_path(tmp_path):
-    """Hashing the path made the provenance stamp a fact about one filesystem.
-
-    Three copies of one .blend gave three config hashes for pixel-identical sheets, and
-    the hash a sheet shipped with could not be reproduced on any other machine -- which is
-    the one thing a provenance hash has to do.
+    """Hashing the path tied the provenance stamp to one filesystem: three copies of one
+    .blend gave three config hashes for pixel-identical sheets, and no other machine could
+    reproduce a shipped sheet's hash.
     """
     here, there = tmp_path / "a.blend", tmp_path / "deep" / "b.blend"
     there.parent.mkdir()
@@ -253,9 +245,8 @@ def test_a_missing_model_still_hashes_deterministically(tmp_path):
 
 
 def test_the_stamp_never_carries_the_model_path(tmp_path):
-    """The .blend lives outside the repo and its path is machine-local -- here it is an
-    absolute scratch directory. The stamp goes into PNG text chunks that ship in a PUBLIC
-    repo, so the path must not be in it, and the digest that replaces it must re-hash."""
+    """The .blend path is machine-local and the stamp ships in PNG text chunks in a PUBLIC
+    repo, so the path must not appear and the digest replacing it must re-hash."""
     blend = tmp_path / "private" / "HAMMERHEAD.blend"
     blend.parent.mkdir()
     blend.write_bytes(b"SHARK")
@@ -268,6 +259,8 @@ def test_the_stamp_never_carries_the_model_path(tmp_path):
 
 
 def _nudge(kind, value):
+    if isinstance(kind, tuple) and kind[0] == "list":
+        return list(value) + ["_x"]          # an empty list has no element to add 1 to
     if isinstance(kind, tuple):
         return [v + 1 for v in value]
     if kind is bool:
@@ -278,8 +271,8 @@ def _nudge(kind, value):
 
 
 def test_pass_hash_ignores_knobs_that_cannot_change_that_pass():
-    """The cache key is the whole point of the harness feeling fast. Re-colouring the
-    compare background must not throw away 64 Cycles shadow frames."""
+    """The cache key is what makes the harness fast: re-colouring the compare background
+    must not throw away 64 Cycles shadow frames."""
     base = ac.resolve(env={})
     recoloured = dict(base, **{"compare.background": [0, 0, 0]})
     assert ac.pass_hash(base, "body") == ac.pass_hash(recoloured, "body")
@@ -295,8 +288,8 @@ def test_pass_hash_moves_when_the_geometry_moves():
 
 
 def test_mask_knobs_leave_the_body_and_shadow_caches_alone():
-    """The mask is the cheap pass and the one you fiddle with -- moving a strap must not
-    cost 85 seconds of Cycles or re-render 64 body frames it does not change."""
+    """The mask is the cheap pass you fiddle with: moving a strap must not cost 85 s of
+    Cycles or re-render 64 body frames it does not change."""
     base = ac.resolve(env={})
     moved = dict(base, **{"mask.strap_fore": 0.3, "mask.grey": 0.4,
                           "mask.plate_z": 0.9})
@@ -306,9 +299,9 @@ def test_mask_knobs_leave_the_body_and_shadow_caches_alone():
 
 
 def test_the_mask_rides_the_body_canvas():
-    """It is the body pass with a different material, so anything that moves the body's
-    pixels under it has to move the mask's too -- otherwise the two layers of `animation`
-    crop against different origins and slide apart in game."""
+    """The mask is the body pass with a different material, so anything that moves the
+    body's pixels moves the mask's, or the two `animation` layers crop against different
+    origins and slide apart in game."""
     base = ac.resolve(env={})
     for knob, value in (("camera.canvas_tiles", 7.0), ("camera.sprite_scale", 0.25),
                         ("render.supersample", 2), ("rotations.count", 32)):
@@ -318,8 +311,8 @@ def test_the_mask_rides_the_body_canvas():
 
 
 def test_the_mask_ignores_the_shark_s_own_surface():
-    """It throws the textures away, so the texture knobs are not its dependencies. This is
-    the only knob group in the schema where body and mask genuinely differ."""
+    """The mask discards textures, so texture knobs are not its dependencies: the only knob
+    group where body and mask differ."""
     base = ac.resolve(env={})
     textured = dict(base, **{"render.use_normal_map": False, "render.use_subsurface": True,
                              "render.normal_strength": 0.9})
@@ -328,8 +321,8 @@ def test_the_mask_ignores_the_shark_s_own_surface():
 
 
 def test_a_misspelled_enum_VALUE_is_as_fatal_as_a_misspelled_key():
-    """`mask.mode = "harnes"` type-checks as a string and renders the wrong thing
-    silently, which is the exact failure the schema exists to stop."""
+    """`mask.mode = "harnes"` type-checks as a string and silently renders the wrong thing,
+    the failure the schema exists to stop."""
     with pytest.raises(ac.ConfigError) as e:
         ac.resolve({"mask": {"mode": "harnes"}}, env={})
     assert "mask.mode" in str(e.value) and "harness" in str(e.value)
@@ -337,8 +330,8 @@ def test_a_misspelled_enum_VALUE_is_as_fatal_as_a_misspelled_key():
 
 
 def test_the_silhouette_mask_warns_that_it_eats_the_shark():
-    """Legal, kept as a one-line escape hatch, and a bad idea on this model -- which is
-    exactly what warnings() is for."""
+    """Legal (a one-line escape hatch) and a bad idea on this model: what warnings() is
+    for."""
     text = " ".join(ac.warnings(ac.resolve({"mask": {"mode": "silhouette"}}, env={})))
     assert "silhouette" in text and "harness" in text
 
@@ -349,17 +342,17 @@ def test_straps_in_the_wrong_order_warn():
 
 
 def test_a_plate_squeezed_flat_between_its_floor_and_ceiling_warns():
-    """`plate_top_z` is what keeps the tint off his dorsal fin, so it gets tightened -- and
-    tightened past the floor it leaves a harness of two bare straps and no saddle. Legal
-    (it IS the escape hatch), and not something to discover in a 64-frame sheet."""
+    """`plate_top_z` keeps the tint off his dorsal fin, so it gets tightened; past the floor
+    it leaves two bare straps and no saddle. Legal (it IS the escape hatch), but not
+    something to discover in a 64-frame sheet."""
     flat = ac.resolve({"mask": {"plate_z": 0.6, "plate_top_z": 0.6}}, env={})
     assert any("EMPTY" in w for w in ac.warnings(flat))
     assert not any("EMPTY" in w for w in ac.warnings(ac.resolve(env={})))
 
 
 def test_body_only_knobs_leave_the_shadow_cache_alone():
-    # The shadow pass is the expensive one (Cycles, 704 px). Fiddling with the body's
-    # normal map must not cost 85 seconds.
+    # The shadow pass is the expensive one (Cycles, 704 px): the body's normal map must not
+    # cost 85 seconds.
     base = ac.resolve(env={})
     other = dict(base, **{"render.normal_strength": 0.9, "render.use_subsurface": True,
                           "camera.canvas_tiles": 7.0})
@@ -381,9 +374,8 @@ def test_a_forced_resolution_makes_the_shadow_hash_follow_the_body_canvas():
 
 
 def test_a_body_canvas_change_still_spares_the_shadow_cache_by_default():
-    """The other half: without a forced resolution the shadow pass genuinely does not care
-    about the body canvas, and paying 85 s of Cycles to widen the body canvas would make
-    the harness feel exactly as slow as it was built to not be."""
+    """The other half: without a forced resolution the shadow pass ignores the body canvas,
+    so widening it must not cost 85 s of Cycles."""
     base = ac.resolve(env={})
     wider = dict(base, **{"camera.canvas_tiles": 7.0})
     assert ac.derived(base)["shadow_resolution_px"] == ac.derived(wider)["shadow_resolution_px"]
@@ -415,9 +407,8 @@ def test_every_pass_has_knobs_and_every_knob_is_reachable():
 
 
 def test_an_out_of_repo_output_dir_still_prints(tmp_path):
-    """`output.dir` is documented as absolute-capable, and every progress line ran the
-    render directory through Path.relative_to(REPO), which raises outside the repo. A
-    timing run into /tmp is the ordinary reason to set it."""
+    """`output.dir` may be absolute (a timing run into /tmp is the usual reason), but every
+    progress line ran it through Path.relative_to(REPO), which raises outside the repo."""
     from render import art
     assert art.shorten(art.REPO / "render-out" / "body") == "render-out/body"
     assert art.shorten(tmp_path / "cold") == str(tmp_path / "cold")
@@ -436,8 +427,8 @@ def test_stamp_round_trips_through_json():
 
 
 def test_preview_frames_are_a_subset_of_the_full_wheel():
-    """If they are not, a preview is a different picture from the sheet it previews and
-    the cache can never share a frame between --preview and --full."""
+    """Otherwise a preview is a different picture from its sheet and the cache can never
+    share a frame between --preview and --full."""
     cfg = ac.resolve(env={})
     full = ac.frame_indices(cfg)
     assert full == list(range(64))
@@ -517,11 +508,9 @@ def test_forced_resolution_puts_both_passes_on_one_px_per_tile():
 
 
 def test_the_stamped_size_is_the_size_of_the_png_that_lands_on_disk(tmp_path):
-    """The one claim the whole harness rests on, walked end to end with Blender stubbed.
-
-    Blender's contribution is exactly "write a *_render_px square PNG"; everything after
-    that is ours. Stamp 384 px next to a 192 px file once and every sheet in render-out/
-    becomes unciteable, which is the opposite of what a provenance stamp is for.
+    """The claim the harness rests on, end to end with Blender stubbed (Blender only writes
+    a *_render_px square PNG; everything after is ours). Stamp 384 px next to a 192 px file
+    once and every sheet in render-out/ becomes unciteable.
     """
     Image = pytest.importorskip("PIL.Image")
     from render import art
@@ -573,8 +562,8 @@ def test_dangerous_but_legal_knobs_warn(knob, value, needle):
 def test_origin_in_frame_matches_the_stock_torso():
     """Cross-checked against the measured art: factorio_camera's --verify reads the stock
     body's alpha at -1.6562 .. +0.4688 tiles, so the entity sits 1.6562*64 = 106 px below
-    the frame's top edge. Landing on 106.5 is the (n-1)/2 pixel-index convention, and the
-    half pixel is the convention, not an error."""
+    the frame's top edge. The extra half pixel is the (n-1)/2 pixel-index convention, not
+    an error."""
     ox, oy = sheets.origin_in_frame(132, 138, (0.0, -19 / 32), 64.0)
     assert ox == pytest.approx(65.5)
     assert oy == pytest.approx(106.5)
@@ -610,38 +599,38 @@ def test_centred_crop_is_the_right_size_and_reports_its_residual():
 
 
 def test_centred_crop_may_run_off_the_source_edge():
-    # Pillow pads a crop outside the image with transparency, which is what keeps a
-    # near-the-edge entity from silently shifting inside its cell.
+    # Pillow pads an out-of-image crop with transparency, which keeps a near-the-edge
+    # entity from silently shifting inside its cell.
     box, _ = sheets.centred_crop((10.0, 10.0), 200, 0.5)
     assert box[0] < 0 and box[1] < 0
 
 
 def test_crop_loss_counts_what_the_cell_threw_away():
-    """A cell smaller than the sprite does not look broken, it looks like a tight framing
-    -- and the compare sheet is where size and pivot get decided, so a silent crop is a
-    decision made against a picture the sheet mutilated."""
+    """A cell smaller than the sprite looks like tight framing, not a bug, and size and
+    pivot get decided on the compare sheet: a silent crop means deciding against a
+    mutilated picture."""
     assert sheets.crop_loss((10, 10, 90, 90), (0, 0, 100, 100)) == (0, 0, 0, 0)
     assert sheets.crop_loss((10, 10, 90, 90), (20, 0, 80, 60)) == (10, 0, 10, 30)
     assert sheets.crop_loss(None, (0, 0, 100, 100)) == (0, 0, 0, 0)
 
 
 def test_cell_tiles_needed_is_the_number_the_warning_tells_you_to_type():
-    """Its answer has to actually fit, at the SAME anchor -- a recommendation you paste in
-    and still get a cropped sheet from is worse than no recommendation."""
+    """Its answer has to fit at the SAME anchor: a recommendation that still crops is worse
+    than none."""
     box, origin, ppt = (13, 20, 371, 307), (191.5, 191.5), 64.0
     for oy in (0.5, 0.6, 0.78):
         tiles = sheets.cell_tiles_needed(box, origin, ppt, oy)
         cell = int(math.ceil(tiles * ppt))
         crop, _ = sheets.centred_crop(origin, cell, oy)
         assert sheets.crop_loss(box, crop) == (0, 0, 0, 0), oy
-        # ... and it has to be the SMALLEST that fits, near enough: a "just make it huge"
-        # answer is a sheet nobody can read. 5% under the recommendation already crops.
+        # ... and near the SMALLEST that fits (a huge cell is an unreadable sheet): 5% under
+        # the recommendation already crops.
         tight, _ = sheets.centred_crop(origin, int(cell * 0.95), oy)
         assert any(sheets.crop_loss(box, tight)), oy
 
-    # The measured union of the shipped 64 body rotations against the shipped cell: 294 px
-    # of cell over a 358 px sprite, which is where the 32-a-side and 50-off-the-bottom
-    # crops came from. The shipped cell is `camera.canvas_tiles` wide now.
+    # The measured union of the 64 shipped body rotations against the old 294 px cell over
+    # a 358 px sprite: the 32-a-side and 50-off-the-bottom crops. The shipped cell is now
+    # `camera.canvas_tiles` wide.
     old_box, _ = sheets.centred_crop(origin, 294, 0.78)
     assert sheets.crop_loss(box, old_box) == (32, 0, 32, 50)
     cfg = ac.resolve(env={})
@@ -663,9 +652,9 @@ def test_mount_markers_agree_with_the_prototype():
 
 
 def test_the_drawn_mount_ring_is_the_one_the_prototype_ships():
-    """C.13 moved the mounts inboard. The compare sheet reading its ratio out of
-    shared.lua rather than carrying its own copy is what stops the harness marking a ring
-    this mod stopped declaring -- and this test is what stops the two drifting apart."""
+    """C.13 moved the mounts inboard. The compare sheet reads the ratio from shared.lua, not
+    a copy, so it never marks a ring the mod stopped declaring; this test keeps the two from
+    drifting apart."""
     import re
     text = sheets.MOUNT_SHRINK_LUA.read_text()
     declared = float(re.search(r"^\s*mount_shrink\s*=\s*([0-9.]+)", text, re.M).group(1))
@@ -681,9 +670,9 @@ def test_the_drawn_mount_ring_is_the_one_the_prototype_ships():
 
 
 def test_the_drawn_mount_ring_carries_the_prototype_lift():
-    """C.27 sat his belly on the floor, which drew him higher; entity.lua lifts the mounts by
-    the same screen offset. The sheet has to lift them too, or its coverage count checks a
-    ring the game does not draw -- 52/64 measured with the lift missing."""
+    """C.27 sat his belly on the floor, drawing him higher; entity.lua lifts the mounts by
+    the same screen offset. The sheet lifts them too, or its coverage count checks a ring
+    the game does not draw (52/64 measured with the lift missing)."""
     import re
     text = sheets.MOUNT_SHRINK_LUA.read_text()
     declared = float(re.search(r"^\s*mount_lift\s*=\s*([0-9.]+)", text, re.M).group(1))
@@ -701,8 +690,8 @@ def test_the_drawn_mount_ring_carries_the_prototype_lift():
 
 
 def test_a_missing_prototype_falls_back_instead_of_exploding(monkeypatch, tmp_path):
-    """sheets.py is imported by tests that never build a mod tree, and a missing ratio must
-    degrade to stock's ring rather than stop you looking at the shark."""
+    """Tests import sheets.py without a mod tree; a missing ratio degrades to stock's ring
+    rather than stopping you looking at the shark."""
     monkeypatch.setattr(sheets, "MOUNT_SHRINK_LUA", tmp_path / "gone.lua")
     assert sheets.mount_shrink() == 1.0
     assert sheets.mount_lift() == 0.0
@@ -756,8 +745,8 @@ def test_stock_sprite_specs_match_the_prototype():
 
 def test_stock_base_is_the_non_rotating_plate_the_legs_attach_to():
     """spidertron-animations.lua:313-320, base_animation layer 1. direction_count = 1 is
-    the load-bearing field: one frame for all 64 rotations, drawn UNDER the torso, and it
-    is what the eight leg mounts land on."""
+    what makes it the mount plate: one frame for all 64 rotations, drawn UNDER the torso,
+    where the eight leg mounts land."""
     b = sheets.STOCK_BASE
     assert b["path"].endswith("spidertron-body-bottom.png")
     assert (b["width"], b["height"]) == (126, 106)
@@ -794,12 +783,10 @@ def _skip_without_factorio(spec):
 
 
 def test_the_mount_markers_land_on_the_stock_base_plate():
-    """The self-check the docstring promises, run for real.
-
-    This is the sheet's claim about ITSELF: mount_position read as a SCREEN offset (not a
+    """sheets.py's self-check, run for real: mount_position read as a SCREEN offset (not a
     world position at body height) puts the markers on the layer the legs attach to. 8 of 8
-    on opaque plate, each 0.707 px from a fully opaque pixel -- which is the half-pixel
-    diagonal forced by the (n-1)/2 origin convention and is the floor, not a miss.
+    on opaque plate, each 0.707 px from a fully opaque pixel -- the half-pixel diagonal
+    forced by the (n-1)/2 origin convention, the floor rather than a miss.
     """
     _skip_without_factorio(sheets.STOCK_BASE)
     res = sheets.mount_selfcheck()
@@ -840,8 +827,8 @@ def test_a_render_that_runs_out_of_canvas_is_reported(tmp_path, capsys):
 
 
 def test_the_clipping_warning_names_the_pass_it_can_actually_fix(tmp_path):
-    """The shadow pass rides its own canvas knob. Telling someone to raise the body's
-    would have them turning a knob that changes nothing about the frame they are looking at.
+    """The shadow pass has its own canvas knob; naming the body's would send you to a knob
+    that cannot change the clipped frame.
     """
     from render import art
     cfg = ac.resolve(env={})
@@ -855,8 +842,8 @@ def test_the_clipping_warning_names_the_pass_it_can_actually_fix(tmp_path):
 def test_shadow_sampling_noise_does_not_read_as_a_clipped_frame(tmp_path, capsys):
     """MEASURED on a real 704 px Cycles shadow frame: the catcher plane carries alpha 1..7
     over the WHOLE canvas, so getbbox() with no threshold is the full frame and every
-    shadow render reports as clipped. A warning that fires on all eight frames of a
-    correct render is one you turn off. The floor is the same 8 sheets.py samples at.
+    shadow render reports as clipped, and a warning firing on every frame of a correct
+    render gets turned off. The floor is the same 8 sheets.py samples at.
     """
     from render import art
     Image = pytest.importorskip("PIL.Image")
@@ -874,8 +861,8 @@ def test_shadow_sampling_noise_does_not_read_as_a_clipped_frame(tmp_path, capsys
 
 
 def test_a_missing_or_empty_frame_is_not_a_clipping_report(tmp_path, capsys):
-    """getbbox() returns None for a fully transparent frame. Reading that as "clipped"
-    would fire the warning on the one case where nothing rendered at all."""
+    """getbbox() returns None for a fully transparent frame; reading that as "clipped" fires
+    the warning when nothing rendered at all."""
     from render import art
     Image = pytest.importorskip("PIL.Image")
     cfg = ac.resolve(env={})
@@ -887,11 +874,9 @@ def test_a_missing_or_empty_frame_is_not_a_clipping_report(tmp_path, capsys):
 
 
 def test_mount_coverage_counts_only_opaque_pixels_of_our_own_render():
-    """The number the compare sheet's headline question turns on, exercised without Blender.
-
-    Synthetic frames rather than a render, because the claim being tested is "an opaque
-    pixel under a marker counts and a transparent one does not", and a real shark makes
-    that a fact about the shark instead of about the counter.
+    """The compare sheet's headline number, without Blender. Synthetic frames, because the
+    claim is "an opaque pixel under a marker counts, a transparent one does not"; a real
+    shark would make it a fact about the shark instead of the counter.
     """
     Image = pytest.importorskip("PIL.Image")
     cell, ppt, oy = 294, 64.0, 0.78
@@ -915,8 +900,8 @@ def test_mount_coverage_counts_only_opaque_pixels_of_our_own_render():
 
 
 def test_coverage_line_names_the_worst_rotation():
-    """An average hides the frame you need to see: a leg that floats at one heading floats
-    in the game. The worst rotation is the one that has to be on the sheet."""
+    """An average hides the frame you need: a leg floating at one heading floats in the
+    game, so the worst rotation goes on the sheet."""
     line = sheets.coverage_line([("00 N", 2), ("08 NE", 3), ("32 S", 0)])
     assert "5/24" in line
     assert "worst 0/8 at 32 S" in line
@@ -925,10 +910,9 @@ def test_coverage_line_names_the_worst_rotation():
 
 
 def test_the_rotating_torso_is_the_wrong_layer_to_check_against():
-    """Why the check aims at base_animation. Point it at the rotating torso and it fails --
-    not because the reading is wrong but because Wube's torso is narrower than the leg
-    spread. 230 of 512 mount samples over the 64 frames sit on transparent pixels. Aiming
-    the self-check there would make it cry wolf forever, so it would get ignored.
+    """Why the check aims at base_animation: against the rotating torso it fails, because
+    Wube's torso is narrower than the leg spread (230 of 512 mount samples over 64 frames
+    land on transparent pixels), and a check that always cries wolf gets ignored.
     """
     _skip_without_factorio(sheets.STOCK_BODY)
     res = sheets.mount_selfcheck(sheets.STOCK_BODY)
@@ -937,8 +921,8 @@ def test_the_rotating_torso_is_the_wrong_layer_to_check_against():
 
 
 def test_a_one_frame_layer_ignores_the_frame_index():
-    """base_animation has one frame; asking it for frame 24 would crop 24 rows below a
-    106 px file and hand back transparency, which reads as "the plate vanished"."""
+    """base_animation has one frame; frame 24 would crop 24 rows below a 106 px file and
+    return transparency, which reads as "the plate vanished"."""
     _skip_without_factorio(sheets.STOCK_BASE)
     Image = pytest.importorskip("PIL.Image")
     a = sheets.load_sheet_frame(sheets.STOCK_BASE, 0, 200, 64.0, 0.78)
@@ -952,12 +936,12 @@ def test_a_one_frame_layer_ignores_the_frame_index():
 def test_no_module_under_render_shadows_the_stdlib():
     """render/inspect.py cost two checked-in scripts their exit code.
 
-    Python and Blender both put the running script's own directory on sys.path[0], so a
-    file named after a stdlib module hijacks that import for every sibling. `dataclasses`
-    imports `inspect`, so `from dataclasses import dataclass` in spritesheet.py became
-    `import bpy` and `uv run python render/spritesheet.py` exited 1 -- as did
-    blender_check.py. Four modules grew a bespoke sys.path guard; the file got renamed to
-    model_inspect.py instead. This test is what makes the rename stick.
+    Python and Blender put the running script's directory on sys.path[0], so a file named
+    after a stdlib module hijacks that import for every sibling. `dataclasses` imports
+    `inspect`, so spritesheet.py's `from dataclasses import dataclass` ran `import bpy` and
+    `uv run python render/spritesheet.py` exited 1, as did blender_check.py. Four modules grew
+    bespoke sys.path guards before the file was renamed to model_inspect.py instead; this
+    test keeps it renamed.
     """
     import sys
     render_dir = pathlib.Path(ac.__file__).resolve().parent
@@ -983,11 +967,9 @@ def test_artconfig_stays_importable_inside_blender():
             assert node.module.split(".")[0] in allowed, node.module
 
 def test_girth_widens_only_the_width_report():
-    """girth must reach the DERIVED width, or every report site prints a wrong number.
-
-    The bug this pins: shark_width_tiles was model_bu[1] * scale, so a girthed shark
-    reported its un-girthed width in the summary line, the compare footer and the sheet
-    footer at once - three wrong numbers from one missing multiply.
+    """girth must reach the DERIVED width. shark_width_tiles was model_bu[1] * scale, so a
+    girthed shark reported its un-girthed width in the summary line, the compare footer and
+    the sheet footer at once.
     """
     import render.artconfig as ac
     base = ac.resolve({"model.scale": 0.75, "model.girth": 1.0})
@@ -1002,16 +984,15 @@ def test_girth_widens_only_the_width_report():
 #
 # Three knobs (model.action / pose_gain / reparent_head) and a [bounce] table landed AFTER
 # mod/jamaltron/graphics/ shipped four PNGs stamped with a config hash and four pass hashes.
-# The tests below are the two halves of that: the shipped stamps still reproduce, and every
-# one of the new knobs is in the hash the moment it is touched.
+# The tests below pin both halves: the shipped stamps still reproduce, and every new knob
+# enters the hash the moment it is touched.
 
-#: What the shipped sheets carry, read off their own PNG text chunks. The digest is the
-#: MODEL's content, substituted in directly here so this runs with no .blend on the machine
-#: -- artconfig.hashable() passes an already-digested value straight through, which is the
-#: same property that lets a stamp read back off a PNG re-hash to itself.
+#: What the shipped sheets carry in their PNG text chunks. The MODEL's content digest (owned
+#: by conftest) is substituted directly so this runs with no .blend: artconfig.hashable()
+#: passes an already-digested value through, the same property that lets a stamp read off a
+#: PNG re-hash to itself.
 #: C.27 re-dated them on purpose (83d6be794998 -> bd71cb367d90): ground contact on, belly on
 #: the floor, mounts lifted to match.
-SHIPPED_BLEND_DIGEST = "sha256:0431897ccc701717"
 SHIPPED_CONFIG_HASH = "bd71cb367d90"
 SHIPPED_PASS_HASHES = {"body": "7cda05af189a", "shadow": "bc16c97d6383",
                        "mask": "4666e5e5bd20", "compare": "4247c6a684a3"}
@@ -1027,11 +1008,22 @@ def _shipped_cfg():
     return cfg
 
 
+def test_the_model_on_disk_is_the_one_the_pins_assume():
+    """The hash pins stamp SHIPPED_BLEND_DIGEST in and never read the model (a runner has none),
+    so THIS is what notices a swapped or re-exported HAMMERHEAD.blend on a machine that has one.
+    Skips where there is no model, like the Blender-gated tests."""
+    path = ac.blend_path(ac.load(env={}))
+    if not path.is_file():
+        pytest.skip("no model on this machine (a CI runner never has one)")
+    assert ac.blend_digest(path) == SHIPPED_BLEND_DIGEST, (
+        "the model on disk is not the one the shipped sheets were rendered from")
+
+
 def test_the_standing_config_still_hashes_to_what_the_shipped_sheets_carry():
     """THE TRIPWIRE. mod/jamaltron/graphics/*.png carry these five hashes in their own text
     chunks and pack.py REFUSES a sheet whose pass hash does not match the config being
-    packed. So a schema addition that moves them does not "change a number", it re-dates art
-    that did not move and breaks the packer against the sheets already on disk.
+    packed. A schema addition that moves them re-dates art that did not move and breaks the
+    packer against the sheets on disk.
 
     If this fails after you added a knob: the knob is not hash-neutral at its default. Either
     its default is not an exact no-op (in which case it is not additive -- leave it out of
@@ -1064,14 +1056,20 @@ def test_a_new_knob_at_its_default_is_not_in_any_hash():
     ("model.phase_lock", 1.0),
     ("model.reparent_head", True),
     ("model.ground_contact", False),
+    ("model.ground_ignore", ["FIN_LEFT", "FIN_RIGHT"]),
+    ("model.ground_sink", 0.04),
+    ("model.fin_fold", 50.0),
+    ("model.spine_sag", 3.0),
+    ("model.fin_floor", True),
+    ("model.recentre", 1.0),
+    ("model.amplitude_even", 1.0),
     ("bounce.height", 0.3),
     ("bounce.phase", 0.25),
     ("bounce.gravity", 4.0),
 ])
 def test_a_new_knob_moves_every_hash_the_moment_it_is_touched(key, value):
-    """The other half, and the one that stops the hole in the provenance from spreading: off
-    its default an additive knob is hashed like anything else, so a flop frame can never be
-    served out of the standing shark's cache directory."""
+    """The other half: off its default an additive knob is hashed like any other, so a flop
+    frame is never served from the standing shark's cache directory."""
     cfg = _shipped_cfg()
     moved = dict(cfg, **{key: value})
     assert ac.config_hash(moved) != ac.config_hash(cfg)
@@ -1111,9 +1109,9 @@ def test_the_bounce_is_a_parabola_that_sits_on_the_ground():
     profile = ac.bounce_profile(cfg)
     lifts = [z for _, z in profile]
     assert min(lifts) == 0.0, "he must actually touch the ground"
-    # The SAMPLED peak sits a hair under the commanded height whenever the apex falls between
-    # two frames, which it usually does: at 0.3 tiles the apex is at frame 11.94 and the
-    # nearest sample is 0.29997. That is the arithmetic being honest, not a bug to round away.
+    # The SAMPLED peak sits a hair under the commanded height when the apex falls between
+    # frames (usually: at 0.3 tiles the apex is frame 11.94, nearest sample 0.29997). Honest
+    # arithmetic, not a bug to round away.
     assert max(lifts) == pytest.approx(cfg["bounce.height"], abs=1e-3)
     assert max(lifts) <= cfg["bounce.height"], "the height is a ceiling, not a target"
     assert all(z >= 0.0 for z in lifts), "no frame below the floor"
@@ -1131,9 +1129,8 @@ def test_the_bounce_is_a_parabola_that_sits_on_the_ground():
 
 
 def test_airtime_follows_from_height_and_gravity_and_nothing_else():
-    """No airtime knob on purpose: gravity is one number for every jump, so saying how high
-    he gets has already said how long he hangs. Higher is longer, stronger gravity is
-    shorter, and the relationship is the textbook one."""
+    """No airtime knob on purpose: gravity is one number for every jump, so height fixes
+    hang time (textbook t = 2*sqrt(2h/g)). Higher is longer, stronger gravity shorter."""
     d = ac.derived(_flop())
     assert d["bounce_airtime_seconds"] == pytest.approx(2 * math.sqrt(2 * 0.3 / 9.8))
     assert d["bounce_airtime_frames"] == pytest.approx(d["bounce_airtime_seconds"] * 24)
@@ -1145,9 +1142,8 @@ def test_airtime_follows_from_height_and_gravity_and_nothing_else():
 
 
 def test_the_phase_knob_moves_the_push_off_and_wraps():
-    """Where in the cycle he launches is an eyeball decision against the pose, so it is a
-    knob. It has to WRAP rather than clamp: phase 1.0 is phase 0.0, and a slider that stops
-    dead at one end of a cycle is a slider with a seam in it."""
+    """The launch point is an eyeball call against the pose, so it is a knob. It WRAPS
+    rather than clamps: phase 1.0 is phase 0.0, and a clamped cycle slider has a seam."""
     at = {p: dict(ac.bounce_profile(_flop(**{"bounce.phase": p})))
           for p in (0.0, 0.25, 0.5, 1.0, 1.25)}
     assert at[0.0][1] == 0.0, "phase 0 launches ON frame 1, so frame 1 is contact"
@@ -1158,9 +1154,9 @@ def test_the_phase_knob_moves_the_push_off_and_wraps():
 
 
 def test_a_rest_pose_has_no_cycle_so_it_cannot_bounce():
-    """The lift is driven by the thrash's phase, and a standing shark has no thrash. Zero at
-    every frame, a warning that says why, and -- the part that matters -- the shipped
-    standing config cannot be lifted by a stray bounce knob."""
+    """The lift is driven by the thrash's phase and a standing shark has no thrash: zero at
+    every frame, a warning saying why, and the shipped standing config cannot be lifted by a
+    stray bounce knob."""
     still = ac.resolve({"bounce": {"height": 0.3, "phase": 0.25}}, env={})
     assert still["model.action"] == "rest"
     assert [z for _, z in ac.bounce_profile(still)] == [0.0]
@@ -1171,8 +1167,8 @@ def test_a_rest_pose_has_no_cycle_so_it_cannot_bounce():
 def test_the_bounce_reports_what_it_costs_the_picture():
     """MEASURED against real renders (dir 16, SWIM_FAST f12, the lift the only difference):
     the shadow's centroid moves +19.12 px east and the body rises 14 px up-screen at 0.3
-    tiles of lift. These are the numbers that predicted it, and they are what the footer,
-    the page and the canvas budget all read."""
+    tiles of lift. These derived numbers predicted it; the footer, the page and the canvas
+    budget all read them."""
     d = ac.derived(_flop(**{"model.frame": 12}))
     assert d["bounce_lift_tiles"] == pytest.approx(0.3, abs=1e-3)      # apex at frame 11.94
     # one tile of shadow east per tile of height at the game's own sun
@@ -1188,9 +1184,8 @@ def test_the_bounce_reports_what_it_costs_the_picture():
 
 def test_a_bounce_that_cannot_land_inside_the_cycle_is_a_warning_not_a_pop():
     """The lift is periodic in the clip's own cycle, so if the airtime outruns the cycle he
-    is still in the air when the next push-off comes and the loop POPS at the seam. That is
-    invisible in a still and obvious in play, which is exactly the kind of thing that has to
-    be said in words."""
+    is still in the air when the next push-off comes and the loop POPS at the seam --
+    invisible in a still, obvious in play, so it has to be a warning."""
     too_high = _flop(**{"bounce.height": 2.0})
     d = ac.derived(too_high)
     assert d["bounce_airtime_frames"] > d["bounce_cycle_frames"]
@@ -1199,8 +1194,8 @@ def test_a_bounce_that_cannot_land_inside_the_cycle_is_a_warning_not_a_pop():
 
 
 def test_the_rig_fix_and_the_gain_warn_from_the_schema_so_the_cli_hears_them():
-    """These used to live in tune.py, which meant `art.py --set model.action=...` rendered a
-    head welded to world space and said nothing."""
+    """These lived in tune.py, so `art.py --set model.action=...` rendered a head welded to
+    world space and said nothing."""
     plain = ac.resolve({"model": {"action": "SWIM_FAST"}}, env={})
     assert any("C.18a" in w and "reparent_head" in w for w in ac.warnings(plain))
     fixed = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True}}, env={})
@@ -1217,11 +1212,10 @@ def test_the_rig_fix_and_the_gain_warn_from_the_schema_so_the_cli_hears_them():
 
 
 def test_a_roll_past_the_belly_up_rail_warns_and_the_flop_range_does_not():
-    """The roll at which he stops being BEACHED and starts being DEAD IN WATER is a measured
-    number off C.5's sheet B, and until this landed nothing said it -- `art.py --set
-    model.rotation=[140,0,0]` rendered a belly-up shark in silence. It is a warning and not a
-    clamp on purpose: the whole of C.5 is chotchki judging this by eye, and an edge you cannot
-    cross is an edge you have to take on faith."""
+    """The roll where BEACHED becomes DEAD IN WATER is measured off C.5's sheet B; before
+    this, `art.py --set model.rotation=[140,0,0]` rendered a belly-up shark in silence. A
+    warning, not a clamp, on purpose: C.5 is chotchki judging by eye, and an edge you cannot
+    cross is one you take on faith."""
     for roll in (80.0, 85.0, 90.0, ac.ROLL_BELLY_UP, -ac.ROLL_BELLY_UP):
         assert not any("belly-up" in w for w in ac.warnings(
             ac.resolve({"model": {"rotation": [roll, 0.0, 0.0]}}, env={}))), roll
@@ -1232,8 +1226,8 @@ def test_a_roll_past_the_belly_up_rail_warns_and_the_flop_range_does_not():
 
 
 def test_phase_lock_says_when_it_cannot_do_anything():
-    """A knob that silently does nothing wastes a morning. Rest has no clip and a bite has no
-    wave, so either one with a lock set is a config that only moved the hash."""
+    """Rest has no clip and a bite has no wave, so a lock on either only moves the hash --
+    and a knob that silently does nothing wastes a morning."""
     base = ac.resolve({"model": {"action": "SWIM_FAST", "reparent_head": True}}, env={})
     assert not [w for w in ac.warnings(dict(base, **{"model.phase_lock": 1.0}))
                 if "phase_lock" in w]
@@ -1253,7 +1247,7 @@ def test_ground_contact_is_the_shipped_standing_config_and_does_not_warn():
     """C.27: the standing shark ships with contact on -- at offset z 0.5 his belly sat 0.26
     tiles under the floor. Contact on a rest pose used to WARN (it was the flop's knob and it
     raised him off his shipped sheets); now it IS the shipped sheets, and a warning on the
-    committed config would be a warning nobody can act on."""
+    committed config is one nobody can act on."""
     shipped = ac.load(env={})
     assert shipped["model.ground_contact"] and shipped["model.action"] == "rest"
     assert not [w for w in ac.warnings(shipped) if "ground_contact" in w]
@@ -1279,6 +1273,78 @@ def test_offset_z_leaves_the_key_while_ground_contact_cancels_it():
     assert ac.config_hash(ac.resolve(blob["config"], env={})) == blob["config_hash"]
 
 
+def test_bedding_in_needs_contact_and_draws_the_holdout_only_when_something_goes_under():
+    """C.5.6: the holdout ground exists to hide what contact put under the floor ON PURPOSE,
+    so it follows the ignore list and the sink -- and only with contact on, because without it
+    neither knob moves anything and nothing that rendered whole before may lose pixels."""
+    flop = ac.resolve({"model": {"action": "SWIM_FAST", "ground_contact": True}}, env={})
+    assert not ac.bedded_in(flop), "lowest-vertex contact buries nothing"
+    assert ac.bedded_in(dict(flop, **{"model.ground_ignore": ["FIN_LEFT", "FIN_RIGHT"]}))
+    assert ac.bedded_in(dict(flop, **{"model.ground_sink": 0.04}))
+    for lifts in ({"model.fin_fold": 50.0}, {"model.spine_sag": 3.0}):
+        assert not ac.bedded_in(dict(flop, **lifts)), \
+            "a fold or a sag re-poses him; on its own contact still seats his lowest vertex"
+    off = dict(flop, **{"model.ground_contact": False, "model.ground_ignore": ["HEAD"],
+                        "model.ground_sink": 0.04})
+    assert not ac.bedded_in(off)
+    assert any("do NOTHING" in w and "ground_contact" in w for w in ac.warnings(off))
+    # the committed standing shark is neither, and says nothing about any of it
+    shipped = ac.load(env={})
+    assert not ac.bedded_in(shipped)
+    assert shipped["model.fin_fold"] == 0.0 and shipped["model.spine_sag"] == 0.0
+    assert not [w for w in ac.warnings(shipped)
+                if any(k in w for k in ("ground_ignore", "ground_sink", "fin_fold", "spine_sag"))]
+
+
+def test_ground_ignore_is_a_list_of_names_and_says_so_when_it_is_not():
+    """The one list-of-any-length knob. A bare string is the likely typo (`"FIN_LEFT"` for
+    `["FIN_LEFT"]`), and iterating it would ignore bones called F, I, N..."""
+    cfg = ac.resolve({"model": {"ground_ignore": ["FIN_LEFT", "HEAD"]}}, env={})
+    assert cfg["model.ground_ignore"] == ["FIN_LEFT", "HEAD"]
+    for bad in ("FIN_LEFT", ["FIN_LEFT", 3]):
+        with pytest.raises(ac.ConfigError):
+            ac.resolve({"model": {"ground_ignore": bad}}, env={})
+    assert ac.parse_set(['model.ground_ignore=["JAW"]']) == {"model.ground_ignore": ["JAW"]}
+    # a fresh list per resolve: mutating one config must not poison the next default
+    ac.resolve(env={})["model.ground_ignore"].append("HEAD")
+    assert ac.resolve(env={})["model.ground_ignore"] == []
+
+
+def test_bedding_in_knobs_warn_off_their_rails():
+    flop = ac.resolve({"model": {"action": "SWIM_FAST", "ground_contact": True,
+                                 "rotation": [85.0, 0.0, 180.0]}}, env={})
+    said = lambda cfg, key: [w for w in ac.warnings(cfg) if key in w]  # noqa: E731
+    assert any("NEGATIVE" in w for w in said(dict(flop, **{"model.ground_sink": -0.1}),
+                                             "ground_sink"))
+    for fold in (ac.FIN_FOLD_LEVEL + 10.0, -5.0):
+        assert said(dict(flop, **{"model.fin_fold": fold}), "fin_fold")
+    assert not said(dict(flop, **{"model.fin_fold": 50.0}), "fin_fold")
+    for sag in (ac.SPINE_SAG_LEVEL + 1.0, -1.0):
+        assert said(dict(flop, **{"model.spine_sag": sag}), "spine_sag")
+    assert not said(dict(flop, **{"model.spine_sag": 3.0}), "spine_sag")
+    # on his side sideways is down; upright the same bend swings the tail across the floor
+    assert any("SIDEWAYS" in w for w in said(
+        dict(flop, **{"model.spine_sag": 3.0, "model.rotation": [0.0, 0.0, 0.0]}), "spine_sag"))
+    # the caudal is the flick frames' push-off
+    assert any("TAIL" in w for w in ac.warnings(dict(flop, **{"model.ground_ignore": ["TAIL"]})))
+    # the chain is the back half of the one spine, in chain order, and never the head or fins
+    rig_spine = ("SPINE_01", "SPINE_02", "SPINE_03", "SPINE_04", "SPINE_05", "SPINE_06",
+                 "SPINE_07", "TAIL")
+    assert ac.SPINE_SAG_CHAIN == rig_spine[3:]
+
+
+def test_the_beached_overlay_beds_him_in_and_the_standing_file_does_not():
+    beached = ac.load(ac.BEACHED_CONFIG_PATH, env={})
+    assert beached["model.ground_ignore"] == ["FIN_LEFT", "FIN_RIGHT", "HEAD", "JAW"]
+    assert "TAIL" not in beached["model.ground_ignore"], "the caudal is the flick's push-off"
+    assert ac.bedded_in(beached)
+    assert 0.03 <= beached["model.ground_sink"] <= 0.05
+    assert 0.0 < beached["model.fin_fold"] <= ac.FIN_FOLD_LEVEL
+    assert beached["model.spine_sag"] == 0.0, "the sag is set per beat (test_sequence.py)"
+    assert not [w for w in ac.warnings(beached)
+                if any(k in w for k in ("ground_ignore", "ground_sink", "fin_fold", "spine_sag"))]
+
+
 def test_the_pose_lines_name_every_pose_knob_and_actually_format():
     """The footer and the log line are the only places a flop sheet says HOW it was posed, and
     both are %-format strings -- a placeholder that drifts from its arguments is a TypeError
@@ -1295,6 +1361,17 @@ def test_the_pose_lines_name_every_pose_knob_and_actually_format():
             assert want in text, (want, text)
     assert art.pose_log_line(ac.resolve(env={}), ac.derived(ac.resolve(env={}))) == "", \
         "the standing shark gets no pose line"
+    # C.5.6's knobs appear once they are on, and not before
+    assert "ignore=" not in foot and "ignore=" not in log
+    bedded = dict(flop, **{"model.ground_ignore": ["FIN_LEFT", "FIN_RIGHT", "HEAD", "JAW"],
+                           "model.ground_sink": 0.04, "model.fin_fold": 50.0,
+                           "model.spine_sag": 3.0})
+    for text in ("\n".join(art.footer_lines(bedded, "compare")),
+                 art.pose_log_line(bedded, ac.derived(bedded))):
+        assert ("ignore=FIN_LEFT/FIN_RIGHT/HEAD/JAW sink 0.040 fin_fold 50 spine_sag 3.0"
+                in text), text
+    sag_only = dict(flop, **{"model.spine_sag": 2.5})
+    assert "spine_sag 2.5" in art.pose_log_line(sag_only, ac.derived(sag_only))
 
 
 def test_bounce_lift_clamps_the_frame_the_pose_clamps():
@@ -1334,8 +1411,8 @@ def test_render_pass_files_and_replays_what_its_blenders_said(tmp_path, monkeypa
     """The C.23 wiring, not just the helpers: render_pass has to FILE each chunk's WARNs
     against that chunk's frames, REPLAY them on a full cache hit, replay only the CACHED
     frames' on a partial one (minus anything the fresh chunk just said), and never file the
-    clip-table check, which is about pose.py rather than the frames. Blender is faked --
-    this is the plumbing around it, and the plumbing is what a refactor breaks silently."""
+    clip-table check, which is about pose.py rather than the frames. Blender is faked; the
+    plumbing around it is what a refactor breaks silently."""
     from PIL import Image
     from render import art
     blend = tmp_path / "model.blend"

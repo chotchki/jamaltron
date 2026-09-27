@@ -8,11 +8,11 @@
     seq.frame_sequence()                              # Factorio's 1-based frame_sequence
 
 WHY A SEQUENCE AND NOT A CLIP RANGE. One animation frame is one config is one pass hash is
-one cache directory; that is what makes a frame traceable to the knobs that made it, and it
-is also why pack.py could not assemble a flop -- it wanted N frames in one directory. C.5's
-budget wants a LONG cycle of VARIED BEATS (heave, settle, pause, snap, twitch), and each
-beat is a different clip, gain, bounce or lock. A clip range cannot say that. A list of
-per-frame knob sets can, and every frame of it is still exactly one config.
+one cache directory; that makes a frame traceable to its knobs, and is why pack.py could not
+assemble a flop (it wanted N frames in one directory). C.5's budget wants a LONG cycle of
+VARIED BEATS (heave, settle, pause, snap, twitch), each a different clip, gain, bounce or
+lock. A clip range cannot say that; a list of per-frame knob sets can, and every frame is
+still exactly one config.
 
 A BEAT is a run of one clip's frames with knob overrides on top of the file's own knobs:
 
@@ -26,15 +26,19 @@ A BEAT is a run of one clip's frames with knob overrides on top of the file's ow
     set = { "model.action" = "SWIM_MEDIUM", "bounce.height" = 0.0 }
     ramp = { "model.pose_gain" = [1.0, 0.4] }     # linear across the beat's frames
 
-REPEATS ARE FREE, and that is what makes a long varied cycle affordable. Frames whose
-configs hash the same are ONE render and ONE cell of the sheet; the order they play in is
-Factorio's `frame_sequence` (1-based, max 255 played frames, and frames referenced twice
-are loaded into VRAM once -- see AnimationFrameSequence in the prototype docs). So a held
-pause costs one cell, and a beat that comes back later costs nothing at all.
+WHICH LAYERS SHIP is the [sequence] table's `passes` (default body, mask, shadow). The
+beached flop ships body + shadow: his harness broke off with his legs (chotchki 2026-09-26),
+so no tint mask is rendered, packed or promoted for it.
 
-Pure arithmetic over artconfig, no Blender and no Pillow: art.py renders what this expands
-to and pack.py packs it, and both read the SAME expansion, so the frames the preview plays
-are the frames the sheet holds.
+REPEATS ARE FREE, which makes a long varied cycle affordable. Frames whose configs hash the
+same are ONE render and ONE sheet cell; the play order is Factorio's `frame_sequence`
+(1-based, max 255 played frames, a frame referenced twice loads into VRAM once -- see
+AnimationFrameSequence in the prototype docs). A held pause costs one cell; a beat that
+comes back later costs nothing.
+
+Pure arithmetic over artconfig, no Blender and no Pillow. art.py renders this expansion and
+pack.py packs it -- the SAME expansion, so the frames the preview plays are the frames the
+sheet holds.
 """
 
 from __future__ import annotations
@@ -58,8 +62,15 @@ from render import pose  # noqa: E402
 MAX_PLAYED = 255
 
 #: Every key a [sequence] table and a beat may carry. Anything else is a typo, and a typo'd
-#: key that silently does nothing is the failure artconfig exists to prevent.
-SEQUENCE_KEYS = ("name", "direction", "beat")
+#: key silently doing nothing is what artconfig exists to prevent.
+SEQUENCE_KEYS = ("name", "direction", "passes", "beat")
+
+#: The render passes a sequence sheet CAN ship, in pack order, and the default when the
+#: table names none: body, runtime-tint mask, shadow (the standing layers). A `passes` list
+#: picks a subset; `body` is never optional. Dropping a pass is config-level, not a knob: no
+#: pass hash moves, so the cache still serves the passes that stay, and art.py never
+#: launches Blender for the dropped one.
+PASSES = ("body", "mask", "shadow")
 BEAT_KEYS = ("name", "frames", "stride", "hold", "set", "ramp")
 
 #: Ramped values are rounded to this many places so a ramp that lands on a value another
@@ -91,6 +102,9 @@ class Sequence:
     played: tuple
     #: The file's own resolved knobs, which every beat starts from.
     base: dict
+    #: The render passes this sheet ships (a subset of PASSES, in PASSES order). art.py
+    #: renders only these and pack.py packs only these.
+    passes: tuple = PASSES
 
     @property
     def hashes(self) -> tuple:
@@ -114,11 +128,12 @@ class Sequence:
         return len(self.order) / pose.FPS
 
     def provenance(self, samples: dict | None = None) -> dict:
-        """Everything that made a sequence sheet, for its PNG stamp and its manifest. There
-        is no ONE config behind a sequence, so this says what there is: the base knobs every
-        beat starts from, each beat's overrides, every frame's own config hash (each has its
-        full sidecar in its cache dir) and the order they play in."""
+        """Everything that made a sequence sheet, for its PNG stamp and manifest. No ONE
+        config is behind a sequence, so: the base knobs every beat starts from, each beat's
+        overrides, every frame's config hash (each has its full sidecar in its cache dir)
+        and the play order."""
         return {"name": self.name, "digest": self.digest, "direction": self.direction,
+                "passes": list(self.passes),
                 "fps": pose.FPS, "played": len(self.order), "unique": len(self.configs),
                 "samples": samples or {}, "frame_hashes": list(self.hashes),
                 "order": list(self.order),
@@ -184,15 +199,15 @@ def _beat(where: str, raw: dict, base: dict) -> tuple:
         raise ac.ConfigError(f"{where}: frames wants [first, last], got {frames!r}")
     first, last = frames
     if not (lo <= min(first, last) and max(first, last) <= hi):
-        # NOT clamped. A clamp here plays a frame nobody wrote down; the renderer's own
-        # clamp is for a slider, and a sequence is a file somebody typed.
+        # NOT clamped: a clamp plays a frame nobody wrote down. The renderer's clamp is for
+        # a slider; a sequence is a file somebody typed.
         raise ac.ConfigError(f"{where}: frames {frames} are outside %s's %d-%d"
                              % (beat_cfg["model.action"], lo, hi))
     stride = _int(f"{where} stride", raw.get("stride", 1))
     hold = _int(f"{where} hold", raw.get("hold", 1))
     # Backwards is a first frame after the last. A one-shot clip that does not return to its
-    # own start (BITE_01 ends with the head still turned) gets its way back for free this
-    # way: every frame of the return is a config the forward half already rendered.
+    # start (BITE_01 ends with the head still turned) gets its way back free: every frame
+    # of the return is a config the forward half already rendered.
     step = stride if last >= first else -stride
     clip_frames = tuple(range(first, last + step // abs(step), step))
 
@@ -226,6 +241,7 @@ def parse(table: dict, base: dict) -> Sequence:
             or not 0 <= direction < base["rotations.count"]):
         raise ac.ConfigError(f"[sequence] direction must be a wheel index 0..%d, got %r"
                              % (base["rotations.count"] - 1, direction))
+    passes = _passes(table.get("passes", list(PASSES)))
     raws = table.get("beat")
     if not isinstance(raws, list) or not raws:
         raise ac.ConfigError("[sequence] needs at least one [[sequence.beat]]")
@@ -245,7 +261,25 @@ def parse(table: dict, base: dict) -> Sequence:
         raise ac.ConfigError(f"[sequence] plays {len(order)} frames; Factorio caps an "
                              f"animation at {MAX_PLAYED}")
     return Sequence(name, direction, tuple(beats), tuple(configs), tuple(order),
-                    tuple(played), dict(base))
+                    tuple(played), dict(base), passes)
+
+
+def _passes(raw) -> tuple:
+    """A [sequence] `passes` list -> the passes it ships, in PASSES order."""
+    if (not isinstance(raw, list) or not raw
+            or not all(isinstance(p, str) for p in raw)):
+        raise ac.ConfigError(f"[sequence] passes wants a list of pass names out of "
+                             f"{', '.join(PASSES)}, got {raw!r}")
+    unknown = sorted(set(raw) - set(PASSES))
+    if unknown:
+        raise ac.ConfigError(f"[sequence] passes: unknown pass(es) {', '.join(unknown)}; a "
+                             f"sequence ships {', '.join(PASSES)}")
+    if len(set(raw)) != len(raw):
+        raise ac.ConfigError(f"[sequence] passes names a pass twice: {raw!r}")
+    if "body" not in raw:
+        raise ac.ConfigError("[sequence] passes must include body -- a sheet with no body "
+                             "draws nothing")
+    return tuple(p for p in PASSES if p in raw)
 
 
 def load(path=None, overrides: dict | None = None):
@@ -274,9 +308,9 @@ def describe(seq: Sequence) -> list:
                         " stride %d" % abs(step) if abs(step) > 1 else "",
                         " hold %d" % beat.hold if beat.hold > 1 else "", what, ramp))
         at += n
-    lines.append("  %d played frames (%.2f s at %d fps), %d unique -> %d renders per pass, "
-                 "direction %d (%s)"
+    lines.append("  %d played frames (%.2f s at %d fps), %d unique -> %d renders per pass "
+                 "(%s), direction %d (%s)"
                  % (len(seq.order), seq.seconds(), pose.FPS, len(seq.configs),
-                    len(seq.configs), seq.direction,
+                    len(seq.configs), " + ".join(seq.passes), seq.direction,
                     ac.compass(seq.direction, seq.configs[0]["rotations.count"])))
     return lines
