@@ -1,8 +1,8 @@
 """Gate tests for lint_sprites.py. Every failure mode gets a real PNG built with
 Pillow in a tmpdir, because a linter tested against mocks only proves the mocks work.
 
-Two tests run against shipped Factorio 2.1.17 assets and skip when the game is not
-installed - they are the ones that prove this gate does not slander Wube's own art.
+Two tests run against shipped Factorio 2.1.17 assets (skipped without the game) to prove
+this gate does not slander Wube's own art.
 """
 
 import ast
@@ -179,7 +179,7 @@ def test_frame_count_one_with_directions_has_no_knowable_layout(sheets):
     """MEASURED: small-electric-pole.png is 288x220, 4 directions in ONE ROW, while
     car-remnants-mask.png is 196x584, 4 directions in ONE COLUMN. Same declared fields,
     opposite layouts, because the engine's default comes from the prototype field being
-    loaded. So both must pass, and neither can get a real geometry check."""
+    loaded. Both must pass, and neither gets a real geometry check."""
     row = sheets.png("pole.png", 4 * 72, 220)
     column = sheets.png("remnants.png", 196, 4 * 146)
     assert sheets.check(filename=row, width=72, height=220, direction_count=4) == []
@@ -267,9 +267,8 @@ def test_leftover_pixels_on_a_grid_are_a_torn_frame(sheets):
     """1060x1110 fits a 1056x1104 grid but carries 4x6px of slop: the render and the
     declaration disagree about the frame size.
 
-    WARN, not ERROR - the engine loads a padded sheet, and MEASURED, 11 of 4424 shipped
-    declarations are padded. `--strict` is what turns it into a failure, and `--strict`
-    is what our own manifest gets.
+    WARN, not ERROR: the engine loads a padded sheet, and MEASURED 11 of 4424 shipped
+    declarations are padded. `--strict`, which our own manifest gets, makes it a failure.
     """
     name = sheets.png("ragged.png", 1060, 1110)
     fields = dict(filename=name, width=132, height=138, line_length=8, direction_count=64)
@@ -420,8 +419,8 @@ def test_line_length_wider_than_the_animation_warns(sheets):
 
 
 def test_unmodelled_layout_is_reported_not_guessed_at(sheets):
-    """`stripes` and the mirroring flags change the frame layout. Saying so beats
-    doing the arithmetic wrong and passing."""
+    """`stripes` and the mirroring flags change the frame layout; saying so beats doing
+    the arithmetic wrong and passing."""
     name = sheets.png("body.png", 1056, 1104)
     findings = sheets.check(filename=name, width=132, height=138,
                             direction_count=64, line_length=8, back_equals_front=True)
@@ -429,9 +428,9 @@ def test_unmodelled_layout_is_reported_not_guessed_at(sheets):
 
 
 def test_stripe_children_are_not_visited_separately(tmp_path, sheets):
-    """The parent already says `stripes` is unmodelled. Walking into the stripe entries
-    manufactures no-geometry errors about art nobody claimed to check - 20 of them in
-    base's character animations alone."""
+    """The parent already says `stripes` is unmodelled; walking into the stripe entries
+    manufactures no-geometry errors about art nobody claimed to check (20 in base's
+    character animations alone)."""
     (tmp_path / "s.lua").write_text("""
       return {
         mining_tool = {
@@ -699,8 +698,8 @@ def test_the_stock_spidertron_declarations_are_clean():
     # --strict adds exactly the 7 documented unused-frames warnings and nothing else:
     # base packs one shared file per leg index (320x294 = 8 leg columns x 3 render
     # passes), so every leg and knee sheet holds more frames than one declaration slices.
-    # Zero ragged-sheet and zero no-line-length, i.e. every stock spidertron sheet is an
-    # exact multiple of its frame and every one of them declares its line_length.
+    # Zero ragged-sheet and zero no-line-length: every stock spidertron sheet is an exact
+    # multiple of its frame and declares its line_length.
     strict, _, _ = lint([target], mods, strict=True)
     assert sorted({f.code for f in strict}) == ["unused-frames"], \
         "\n".join(f.render() for f in strict)
@@ -710,8 +709,8 @@ def test_the_stock_spidertron_declarations_are_clean():
 
 @needs_factorio
 def test_the_stock_spidertron_minimap_declarations_are_clean():
-    """These live in entities.lua's create_spidertron, not in spidertron-animations.lua,
-    and they are the `size = {128, 128}` shape. C.6 emits the jamaltron equivalents."""
+    """These live in entities.lua's create_spidertron, not spidertron-animations.lua, in
+    the `size = {128, 128}` shape. C.6 emits the jamaltron equivalents."""
     mods = ModPaths()
     mods.add_factorio_data(FACTORIO_DATA)
     specs = [s for s in lint_sprites.specs_from_lua(

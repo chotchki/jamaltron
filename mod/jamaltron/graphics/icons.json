@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "generated_by": "tools/render/icons.py --promote",
+  "candidate": "portrait",
+  "samples": 64,
+  "mod_roots": {
+    "jamaltron": ".."
+  },
+  "sprites": [],
+  "icons": [
+    {
+      "id": "item.icon",
+      "kind": "icon",
+      "filename": "__jamaltron__/graphics/jamaltron-icon.png"
+    },
+    {
+      "id": "item.icon_tintable",
+      "kind": "icon",
+      "filename": "__jamaltron__/graphics/jamaltron-icon-tintable.png"
+    },
+    {
+      "id": "item.icon_tintable_mask",
+      "kind": "icon",
+      "filename": "__jamaltron__/graphics/jamaltron-icon-tintable-mask.png"
+    },
+    {
+      "id": "technology.icon",
+      "kind": "technology",
+      "filename": "__jamaltron__/graphics/jamaltron-technology.png"
+    },
+    {
+      "id": "entity.minimap_representation",
+      "kind": "minimap",
+      "filename": "__jamaltron__/graphics/jamaltron-minimap.png"
+    },
+    {
+      "id": "entity.selected_minimap_representation",
+      "kind": "minimap",
+      "filename": "__jamaltron__/graphics/jamaltron-minimap-selected.png"
+    },
+    {
+      "id": "mod.thumbnail",
+      "kind": "thumbnail",
+      "filename": "__jamaltron__/thumbnail.png"
+    }
+  ]
+}

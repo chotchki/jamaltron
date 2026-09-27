@@ -1,13 +1,12 @@
 # Jamaltron art-iteration knobs (PLAN C.10).
 #
-# ONE-LINE DIFFS ONLY. Everything that changes what a rendered frame looks like is in
-# this file. If you find yourself opening a .py to change how the shark looks, that is
-# a bug in the harness -- file it, do not work around it.
+# ONE-LINE DIFFS ONLY. Everything that changes how a rendered frame looks is in this file;
+# needing to open a .py to change how the shark looks is a harness bug -- file it, do not
+# work around it.
 #
-# Every key here exists in render/artconfig.py's SCHEMA and a key that does NOT exist
-# there is a hard error, not a no-op. `default N` in a comment is the schema's value,
-# not necessarily the value on the line below it -- that is the whole point of writing
-# both down.
+# Every key exists in render/artconfig.py's SCHEMA, and a key that does NOT is a hard error,
+# not a no-op. `default N` in a comment is the schema's value, not necessarily the value on
+# the line below -- which is why both are written down.
 #
 # Run it:
 #   uv run --directory tools python render/art.py --preview      # 8 rotations, seconds
@@ -16,27 +15,26 @@
 #   uv run --directory tools python render/art.py --shadow       # shadow-only pass
 #   ... --set model.scale=0.85 --set model.offset='[0,0,1.4]'    # try before you commit
 #
-# Outputs land in render-out/ (gitignored). Every one carries the hash of the config
-# that produced it, plus a sidecar JSON of the fully resolved knobs.
+# Outputs land in render-out/ (gitignored), each carrying the hash of the config that made
+# it plus a sidecar JSON of the fully resolved knobs.
 
 [model]
 # TUNED BY HAND in render/tune.py on 2026-09-20 -> config 137972136a75, which was
-# 335119bf9c46 by the time C.4 shipped sheets, 83d6be794998 after that, and is
-# bd71cb367d90 now.
+# 335119bf9c46 when C.4 shipped sheets, then 83d6be794998 and now bd71cb367d90.
 # THE SHARK KNOBS BELOW HAVE NOT MOVED SINCE THE TUNE except one: C.27 (2026-09-24) turned
 # ground_contact on, so his belly sits on the floor instead of 0.26 tiles under it. The two
-# oldest hashes were taken over the model's PATH, so they were facts about one laptop --
-# three copies of one .blend gave three hashes for identical pixels. The hash is over the
-# model's CONTENT now (see artconfig.hashable), so bd71cb367d90 is what these knobs come out
-# as on any machine holding the same file. 335119bf9c46 -> 83d6be794998 also carried a real
-# knob change, the [mask] plate and the [compare] cell; pivot, scale and girth are untouched.
-# pivot sits well FORWARD of the dorsal peak (-0.53), near the cephalofoil, so he swings
-# from the head with the tail trailing rather than spinning about his middle. girth 1.55 is
-# the "overweight" canon doing real work. offset 0.5 sits him lower than the measured 0.85.
-# The bought hammerhead. GITIGNORED and it stays that way -- the RenderHub Extended Use
-# License turns on renders shipping and source not. Relative paths resolve from the repo
-# root; $JAMALTRON_BLEND or --blend overrides, which is how you point at a copy that
-# lives outside the repo (the C.2 triage unpack, say).
+# oldest hashes were taken over the model's PATH, so they were facts about one laptop (three
+# copies of one .blend gave three hashes for identical pixels). The hash is over the model's
+# CONTENT now (artconfig.hashable), so bd71cb367d90 is what these knobs produce on any
+# machine holding the same file. 335119bf9c46 -> 83d6be794998 also carried a real change,
+# the [mask] plate and the [compare] cell; pivot, scale and girth are untouched.
+# pivot sits well FORWARD of the dorsal peak (-0.53), near the cephalofoil, so he swings from
+# the head with the tail trailing instead of spinning about his middle. girth 1.55 is the
+# "overweight" canon doing real work. offset 0.5 sits him lower than the measured 0.85.
+# The bought hammerhead. GITIGNORED and it stays that way: the RenderHub Extended Use License
+# depends on renders shipping and source not. Relative paths resolve from the repo root;
+# $JAMALTRON_BLEND or --blend overrides, to point at a copy outside the repo (the C.2 triage
+# unpack, say).
 # default "assets/source/FILES/HAMMERHEAD.blend"
 blend = "assets/source/FILES/HAMMERHEAD.blend"
 
@@ -45,80 +43,78 @@ blend = "assets/source/FILES/HAMMERHEAD.blend"
 # default "HAMMERHEAD_RIG"
 object = "HAMMERHEAD_RIG"
 
-# THE RE-PIVOT, and it is not optional. C.2 measured the model's origin sitting 1.0746 BU
-# toward the nose and 0.387 BU below body centre, so rotating about it SWEEPS the tail
-# through a 3.59 BU circle instead of spinning in place. This is the rest-pose geometric
-# centre; the harness translates the model by -pivot so frame-to-frame rotation is a spin.
-# Visual tell if it is wrong: the shark orbits the sprite's centre across the 64 frames.
+# THE RE-PIVOT, not optional. C.2 measured the model's origin 1.0746 BU toward the nose and
+# 0.387 BU below body centre, so rotating about it SWEEPS the tail through a 3.59 BU circle
+# instead of spinning in place. This is the rest-pose geometric centre; the harness
+# translates the model by -pivot so frame-to-frame rotation is a spin. Wrong, and the shark
+# orbits the sprite's centre across the 64 frames.
 # default [-1.0746, 0.0, 0.3872]
 pivot = [-0.14, 0.0, 0.3872]
 
 # Multiplier on Blender units. The model is metric, 1 BU = 1 m = 1 Factorio tile, and the
-# rest-pose box is 5.0272 x 1.9682 x 1.8771 BU, so scale 0.75 gives a 3.77 x 1.48 tile
-# shark. For reference the stock spidertron torso is a near-circular 2.06 x 2.06 tiles and
-# the leg mounts sit at +-0.78 tiles transverse: half-width 1.9682/2 * scale must reach
-# 0.78 for the body to cover the outer mounts, which wants scale 0.79 and a 4-tile shark.
-# Note how Wube dodges this: the mounts do NOT land on the rotating torso (230 of its 512
-# mount samples are over transparent pixels) but on base_animation, a 1.97 x 1.66 tile
-# under-plate that never turns. We ship no plate, so either the shark covers the mounts
-# himself or C.4 draws one. THAT TRADEOFF IS C.4's CALL. Look at --compare, not at this
-# number -- the STOCK row draws the plate, so the sheet shows you both options at once.
+# rest-pose box is 5.0272 x 1.9682 x 1.8771 BU, so scale 0.75 gives a 3.77 x 1.48 tile shark.
+# The stock spidertron torso is a near-circular 2.06 x 2.06 tiles and its leg mounts sit at
+# +-0.78 tiles transverse: half-width 1.9682/2 * scale must reach 0.78 for the body to cover
+# the outer mounts, which wants scale 0.79 and a 4-tile shark. Wube dodges this: the mounts do
+# NOT land on the rotating torso (230 of its 512 mount samples are over transparent pixels)
+# but on base_animation, a 1.97 x 1.66 tile under-plate that never turns. We ship no plate, so
+# the shark covers the mounts himself or C.4 draws one (settled since: C.13 moved the mounts
+# inboard to 0.45 of stock and no plate ships -- pack.py's BASE_ANIMATION note). Judge it on
+# --compare, not this number: the STOCK row draws the plate, so the sheet shows both options.
 # default 0.75
 scale = 0.81
 
-# WIDTH-ONLY multiplier on top of `scale`, applied to the model's y axis. 1.0 is the
-# model as sculpted; 1.3 is noticeably heavier without adding a single tile of length.
-# This is the "overweight" knob and it is CANON, not a cheat: the profile has him
-# "17 feet long, described as overweight and oversized", so a uniform scale-up makes
-# him LONGER, which is the one thing the books never say. It is also the only knob that
-# improves leg coverage without making him enormous - the legs mount at +-0.78 tiles
-# transverse, and his half-width is 0.984 * scale * girth, so girth buys coverage at
-# roughly four times the length cost of scale.
+# WIDTH-ONLY multiplier on top of `scale`, on the model's y axis. 1.0 is the model as
+# sculpted; 1.3 is noticeably heavier without a single tile of length. The "overweight" knob,
+# and CANON, not a cheat: the profile has him "17 feet long, described as overweight and
+# oversized", so a uniform scale-up makes him LONGER, the one thing the books never say. It
+# is also the only knob that improves leg coverage without making him enormous: the legs
+# mount at +-0.78 tiles transverse and his half-width is 0.984 * scale * girth, so girth buys
+# coverage at roughly four times the length cost of scale.
 # default 1.0
 girth = 1.55
 
 # (east, north, up) in TILES, applied after scale. Up is the one that matters, and 0.85 is
-# MEASURED, not the obvious number. The spidertron prototype declares height = 1.5, but
-# that is the leg/aim height and NOT where the torso is drawn: the shipped torso sprite's
-# own shift is by_pixel(0, -19) = 0.594 tiles up-screen, and a 45-degree camera turns
-# 0.594 tiles of screen into 0.594/0.7071 = 0.84 tiles of world height. Setting 1.5 here
-# floats the shark a third of a body above his own legs -- which --compare shows you
-# immediately, and which is how this number got fixed in the first place.
-# Raise it and he floats; lower it and the legs grow out of his back.
+# MEASURED, not the obvious number. The spidertron prototype declares height = 1.5, but that
+# is the leg/aim height, NOT where the torso is drawn: the shipped torso sprite's shift is
+# by_pixel(0, -19) = 0.594 tiles up-screen, and a 45-degree camera turns 0.594 tiles of
+# screen into 0.594/0.7071 = 0.84 tiles of world height. 1.5 floats the shark a third of a
+# body above his legs (--compare shows it immediately; that is how this got fixed). Raise it
+# and he floats; lower it and the legs grow out of his back.
 # Z IS DEAD WHILE model.ground_contact IS ON, which it is (C.27): contact seats his lowest
-# vertex on the floor and cancels whatever z says, and the hash drops it. 0.5 stays as the
-# record of the hand tune -- at 0.5 his belly sat 0.260 tiles UNDER the floor, and the
-# shipped shadow was cast from a partly buried shark. x and y still place him.
+# vertex on the floor whatever z says, and the hash drops it. 0.5 stays as the record of the
+# hand tune -- at 0.5 his belly sat 0.260 tiles UNDER the floor, and the shipped shadow was
+# cast from a partly buried shark. x and y still place him.
 # default [0.0, 0.0, 0.85]
 offset = [0.0, 0.0, 0.5]
 
 # Extra (roll about east, PITCH about north, yaw) in degrees, on top of base_yaw. Pitch is
-# the nose-up/nose-down knob -- a few degrees of nose-up reads as "swimming" rather than
-# "dead fish on a stick", and the jump arc in C.5 wants much more of it.
-# ROLL IS THE BEACHED KNOB and it has a measured ceiling: 80-90 is the flop (chotchki's call
-# off the C.5 sheets -- far enough over that the swim's bend plane stands up into the same
-# plane [bounce] works in, so curl-up / lift-off / slam-down is ONE motion and the clip needs
-# no gain), and past about 105 sheet B says he stops reading as BEACHED and starts reading as
-# dead, belly-up, in WATER. Not clamped -- C.5 is judged by eye -- but warned, here and in the
-# tuner, because the difference is a different animal in a different place.
+# nose-up/nose-down: a few degrees up reads as "swimming", not "dead fish on a stick", and
+# C.5's jump arc wants much more.
+# ROLL IS THE BEACHED KNOB, with a measured ceiling: 80-90 is the flop (chotchki's call off
+# the C.5 sheets), and past about 105 sheet B says he stops reading as BEACHED and reads as
+# dead, belly-up, in WATER. Not clamped (C.5 is judged by eye) but warned, here and in the
+# tuner: that difference is a different animal in a different place. The call's first stated
+# reason (the bend plane standing up so curl-up / lift-off / slam-down is ONE motion needing
+# no gain) was later struck -- tune.py's roll hint has the measurement.
 # default [0.0, 0.0, 0.0]
 rotation = [0.0, 0.0, 0.0]
 
-# The model's nose points +x (C.2) and Factorio's frame 0 faces north (+y), so the rest
-# pose needs a quarter turn before the per-frame rotation is applied. Change this only if
-# the model changes; use `rotation` for art tweaks.
+# The model's nose points +x (C.2) and Factorio's frame 0 faces north (+y), so the rest pose
+# needs a quarter turn before the per-frame rotation. Change it only if the model changes;
+# `rotation` is for art tweaks.
 # default 90.0
 base_yaw = 90.0
 
 # C.2 REQUIRED FIX: five NLA tracks ship unmuted (SWIM_FAST, SWIM_SLOW, SWIM_MEDIUM,
-# BITE_02, BITE_01) and BITE_01 blends COMBINE on top of the rest, so an un-muted render
-# is a shark caught mid-bite mid-swim. Mute them and the torso sheet is a clean body.
+# BITE_02, BITE_01) and BITE_01 blends COMBINE on top of the rest, so an unmuted render is a
+# shark caught mid-bite mid-swim. Muted, the torso sheet is a clean body.
 # default true
 mute_nla = true
 
-# Clear every pose bone to rest after muting. Muting alone leaves whatever pose was saved
-# in the file; the rest pose is the straight shark, and it is the pose `pivot` was measured
-# against, so turning this off invalidates the pivot too.
+# Clear every pose bone to rest after muting. Muting alone leaves the pose saved in the
+# file; rest is the straight shark `pivot` was measured against, so turning this off
+# invalidates the pivot too.
 # default true
 rest_pose = true
 
@@ -129,10 +125,10 @@ rest_pose = true
 # default true
 drop_stale_keyframes = true
 
-# Which frame to sit on. With `action` set this is the frame OF THAT CLIP, clamped to its
-# range, and it is also what [bounce] reads to work out where in the cycle he is. With
-# `action = "rest"` it only matters if `rest_pose = false`, and that combination renders
-# whatever pose the .blend was saved in, which is nothing you asked for.
+# Which frame to sit on. With `action` set, the frame OF THAT CLIP, clamped to its range, and
+# what [bounce] reads for where in the cycle he is. With `action = "rest"` it only matters if
+# `rest_pose = false`, which renders whatever pose the .blend was saved in -- nothing you
+# asked for.
 # default 1
 frame = 1
 
@@ -143,122 +139,195 @@ frame = 1
 subdiv_render_levels = 1
 
 # WHICH CLIP (C.5). "rest" is the standing shark the shipped sprites came off -- no action
-# assigned, bones cleared, exactly as C.4 rendered them. Anything else is one of the five
-# actions the model ships, by the id render/pose.py gives it: SWIM_FAST, SWIM_MEDIUM,
-# SWIM_SLOW (one wave at three speeds, spine only) or BITE_01 / BITE_02 (head, jaw and
-# pectoral fins, DISJOINT from the swims). `model.frame` then picks the frame of it.
-# This is the knob `rest_pose = false` was NOT: false does not select a clip, it leaves
-# whatever pose the .blend was saved in and lets `frame` scrub it.
+# assigned, bones cleared, as C.4 rendered them. Anything else is one of the model's five
+# actions by render/pose.py's id: SWIM_FAST, SWIM_MEDIUM, SWIM_SLOW (one wave at three
+# speeds, spine only) or BITE_01 / BITE_02 (head, jaw and pectoral fins, DISJOINT from the
+# swims). `model.frame` picks the frame. Not what `rest_pose = false` does: that selects no
+# clip, it leaves whatever pose the .blend was saved in and lets `frame` scrub it.
 # default "rest"
 action = "rest"
 
-# How hard the selected clip is pushed: every bone's rotation scaled away from its rest
-# rotation. 1.0 is the clip as bought AND IS WHAT SHIPS -- chotchki's call off the C.5
-# sheets. The reasoning is worth keeping: at roll 80-90 the swim's bend plane stands up into
-# the same plane the BOUNCE works in, so curl-up / lift-off / slam-down compose into one
-# motion and the bounce carries the thrash. A roll-30 flop needed 2.0-2.6x to read at all.
-# The knob exists so gain can be ruled OUT deliberately rather than assumed. MEASURED: the
-# rig survives 2.6x with no mesh tearing; past that check the neck and the tail tip.
+# How hard the selected clip is pushed: every bone's rotation scaled away from rest. 1.0 is
+# the clip as bought AND IS WHAT THIS FILE SHIPS -- chotchki's call off the C.5 sheets, when
+# the reasoning was that at roll 80-90 the swim's bend plane stands up into the bounce's, so
+# the bounce carries the thrash. A roll-30 flop needed 2.0-2.6x to read at all. (That
+# reasoning was later struck -- see tune.py's roll hint -- and the flop ships 1.25 from
+# beached.toml, C.5.9.) The knob exists so gain is ruled OUT deliberately, not assumed.
+# MEASURED: the rig survives 2.6x with no mesh tearing; past that check the neck and tail tip.
 # default 1.0
 pose_gain = 1.0
 
 # THE CURL (C.5, chotchki's standing-wave call). The swims are a TRAVELLING wave: every spine
 # joint bends a fixed lag behind the one in front, so the bend runs nose to tail and reads as
-# propulsion -- which is why a rolled swim looks like a shark swimming sideways and not a fish
-# dying on a beach. A beached fish makes a STANDING wave: the whole body curls one way at
-# once, then snaps back. Same bones, same keyframes, different phase relationship.
+# propulsion -- why a rolled swim looks like a shark swimming sideways, not a fish dying on a
+# beach. A beached fish makes a STANDING wave: the whole body curls one way at once, then
+# snaps back. Same bones and keyframes, different phase relationship.
 # 0 is the clip as bought. 1 plays every joint in step with the TAIL, re-timed off the clip's
 # OWN lags, which the renderer measures every run (SWIM_FAST: 0 / 1.50 / 2.99 / 4.49 / 5.49 /
-# 6.99 / 8.50 / 10.00 frames of 20, nose to tail -- exactly half a cycle). In between is part
-# of the way. No new keyframes, and the loop still wraps at the clip's own length.
+# 6.99 / 8.50 / 10.00 frames of 20, nose to tail -- exactly half a cycle); between is part of
+# the way. No new keyframes, and the loop still wraps at the clip's own length.
 # The TAIL keeps its timing but PEAK CURL MOVES (SWIM_FAST: f18 at 0, f1 at 1), and [bounce]
-# launches on peak curl -- so re-find bounce.phase after moving this, do not inherit it.
-# Per joint and NOT a front/back split: the 09-20 spike measured a split at its best k at
+# launches on peak curl, so re-find bounce.phase after moving this.
+# Per joint, NOT a front/back split: the 09-20 spike measured a split at its best k at
 # standing_R 0.976 against 0.999 for this, and the split needs k re-tuned because the wave is
 # rear-loaded 3:1. Only the swims carry a wave; on a bite it does nothing and warns.
-# THE FLOP'S VALUE IS 0.5 (chotchki, 2026-09-23, watched at 24 fps in the tuner), paired with
-# [bounce] phase 0.5 -- it is the tuner's flop preset. It stays 0 HERE because this file is
-# the STANDING shark the shipped sheets came off; where flop knobs get committed is C.24.
+# The flop's value was 0.5 (chotchki, 2026-09-23, watched at 24 fps, with bounce phase 0.5)
+# and is 1.0 since C.5.8's U; both live in beached.toml, not here, because this file is the
+# STANDING shark the shipped sheets came off (C.24).
 # default 0.0
 phase_lock = 0.0
 
 # RIG FIX (C.18a), applied in memory at render time because the bought .blend never enters
-# the repo. HEAD ships as a ROOT bone and no swim clip touches it, so the snout is welded to
-# world space and a thrashing spine cannot move his face. This hangs HEAD off SPINE_01,
-# where the rest geometry already says it belongs (HEAD's head at x 0.708, SPINE_01's at
-# 0.577), keeping its rest position.
+# the repo. HEAD ships as a ROOT bone no swim clip touches, so the snout is welded to world
+# space and a thrashing spine cannot move his face. This hangs HEAD off SPINE_01, where the
+# rest geometry says it belongs (HEAD's head at x 0.708, SPINE_01's at 0.577), keeping its
+# rest position.
 # MEASURED, both halves. At rest it changes NOTHING (two renders' IDAT streams are byte
-# identical), which is why it is safe to have at all. Playing SWIM_FAST at roll 85 it moves
-# 1448-2555 px -- 1.0-1.7% of a 384 px frame -- all inside a 60 px box on the head. But the
-# snout only travels 0.056 BU (2.9 px) and the alpha box does not move, so at gain 1.0 the
-# head shifts WITHIN his outline: SPINE_01 is itself a root bone and, on a wave rear-loaded
-# 3:1, the first joint rotates least (~4.3 deg). Necessary, not sufficient -- it stops the
-# neck stretching against a pinned skull, and the LIFT comes from [bounce].
+# identical), which is what makes it safe. Playing SWIM_FAST at roll 85 it moves 1448-2555 px
+# -- 1.0-1.7% of a 384 px frame -- all inside a 60 px box on the head. But the snout only
+# travels 0.056 BU (2.9 px) and the alpha box does not move, so at gain 1.0 the head shifts
+# WITHIN his outline: SPINE_01 is itself a root bone and, on a wave rear-loaded 3:1, the
+# first joint rotates least (~4.3 deg). Necessary, not sufficient: it stops the neck
+# stretching against a pinned skull, and the LIFT comes from [bounce].
 # Off by default: the sheets in mod/jamaltron/graphics/ came off the rig as bought.
 # default false
 reparent_head = false
 
 # GROUND CONTACT (C.5.4). On, the body's LOWEST VERTEX sits on the floor every frame, plus
-# that frame's [bounce] lift, and `offset` z drops out entirely. Built for the flop, whose
-# lowest point moves every frame -- MEASURED at the C.5.2 call (roll 85, phase_lock 0.5,
-# offset z 0.5): buried 0.105-0.430 tiles on ALL 20 frames, invisible in the tuner, which
-# draws no floor, and sliced by the shadow pass's catcher.
+# that frame's [bounce] lift, and `offset` z drops out. Built for the flop, whose lowest
+# point moves every frame -- MEASURED at the C.5.2 call (roll 85, phase_lock 0.5, offset z
+# 0.5): buried 0.105-0.430 tiles on ALL 20 frames, invisible in the tuner (it draws no
+# floor), sliced by the shadow pass's catcher.
 # ON FOR THE STANDING SHARK TOO (C.27, chotchki 2026-09-24). At offset z 0.5 his belly was
 # 0.260 tiles under the floor, so the shipped shadow came off a buried body. Contact raises
-# him 0.2602 tiles, 0.184 tiles up-screen -- and the leg mounts go up by exactly that
-# (`mount_lift` in mod/jamaltron/prototypes/shared.lua) or the tail-down rotations lose
-# their rear legs: 52/64 mount samples without the lift, 64/64 with it.
-# While it is on, offset z cannot move a pixel, so the hash drops it (x and y stay in).
+# him 0.2602 tiles, 0.184 up-screen, and the leg mounts go up by exactly that (`mount_lift`
+# in mod/jamaltron/prototypes/shared.lua) or the tail-down rotations lose their rear legs:
+# 52/64 mount samples without the lift, 64/64 with it.
+# While on, offset z cannot move a pixel, so the hash drops it (x and y stay in).
 # default false
 ground_contact = true
+
+# WHAT THE FLOOR MAY NOT HOLD HIM UP ON (C.5.6), by DEFORM BONE name; only meaningful with
+# ground_contact on. Empty is plain contact: the lowest vertex touches the floor. On his side
+# that is the lower pectoral's TIP, the rest of him hovering -- MEASURED on the beached cycle,
+# trunk 0.46-0.57 tiles up on every ground frame, the shadow a body-width off him. Listed
+# bones' verts (a vertex belongs to the bone weighting it hardest) are left out of the seat:
+# FIN_LEFT/FIN_RIGHT alone moves him onto the hammer's lower tip, trunk still 0.14-0.22 up;
+# add HEAD and JAW and his trunk takes the floor on the ground frames and the caudal lobe on
+# the tail flicks. What goes under the floor (the fin root, the hammer tip by 0.18-0.26
+# tiles) is not drawn (see ground_sink). Keep TAIL OFF the list: ignoring it buries the
+# caudal 0.32-0.54 tiles on the flick frames, the push-off (MEASURED). A name the rig lacks
+# is fatal at render. Empty here: the standing shark stands on his legs, not his flank.
+# default []
+ground_ignore = []
+
+# How far he PRESSES INTO the ground, in tiles, after contact seats him (sand gives under a
+# fish that size). Anything contact puts below z=0, via this or ground_ignore, is held out:
+# the body and mask passes draw an invisible ground that hides it (MEASURED: not one pixel
+# above it moves, max 1 level of 255) and the shadow pass's catcher already does. The cut
+# through his belly sits under his own curve at this camera, so a few hundredths of a tile
+# reads as weight, not a slice; push it far and his underside goes flat. Applies every
+# frame, airborne too, so the hop's arc is the same arc, lowered.
+# default 0.0
+ground_sink = 0.0
+
+# FOLDS THE LOWER PECTORAL FIN up off the floor, in degrees: the fin swings about its root,
+# in the vertical plane through its span, toward straight up. Whichever fin is lower -- the
+# two bone axes are not mirror images, so "up" is found in the world, not trusted to either.
+# At about 50 the span lies level on the ground frames and reads as splayed on the sand; at 0
+# it stabs down into the floor (hidden if the seat lets it go under, dangling on every hop).
+# Past ~60 the tip climbs into his flank and artconfig warns. Every frame folds from wherever
+# its clip put the fin.
+# default 0.0
+fin_fold = 0.0
+
+# HOLDS the lower pectoral's ORIENTATION level before the fold -- its angle, NOT its contact
+# with the floor: pinned to the one it has on a REST spine with no recentre turn (its own clip
+# rotation kept, so a bite still flaps it), root still riding the chest. The fixed fold above
+# is only level while the chest sits near rest; C.5.8's U swings the chest and turns the
+# whole body, and MEASURED on V5's heave the folded fin pointed due south at the camera, a
+# 51 px spike under his chest. Held, it lies at the same -3.8 deg and heading every frame --
+# but where his chest lifts off the sand (the arch frames, up to ~1 tile) the level fin lifts
+# with it. It takes out the chest's swing WITH OR WITHOUT a recentre: any posed spine changes
+# the fin (MEASURED, heave f11 at recentre 0: +21.4 deg unheld, -3.8 held); only a rest spine
+# with no turn leaves it as it was. Wants fin_fold to lay it flat.
+# default false
+fin_floor = false
+
+# SAGS HIS BACK HALF onto the floor, in degrees PER JOINT: SPINE_04, SPINE_05, SPINE_06,
+# SPINE_07 and TAIL each bend this much further toward the ground, about the swim's bend
+# axis, on top of every frame's pose. The model's spine is straight and level -- MEASURED on
+# his side, SPINE_01 0.838 tiles up, SPINE_04 0.839, the TAIL tip 0.852 -- so with his trunk
+# seated the tapered tail still hangs: underside 0.27 tiles up at rest, 0.38 at the pause,
+# its shadow a tail-width east. MEASURED with the trunk seated: the tail reaches his trunk's
+# level at 2.57 on the rest shape and 4.23 at the pause, about 0.11 tiles a degree. NOT free
+# on a frame the tail already seats him (the heave's flicks, its landing): there a sag only
+# stands the rest of him up, 0.33-0.41 tiles of trunk at 3.25, so the beached sequence sets
+# it per beat. "Toward the ground" is found in the world, so it holds on either flank;
+# upright, where the swim bends sideways, it swings the tail across the floor and artconfig
+# warns.
+# default 0.0
+spine_sag = 0.0
+# C.5.8, THE U. phase_lock times the swim into a standing wave but does not SHAPE it: SPINE_01
+# is a root at the nose and the swing is rear-loaded 3:1, so a locked curl hinges at his head
+# and reads as a tail flick. recentre turns the whole posed body back against the curl by
+# that fraction of the nose-to-tail chord's turn off rest (1 holds the chord level, so head
+# and tail rise TOGETHER) -- MEASURED on the heave at lock 1, head/tail height correlation
+# -1.00 at 0 and +1.00 at 1. amplitude_even blends each spine joint's measured swing toward
+# the chain's mean (1 = every joint the same, sum unchanged), so the U bottoms out in the
+# middle instead of a straight front and a hooked tail. Neither touches a standing shark;
+# recentre wants ground_contact, or one end of him swings through the floor.
+# default 0.0
+recentre = 0.0
+# default 0.0
+amplitude_even = 0.0
 
 [bounce]
 # THE BOUNCE (C.5). A per-frame vertical lift so he LAUNCHES off the ground and LANDS, driven
 # by the thrash's own phase. Without it a beached shark pinned to z=0 slides, and the landing
 # is where the comedy is.
 #
-# THE SHADOW IS THE WHOLE POINT AND IT IS FREE. The shadow pass is a real Cycles render with
-# the game's own 45-degree sun and a catcher at z=0, so lifting the model separates the shadow
-# by itself -- nothing applies an offset to a sprite. MEASURED at height 0.3, dir 16,
-# SWIM_FAST f12, the lift the only difference between two renders: the shadow's alpha
-# centroid moves +19.12 px east (0.2987 tiles against 0.300 predicted, and it is a pure
-# translation -- west edge +19, east edge +20, dy -0.5) while the body rises exactly 14 px
-# up-screen (0.219 tiles against 0.212 predicted). That SEPARATION is what reads as airborne;
-# a lift without it looks like the sprite growing.
+# THE SHADOW IS THE POINT AND IT IS FREE. The shadow pass is a real Cycles render with the
+# game's 45-degree sun and a catcher at z=0, so lifting the model separates the shadow by
+# itself; nothing offsets a sprite. MEASURED at height 0.3, dir 16, SWIM_FAST f12, the lift
+# the only difference between two renders: the shadow's alpha centroid moves +19.12 px east
+# (0.2987 tiles against 0.300 predicted, a pure translation -- west edge +19, east edge +20,
+# dy -0.5) while the body rises exactly 14 px up-screen (0.219 tiles against 0.212
+# predicted). That SEPARATION reads as airborne; a lift without it looks like the sprite
+# growing.
 #
-# WHAT IT COSTS THE CANVAS, measured over all 20 frames of SWIM_FAST at roll 85, dir 16: the
-# loop's union box grows from 3.78 x 2.03 to 3.78 x 2.08 tiles and the top margin drops from
-# 84 px to 76 px of the 6-tile canvas. So 0.3 tiles is cheap and there is room for about 1.6
-# tiles of lift before the top edge cuts. art.py re-measures and shouts either way.
+# CANVAS COST, over all 20 frames of SWIM_FAST at roll 85, dir 16: the loop's union box grows
+# from 3.78 x 2.03 to 3.78 x 2.08 tiles and the top margin drops from 84 px to 76 px of the
+# 6-tile canvas. So 0.3 tiles is cheap, with room for about 1.6 tiles of lift before the top
+# edge cuts. art.py re-measures and shouts either way.
 
-# Peak height in TILES of world z. 0 disables the bounce entirely (and is the default, so the
-# standing sprites cannot be touched by it). 0.3 is the C.5 number: 12 of SWIM_FAST's 20
-# frames airborne, 19 px of shadow travel, 8 px of canvas.
+# Peak height in TILES of world z. 0 disables the bounce (the default, so the standing
+# sprites cannot be touched by it). 0.3 is the C.5 number: 12 of SWIM_FAST's 20 frames
+# airborne, 19 px of shadow travel, 8 px of canvas.
 # default 0.0
 height = 0.0
 
-# WHERE in the clip's cycle the push-off happens, as a fraction of the cycle: 0.0 launches on
-# the clip's first frame, 0.25 a quarter of the way in. Launch on the frame of peak CURL and
-# the thrash throws him; launch on a straight frame and the sprite reads as dragged upward.
-# Which frame that is depends on the clip, the roll and the gain, so it is an eyeball
-# decision on a compare sheet -- that is why this is a knob and not a formula.
+# WHERE in the clip's cycle the push-off happens, as a fraction: 0.0 launches on the clip's
+# first frame, 0.25 a quarter of the way in. Launch on peak CURL and the thrash throws him;
+# launch on a straight frame and the sprite reads as dragged upward. Which frame that is
+# depends on clip, roll and gain -- an eyeball call on a compare sheet, hence a knob, not a
+# formula.
 # default 0.0
 phase = 0.0
 
-# Gravity in tiles/s^2, and it is the knob that shapes the FALL. 9.8 is real gravity at
-# 1 tile = 1 m, which is the point: airtime is DERIVED from height and gravity
-# (t = 2*sqrt(2h/g)), never authored, so you cannot accidentally ask for a 0.3-tile hop that
-# floats for a second. A parabola reads as gravity and a sinusoid reads as floating -- see
-# artconfig.bounce_lift for the argument. Raise it for a snappier, shorter hop at the same
-# height; lower it and he hangs.
+# Gravity in tiles/s^2, the knob that shapes the FALL. 9.8 is real gravity at 1 tile = 1 m:
+# airtime is DERIVED from height and gravity (t = 2*sqrt(2h/g)), never authored, so a
+# 0.3-tile hop cannot accidentally float for a second. A parabola reads as gravity and a
+# sinusoid as floating (artconfig.bounce_lift has the argument). Raise it for a snappier,
+# shorter hop at the same height; lower it and he hangs.
 # default 9.8
 gravity = 9.8
 
 [camera]
 # Camera elevation in degrees. 45 IS NOT A PREFERENCE: core/lualib/math3d.lua ships
-# projection_constant = 1/sqrt(2) and projects (y+z)*k with ONE constant for both ground
-# depth and height, which is only true at the unique elevation where sin == cos. Changing
-# this desyncs the sprite from every other entity in the game; the harness warns loudly.
+# projection_constant = 1/sqrt(2) and projects (y+z)*k with ONE constant for ground depth and
+# height, true only at the unique elevation where sin == cos. Changing it desyncs the sprite
+# from every other entity in the game; the harness warns loudly.
 # default 45.0
 pitch = 45.0
 
@@ -270,42 +339,43 @@ sprite_scale = 0.5
 # Square render canvas for the BODY pass, in tiles. Must hold the shark at `scale` AND the
 # up-screen lift from `model.offset`: a 4.07-tile shark pointing north projects
 # 4.07 * 0.7071 = 2.88 tiles tall, and the 0.5-tile height offset lifts him another
-# 0.5 * 0.7071 = 0.35 tiles. MEASURED on the shipped knobs, union of all 64 rotations'
-# alpha at >= 8/255: he fills 5.59 x 4.48 tiles of the 6, reaching 2.68 tiles above the
-# entity origin and 1.81 below -- 0.31 tiles of headroom at the top, 0.20 at each side.
-# The SIDE is the tight edge, not the top: broadside he is 4.07 tiles of pure length while
-# the 45-degree camera flattens his height by 0.71, so width wins. It runs out at scale
-# 0.87 -- MEASURED by rendering frames 16 and 48, which are the widest two: 0.86 is clean,
-# 0.87 trips the warning. The shipped 0.81 is 7% off the edge, not the comfortable margin
-# the pre-C.13 numbers here used to claim. Too small clips the nose; too large is wasted pixels and
-# slower frames. art.py re-measures this on every render, cached frames included, and
-# shouts (`WARN body pass: ... TOUCH THE CANVAS EDGE`) rather than trusting this comment.
+# 0.5 * 0.7071 = 0.35 tiles. MEASURED on the shipped knobs, union of all 64 rotations' alpha
+# at >= 8/255: he fills 5.59 x 4.48 tiles of the 6, reaching 2.68 tiles above the entity
+# origin and 1.81 below -- 0.31 tiles of headroom at the top, 0.20 at each side.
+# The SIDE is the tight edge: broadside he is 4.07 tiles of pure length while the 45-degree
+# camera flattens his height by 0.71. At alpha >= 8 it ran out at scale 0.87 (MEASURED on
+# frames 16 and 48, the widest two: 0.86 clean, 0.87 trips the warning); at the visible
+# threshold the first cut lands just under 0.86 (art.warn_if_clipped). The shipped 0.81 is
+# about 7% off the edge, not the comfortable margin the pre-C.13 numbers here claimed. Too
+# small clips the nose; too large wastes pixels and slows frames. art.py re-measures on every
+# render, cached frames included, and shouts (`WARN body pass: ... TOUCH THE CANVAS EDGE`)
+# instead of trusting this comment.
 # default 6.0
 canvas_tiles = 6.0
 
-# Same, for the SHADOW pass, which needs much more canvas: a 45-degree sun runs the shadow
-# one tile EAST per tile of height, so a shark whose top is 2.2 tiles up throws its shadow
-# 2.2 tiles east of itself. 11 tiles holds a 4-tile shark plus its full smear. Stock does
-# the same thing -- its shadow frame is 192 px wide against a 132 px body.
+# Same, for the SHADOW pass, which needs far more: a 45-degree sun runs the shadow one tile
+# EAST per tile of height, so a shark whose top is 2.2 tiles up throws its shadow 2.2 tiles
+# east of itself. 11 tiles holds a 4-tile shark plus its full smear. Stock does the same --
+# its shadow frame is 192 px wide against a 132 px body.
 # default 11.0
 shadow_canvas_tiles = 11.0
 
 [sun]
 # Compass bearing the shadow RUNS toward, degrees. 90 = due east, i.e. the sun sits due
-# west. Measured five independent ways off the shipped art in factorio_camera.py; the
+# west. MEASURED five independent ways off the shipped art (factorio_camera.py); the
 # spidertron's own shadow sheet predicts its west edge to 0.6 px at this value.
 # default 90.0
 azimuth = 90.0
 
-# Sun elevation, degrees. 45 again, and for the same reason -- a point at height h drops
-# its shadow exactly h tiles along the azimuth. Lower it and shadows stretch past what
-# neighbouring stock entities do.
+# Sun elevation, degrees. 45 again, for the same reason: a point at height h drops its
+# shadow exactly h tiles along the azimuth. Lower it and shadows stretch past neighbouring
+# stock entities'.
 # default 45.0
 elevation = 45.0
 
-# Blender sun strength. MEASURED against this model, not guessed: his albedo is a dark
-# grey-blue, so at 3 he renders near-black and at 30 the cephalofoil blows out. 16 reads
-# as a shark at Factorio's zoom while keeping the dorsal highlight intact.
+# Blender sun strength, MEASURED against this model: his albedo is a dark grey-blue, so at 3
+# he renders near-black and at 30 the cephalofoil blows out. 16 reads as a shark at
+# Factorio's zoom and keeps the dorsal highlight intact.
 # default 16.0
 energy = 16.0
 
@@ -315,24 +385,24 @@ energy = 16.0
 # default 1.0
 angular_size = 1.0
 
-# World background strength: flat ambient fill, and the cheapest fill light there is --
-# no second lamp, no extra shadow. Under ~0.1 the sun-away flank goes to a black hole;
-# past ~0.5 it flattens the whole body out. 0.25 keeps the form and opens the shadows.
+# World background strength: flat ambient fill, the cheapest fill light (no second lamp, no
+# extra shadow). Under ~0.1 the sun-away flank goes to a black hole; past ~0.5 it flattens
+# the whole body. 0.25 keeps the form and opens the shadows.
 # default 0.25
 ambient = 0.25
 
 [render]
-# BODY pass engine. MEASURED, not assumed: EEVEE Next and Cycles CPU cost about the same
-# wall time at sprite resolution on this machine, but Cycles spends 4x the CPU to get there
-# and its output is noisy at low samples, while EEVEE's is clean. The model's Cycles-only
-# features (subsurface weight 1.0, a 4096 normal map) are invisible at 132 px anyway --
-# which is exactly why `use_subsurface` defaults off. Flip to "CYCLES" for a final sheet.
+# BODY pass engine. MEASURED: EEVEE Next and Cycles CPU cost about the same wall time at
+# sprite resolution on this machine, but Cycles spends 4x the CPU and is noisy at low
+# samples, while EEVEE is clean. The model's Cycles-only features (subsurface weight 1.0, a
+# 4096 normal map) are invisible at 132 px anyway, which is why `use_subsurface` defaults
+# off. Flip to "CYCLES" for a final sheet.
 # default "BLENDER_EEVEE_NEXT"
 engine = "BLENDER_EEVEE_NEXT"
 
-# SHADOW pass engine. Do not change it. Only Cycles honours object.is_shadow_catcher;
-# EEVEE Next accepts the attribute and then renders the catcher plane fully opaque, so the
-# shadow pass silently comes back as a grey square.
+# SHADOW pass engine. Do not change it. Only Cycles honours object.is_shadow_catcher; EEVEE
+# Next accepts the attribute, then renders the catcher plane fully opaque, so the shadow pass
+# silently comes back a grey square.
 # default "CYCLES"
 shadow_engine = "CYCLES"
 
@@ -347,8 +417,8 @@ device = "CPU"
 # default 64
 samples = 64
 
-# Samples for --preview and --compare. The whole point of preview is the loop time, and at
-# 16 EEVEE is already clean. Raise it only if you are judging noise rather than shape.
+# Samples for --preview and --compare. Preview exists for loop time, and at 16 EEVEE is
+# already clean. Raise it only to judge noise, not shape.
 # default 16
 preview_samples = 16
 
@@ -357,26 +427,26 @@ preview_samples = 16
 # default 32
 shadow_samples = 32
 
-# Render at N x resolution and Lanczos-downsample to the final size. 1 uses Blender's own
-# filter. 2 is the knob to reach for if the silhouette edges look ragged in the final sheet
-# -- it costs 4x the pixels, so leave it at 1 while iterating. It multiplies the RENDER
-# size only: the frame on disk, and every provenance stamp on it, is the final size.
+# Render at N x resolution and Lanczos-downsample to the final size; 1 uses Blender's own
+# filter. 2 is the knob for ragged silhouette edges in the final sheet -- 4x the pixels, so
+# leave it at 1 while iterating. It multiplies the RENDER size only: the frame on disk, and
+# every provenance stamp on it, is the final size.
 # default 1
 supersample = 1
 
-# Hard override of the FINAL body resolution in px. 0 = derive it (canvas_tiles * 64),
-# which keeps one tile at exactly 64 source px and the packer's shift math exact. The shadow
-# canvas rides whatever you set here, so both passes stay at one px-per-tile and --compare
-# can still overlay them: 384 here means a 384 px body and a 704 px shadow. `supersample`
-# still applies on top -- 384 with supersample 2 renders 768 and downsamples to 384 -- so
-# the stamped resolution is always the size of the file beside it. Changing this changes
-# BOTH passes' cache keys, including the shadow's. Deliberately-wrong-scale proofs only.
+# Hard override of the FINAL body resolution in px. 0 = derive it (canvas_tiles * 64), which
+# keeps one tile at exactly 64 source px and the packer's shift math exact. The shadow canvas
+# rides whatever is set here, so both passes stay at one px-per-tile and --compare can still
+# overlay them: 384 means a 384 px body and a 704 px shadow. `supersample` still applies on
+# top (384 with supersample 2 renders 768 and downsamples to 384), so the stamped resolution
+# is always the size of the file beside it. Changing it changes BOTH passes' cache keys.
+# Deliberately-wrong-scale proofs only.
 # default 0
 resolution_px = 0
 
 # Colour management. Factorio art is plain sRGB. Blender 4.x defaults to AgX, which crushes
-# highlights and desaturates -- the shark comes out looking washed next to a stock sprite.
-# "Standard" is the only value that matches the game.
+# highlights and desaturates -- the shark looks washed out next to a stock sprite. "Standard"
+# is the only value that matches the game.
 # default "Standard"
 view_transform = "Standard"
 
@@ -384,15 +454,15 @@ view_transform = "Standard"
 # default "None"
 look = "None"
 
-# The model ships Subsurface Weight 1.0 (C.2). It is a Cycles feature, it costs real time,
-# and at 132 px on a dark-skinned shark it is invisible. Off by default; turn it on only to
-# confirm for yourself that it does nothing at this size.
+# The model ships Subsurface Weight 1.0 (C.2). It is Cycles-only and costs real render time,
+# and at 132 px on a dark-skinned shark it is invisible. Off; turn it on only to confirm it
+# does nothing at this size.
 # default false
 use_subsurface = false
 
-# The 4096x4096 normal map at strength 0.4. Same argument as subsurface -- at 132 px the
-# detail is far below a pixel -- but unlike subsurface it is nearly free, and it does still
-# shape the broad dorsal/flank shading. Left on.
+# The 4096x4096 normal map at strength 0.4. Same argument as subsurface (at 132 px the detail
+# is far below a pixel), but it is nearly free and still shapes the broad dorsal/flank
+# shading. Left on.
 # default true
 use_normal_map = true
 
@@ -402,8 +472,8 @@ use_normal_map = true
 normal_strength = 0.4
 
 [rotations]
-# Directions in the full sheet. Factorio's spidertron torso uses 64 and so must we -- the
-# entity's rotation is quantised to this and 32 reads as visibly steppy while panning.
+# Directions in the full sheet. Factorio's spidertron torso uses 64 and so must we: the
+# entity's rotation is quantised to this, and 32 reads visibly steppy while panning.
 # default 64
 count = 64
 
@@ -424,30 +494,26 @@ counterclockwise = false
 # default 8
 rotations = 8
 
-# Size of one compare cell in TILES, square. Sets how much context sits around the shark,
-# and getting it wrong is not cosmetic: a cell smaller than the sprite CROPS the sprite,
-# and this sheet is where scale, pivot and offset get decided. 4.6 was measured against a
-# shark that was re-tuned afterwards and never re-measured -- against the shipped knobs it
-# was a 294 px cell over a 358 px union, cutting 32 px off each side at E/W and 50 px off
-# the bottom at every rotation, tail flat-sliced at 16 and 48, head at 32.
-# 6.0 is `camera.canvas_tiles`: the cell IS the render canvas, so it cannot crop anything
-# the render did not already crop, and the render pass has warned about its own canvas
-# since C.10. --compare now measures every cell against the frame it came from and puts
-# the verdict on stdout and in the footer whichever way it goes, so the next knob change
-# shouts instead of quietly slicing him.
+# Size of one compare cell in TILES, square: the context around the shark, and not cosmetic --
+# a cell smaller than the sprite CROPS it, on the sheet where scale, pivot and offset get
+# decided. 4.6 was measured against a shark re-tuned afterwards and never re-measured: against
+# the shipped knobs it was a 294 px cell over a 358 px union, cutting 32 px off each side at
+# E/W and 50 px off the bottom at every rotation, tail flat-sliced at 16 and 48, head at 32.
+# 6.0 is `camera.canvas_tiles`: the cell IS the render canvas, so it cannot crop anything the
+# render did not already crop (and the render pass has warned about its canvas since C.10).
+# --compare measures every cell against its frame and prints the verdict on stdout and in the
+# footer either way, so the next knob change shouts instead of quietly slicing him.
 # default 6.0
 cell_tiles = 6.0
 
-# Where the entity origin (the point on the GROUND the legs stand around) sits inside a
-# cell, as a fraction of cell height. Not decoration: model.offset lifts the shark 0.5
-# tiles of world height, which a 45-degree camera turns into 0.35 tiles up-screen, so he
-# sits high in his own canvas and a cell centred on the origin wastes its bottom half.
-# MEASURED over all 64 rotations he reaches 2.68 tiles above the origin against 1.81
-# below, and 0.60 is that split (2.68 / 4.48) -- the cell is spent where he actually is.
-# 0.78 was STOCK's bias (the spidertron torso is 138 px tall with the entity at pixel 106,
-# 77% down) rather than a measurement of ours, and paired with a 4.6-tile cell it is what
-# put 50 px of tail off the bottom of every frame. Move it and --compare tells you what
-# the cell can still hold.
+# Where the entity origin (the GROUND point the legs stand around) sits in a cell, as a
+# fraction of cell height. model.offset lifts the shark 0.5 tiles of world height (0.35 tiles
+# up-screen at 45 degrees), so he sits high in his canvas and a cell centred on the origin
+# wastes its bottom half. MEASURED over all 64 rotations he reaches 2.68 tiles above the
+# origin against 1.81 below, and 0.60 is that split (2.68 / 4.48). 0.78 was STOCK's bias (the
+# spidertron torso is 138 px tall with the entity at pixel 106, 77% down), not a measurement
+# of ours, and paired with a 4.6-tile cell it put 50 px of tail off the bottom of every frame.
+# Move it and --compare says what the cell can still hold.
 # default 0.60
 origin_y = 0.60
 
@@ -456,8 +522,8 @@ origin_y = 0.60
 # default [58, 62, 66]
 background = [58, 62, 66]
 
-# Opacity of the stock spidertron ghost in the OVERLAY row. 0.45 is enough to see where the
-# stock torso ends without fighting the shark for attention.
+# Opacity of the stock spidertron ghost in the OVERLAY row. 0.45 shows where the stock torso
+# ends without fighting the shark for attention.
 # default 0.45
 stock_alpha = 0.45
 
@@ -470,58 +536,56 @@ show_stock = true
 # default true
 show_shadow = true
 
-# Draw the eight leg MOUNT POINTS as markers. This is the question C.4 has to answer: stock
-# declares mount_position by_pixel(+-15,-22) (+-23,-10) (+-25,+4) (+-15,+17), i.e. +-0.78
-# tiles transverse, and a mount that falls off the shark's silhouette is a leg growing out
-# of thin air. Leave these on.
+# Draw the eight leg MOUNT POINTS as markers -- the question C.4 had to answer. Stock declares
+# mount_position by_pixel(+-15,-22) (+-23,-10) (+-25,+4) (+-15,+17), i.e. +-0.78 tiles
+# transverse, and a mount off the shark's silhouette is a leg growing out of thin air. Leave
+# these on.
 # default true
 show_mounts = true
 
-# Draw each mount's leg as a line down to its declared ground_position, so you can see the
-# stance and not just the attachment points.
+# Draw each mount's leg as a line down to its declared ground_position, to show the stance,
+# not just the attachment points.
 # default true
 show_legs = true
 
-# One-tile grid overlay on each cell, so you can read sizes off the image directly.
+# One-tile grid overlay on each cell, to read sizes straight off the image.
 # default true
 grid = true
 
 [mask]
-# THE RUNTIME-TINT MASK (C.4b). Stock ships spidertron-body-mask.png -- 130x100, 64
-# directions, apply_runtime_tint -- and WITHOUT a mask layer the entity colour picker does
-# nothing at all, which also makes D.4's careful preservation of `color` across the beached
-# swap dead code. So the question is not whether to ship one, it is WHAT to tint.
+# THE RUNTIME-TINT MASK (C.4b). Stock ships spidertron-body-mask.png (130x100, 64 directions,
+# apply_runtime_tint), and WITHOUT a mask layer the entity colour picker does nothing, which
+# also makes D.4's preservation of `color` across the beached swap dead code. So the question
+# is WHAT to tint, not whether.
 #
-# Stock's answer does not transfer. Its mask is a shaded greyscale copy of the ENTIRE
-# torso at alpha 224, so the player's colour becomes the machine. Do that to a hammerhead
-# and he stops being a shark and starts being a 4-tile lozenge in team colours.
+# Stock's answer does not transfer: its mask is a shaded greyscale copy of the ENTIRE torso
+# at alpha 224, so the player's colour becomes the machine. Do that to a hammerhead and he is
+# a 4-tile lozenge in team colours.
 #
-# So: tint the HARNESS, the same reasoning C.13 settled the mounts with. He is strapped
-# into his legs, the straps are the man-made part of him, and a man-made part is the only
-# thing on this model that has any business being whatever colour the player likes. The
-# mask pass renders one flat grey shader whose ALPHA is a band function of the model's own
-# local coordinates, so the tinted region is a saddle and two girth straps rather than a
-# whole fish. It is also additive content: the model has no harness, and this layer draws
-# one.
+# So tint the HARNESS, the reasoning C.13 settled the mounts with. He is strapped into his
+# legs; the straps are the man-made part of him, the only thing on this model with any
+# business being whatever colour the player likes. The mask pass renders one flat grey shader
+# whose ALPHA is a band function of the model's local coordinates, so the tinted region is a
+# saddle and two girth straps, not a whole fish. It is also additive content: the model has
+# no harness, and this layer draws one.
 #
-# HONEST LIMIT, because the config file is where it belongs: this paints the harness ON
-# his skin. There is no geometry, so it has no raised silhouette and no self-shadow -- it
-# reads as webbing, not as a buckled strap. Second limit, learned the hard way: the band is
-# a function of coordinates and NOTHING ELSE, so it cannot tell his back from his dorsal
-# fin. It is kept off the fin by a z ceiling (`plate_top_z`), measured against this model,
-# and moving the model or the straps means re-checking it -- render the mask pass and look
-# at it over the body. F.2's in-game eyeball is the real check for both.
+# HONEST LIMITS. This paints the harness ON his skin: no geometry, so no raised silhouette and
+# no self-shadow -- it reads as webbing, not a buckled strap. And the band is a function of
+# coordinates and NOTHING ELSE, so it cannot tell his back from his dorsal fin; a z ceiling
+# (`plate_top_z`) measured against this model keeps it off the fin, and moving the model or
+# the straps means re-checking it (render the mask pass, look at it over the body). F.2's
+# in-game eyeball is the real check for both.
 #
-# "harness" is the shipped mode. "silhouette" is stock's approach, kept so disagreeing is
-# a one-line diff rather than a rewrite; the harness warns you about it if you pick it.
+# "harness" is the shipped mode. "silhouette" is stock's approach, kept so disagreeing is a
+# one-line diff, not a rewrite; the harness warns if you pick it.
 # default "harness"
 mode = "harness"
 
 # Forward strap centre, in MODEL-LOCAL BU along the length axis (+x is the nose). The
-# rest-pose mesh spans x -3.588 (caudal fin) to +1.439 (cephalofoil) and the tuned pivot
-# sits at -0.14, so the eight leg mounts -- +-0.352 tiles of screen offset, i.e. +-0.43 BU
-# at scale 0.81 -- cluster in x -0.57..+0.29. The straps bracket that cluster: the load
-# goes into the straps, not into the middle of a plate.
+# rest-pose mesh spans x -3.588 (caudal fin) to +1.439 (cephalofoil) and the tuned pivot sits
+# at -0.14, so the eight leg mounts (+-0.352 tiles of screen offset, +-0.43 BU at scale 0.81)
+# cluster in x -0.57..+0.29. The straps bracket that cluster: the load goes into the straps,
+# not the middle of a plate.
 # default 0.2
 strap_fore = 0.20
 
@@ -530,93 +594,90 @@ strap_fore = 0.20
 # default -0.62
 strap_aft = -0.62
 
-# Strap width in BU, measured along the length axis. 0.16 BU is 0.13 tiles is about 8 px
-# in the packed sheet -- thin enough to read as a strap, thick enough to survive Factorio's
-# own sprite compression.
+# Strap width in BU along the length axis. 0.16 BU is 0.13 tiles, about 8 px in the packed
+# sheet -- thin enough to read as a strap, thick enough to survive Factorio's sprite
+# compression.
 # default 0.16
 strap_width = 0.16
 
-# Local z the dorsal PLATE starts at: the saddle's lower edge, i.e. how far down his
-# flanks the harness wraps. Between the straps his BODY runs from about z -0.3 (belly) to
-# 0.75 (the crest, where the fin takes over), so this is the useful range: -0.3 wraps the
-# plate all the way under him and duplicates what the straps already do, 0.6 leaves a thin
-# ribbon along his spine. 0.24 sits just above the mid-flank -- from the side it reads as
-# a saddle pad between the two straps, from above it meets both of them.
+# Local z the dorsal PLATE starts at: the saddle's lower edge, i.e. how far down his flanks
+# the harness wraps. Between the straps his BODY runs from about z -0.3 (belly) to 0.75 (the
+# crest, where the fin takes over), so that is the useful range: -0.3 wraps the plate all the
+# way under him, duplicating the straps; 0.6 leaves a thin ribbon along his spine. 0.24 sits
+# just above mid-flank -- from the side a saddle pad between the two straps, from above it
+# meets both.
 # default 0.24
 plate_z = 0.24
 
-# Local z the plate STOPS at, and this is the knob that keeps the player's colour off his
-# dorsal fin. Without a ceiling the plate is "everything between the straps ABOVE plate_z"
-# and the tallest thing between the straps is the fin, which rises to z 1.44: the first
-# shipped mask tinted it base to tip, so the entity colour picker painted a shark fin and
-# the block above claiming this tints the HARNESS was simply not true of the pixels. Worse,
-# the documented escape hatch ran backwards -- raising plate_z removed the saddle and kept
-# the fin, because at plate_z 0.62 there was no saddle, only fin.
-# MEASURED by sweeping the cap and looking at the mask over the body (dir 16, the pure
-# side view): the back between the straps carries body up to about z 0.75, and past ~0.8
-# the plate starts climbing the blade. 0.70 covers the whole back and stops clear of it;
-# below ~0.5 it leaves a bare strip of back between the saddle and the fin. The fin then
-# rises through a hole in the saddle, which is what a harness on a shark would do.
-# Set this at or below plate_z and the plate is empty -- two bare straps, the harness
-# warns you -- which IS the escape hatch the old comment was reaching for.
+# Local z the plate STOPS at: the knob that keeps the player's colour off his dorsal fin.
+# Without a ceiling the plate is "everything between the straps ABOVE plate_z", and the
+# tallest thing there is the fin, rising to z 1.44: the first shipped mask tinted it base to
+# tip, so the colour picker painted a shark fin and the block above (this tints the HARNESS)
+# was false of the pixels. Worse, the documented escape hatch ran backwards -- raising
+# plate_z removed the saddle and kept the fin, because at plate_z 0.62 there was no saddle,
+# only fin.
+# MEASURED by sweeping the cap and looking at the mask over the body (dir 16, the pure side
+# view): the back between the straps carries body up to about z 0.75, and past ~0.8 the plate
+# climbs the blade. 0.70 covers the whole back and stops clear of it; below ~0.5 it leaves a
+# bare strip of back between saddle and fin. The fin rises through a hole in the saddle, as
+# it would through a harness on a shark. At or below plate_z the plate is empty (two bare
+# straps, and the harness warns) -- which IS the escape hatch.
 # default 0.70
 plate_top_z = 0.70
 
-# Soft edge on every band, in BU. 0 gives a hard stair-stepped edge at 64 px/tile; 0.04 BU
-# is roughly two pixels of ramp, which is what the body pass's own antialiasing looks like.
+# Soft edge on every band, in BU. 0 gives a hard stair-stepped edge at 64 px/tile; 0.04 BU is
+# roughly two pixels of ramp, matching the body pass's own antialiasing.
 # default 0.04
 edge = 0.04
 
-# Base grey of the mask surface, LINEAR -- so it is not the number that lands in the PNG.
-# Factorio MULTIPLIES the sprite by the entity colour, so this sets how bright the tinted
-# harness reads against him. MEASURED on the shipped lighting, mean over the band's own
-# opaque pixels on frame 16 (due east): 0.10 -> 123, 0.12 -> 133, 0.14 -> 142, 0.20 -> 166,
-# 0.62 -> 227 (clipped, a white decal). The shark's own body renders at a mean of 97 on the
-# same frame and stock's torso mask sits at 102, so 0.12 puts the harness about a third
-# brighter than the hide it is strapped to:
-# visible as webbing at a neutral colour, and saturated enough that the colour picker
-# obviously did something.
+# Base grey of the mask surface, LINEAR, so not the number that lands in the PNG. Factorio
+# MULTIPLIES the sprite by the entity colour, so this sets how bright the tinted harness reads
+# against him. MEASURED on the shipped lighting, mean over the band's opaque pixels on frame
+# 16 (due east): 0.10 -> 123, 0.12 -> 133, 0.14 -> 142, 0.20 -> 166, 0.62 -> 227 (clipped, a
+# white decal). His body renders at a mean of 97 on the same frame and stock's torso mask sits
+# at 102, so 0.12 puts the harness about a third brighter than the hide it is strapped to:
+# visible as webbing at a neutral colour, saturated enough that the colour picker obviously
+# did something.
 # default 0.12
 grey = 0.12
 
 [reflection]
-# THE WATER REFLECTION, and it is built by pack.py out of the body frames -- no Blender
-# pass, because there is nothing to render. MEASURED off what stock actually ships:
-# spidertron-body-water-reflection.png is a 448x448 single frame, variation_count 1,
-# rotate/orientation_to_variation both false, shift 0, and every pixel of it is PURE RED
-# (255,0,0) with the shape carried entirely in the alpha. It is a soft blurred ellipse
-# 194x133 px -- 1.7x the torso sprite's own footprint -- centred on the entity origin. The
-# 448 canvas is just Wube not cropping a 5.6 KiB palette PNG; it is not a number to match.
+# THE WATER REFLECTION, built by pack.py from the body frames -- no Blender pass, nothing to
+# render. MEASURED off what stock ships: spidertron-body-water-reflection.png is a 448x448
+# single frame, variation_count 1, rotate/orientation_to_variation both false, shift 0, every
+# pixel PURE RED (255,0,0) with the shape entirely in the alpha: a soft blurred ellipse
+# 194x133 px (1.7x the torso sprite's footprint) centred on the entity origin. The 448 canvas
+# is Wube not cropping a 5.6 KiB palette PNG, not a number to match.
 #
-# So ours is the same thing derived honestly: the MEAN alpha of all 64 body rotations
-# (rotationally symmetric by construction, dense where he always is and faint at the
-# extremities he only sometimes reaches), blurred, gained, recentred on the origin, RGB
-# forced to pure red, cropped to its own alpha box.
+# Ours is the same thing derived honestly: the MEAN alpha of all 64 body rotations
+# (rotationally symmetric by construction, dense where he always is, faint at the extremities
+# he only sometimes reaches), blurred, gained, recentred on the origin, RGB forced to pure
+# red, cropped to its own alpha box.
 
-# Blur radius in TILES. This is the whole look: under ~0.1 the blob keeps a shark
-# silhouette, which no reflection in moving water has; past ~0.4 it is a featureless
-# smudge wider than he is. 0.16 is 10 px at the shipped 64 px/tile.
+# Blur radius in TILES, the whole look: under ~0.1 the blob keeps a shark silhouette, which
+# no reflection in moving water has; past ~0.4 it is a featureless smudge wider than he is.
+# 0.16 is 10 px at the shipped 64 px/tile.
 # default 0.16
 blur_tiles = 0.16
 
 # Multiplier on the mean alpha before it clips at 255. The mean of 64 rotations peaks well
-# under 255 -- only the ground he covers at EVERY heading is opaque -- so gain is what sets
-# how much of the blob is a solid core and how much is falloff. Picked by putting ours
-# beside stock's at matched scale: 1.7 leaves a small core in a wide halo, 3.6 is nearly
-# all core, 2.6 matches stock's own core-to-halo ratio. Raising it also WIDENS the sheet,
-# because the alpha box is measured at a fixed floor and gain lifts the far tails over it.
+# under 255 (only ground he covers at EVERY heading is opaque), so gain sets how much of the
+# blob is solid core and how much falloff. Picked beside stock's at matched scale: 1.7 leaves
+# a small core in a wide halo, 3.6 is nearly all core, 2.6 matches stock's core-to-halo
+# ratio. Raising it also WIDENS the sheet: the alpha box is measured at a fixed floor and gain
+# lifts the far tails over it.
 # default 2.6
 gain = 2.6
 
-# Slide the blob so its alpha centroid lands on the entity origin, which is what makes the
-# emitted shift ~0 and therefore directly comparable to stock's. Off leaves it where the
-# render put it -- up-screen by model.offset's lift -- and the shift comes out non-zero.
+# Slide the blob so its alpha centroid lands on the entity origin, making the emitted shift
+# ~0 and directly comparable to stock's. Off leaves it where the render put it (up-screen by
+# model.offset's lift) with a non-zero shift.
 # default true
 recentre = true
 
 [output]
 # Render root, relative to the repo root. GITIGNORED. Sheets are promoted into
-# mod/jamaltron/graphics/ deliberately and by hand, never by this tool -- the graphics
-# directory carries its own LICENSE carve-out and things landing there is a decision.
+# mod/jamaltron/graphics/ deliberately and by hand, never by this tool: that directory
+# carries its own LICENSE carve-out, and anything landing there is a decision.
 # default "render-out"
 dir = "render-out"

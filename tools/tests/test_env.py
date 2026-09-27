@@ -1,5 +1,5 @@
-"""Environment guards. These fail loudly if the toolchain drifts from what
-A.5 established, rather than letting a Phase C script discover it at render time."""
+"""Environment guards: fail loudly if the toolchain drifts from what A.5 established,
+rather than a Phase C script discovering it at render time."""
 
 import ast
 import pathlib
@@ -9,8 +9,8 @@ REPO_TOOLS = pathlib.Path(__file__).resolve().parents[1]
 
 
 def test_python_is_311_to_match_blender():
-    # Blender 4.4.3 bundles CPython 3.11.11. render/spritesheet.py is imported by
-    # both interpreters, so a version skew here is a real bug, not pedantry.
+    # Blender 4.4.3 bundles CPython 3.11.11 and both interpreters import
+    # render/spritesheet.py, so a version skew is a real bug.
     assert sys.version_info[:2] == (3, 11), sys.version
 
 
@@ -24,11 +24,9 @@ def test_pillow_is_installed(tmp_path):
 
 
 def test_spritesheet_stays_stdlib_only():
-    """The shared module must import in Blender, which has no Pillow and no venv.
-
-    Anything not in the stdlib here breaks every Blender-side script that
-    imports it, and it breaks at render time, silently, on somebody else's
-    machine. Cheaper to assert it.
+    """The shared module must import in Blender, which has no Pillow and no venv: a
+    non-stdlib import breaks every Blender-side script importing it, silently, at render
+    time.
     """
     src = (REPO_TOOLS / "render" / "spritesheet.py").read_text()
     imported = set()

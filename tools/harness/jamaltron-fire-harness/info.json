@@ -1,0 +1,9 @@
+{
+  "name": "jamaltron-fire-harness",
+  "version": "0.1.0",
+  "title": "Jamaltron flamethrower harness",
+  "author": "chotchki",
+  "description": "Headless test driver for the jamaltron flamethrower and its attacking lines (PLAN D.7). Never shipped: tools/smoke.sh --harness loads it into a throwaway profile.",
+  "factorio_version": "2.1",
+  "dependencies": ["jamaltron"]
+}

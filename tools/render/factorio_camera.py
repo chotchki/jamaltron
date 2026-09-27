@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""The Factorio camera and sun, derived from the game rather than from folklore.
+"""The Factorio camera and sun, derived from the game's own code and art.
 
 RUN, three ways:
     uv run --directory tools python render/factorio_camera.py            # print the constants
     uv run --directory tools python render/factorio_camera.py --verify   # re-measure them off the shipped art
     /Applications/Blender.app/Contents/MacOS/Blender -b --python tools/render/factorio_camera.py
 
-Importable from both sides of the Blender boundary: everything above the `bpy` guard is
-stdlib-only arithmetic, so the projection can be unit-tested and reused by the packer, and
-`--verify` imports Pillow lazily so a Blender-side import never touches it.
+Importable on both sides of the Blender boundary: everything above the `bpy` guard is
+stdlib-only arithmetic (unit-tested, reused by the packer), and `--verify` imports Pillow
+lazily so a Blender-side import never touches it.
 
 THE PROJECTION, and where it comes from
 ---------------------------------------
@@ -19,60 +19,58 @@ Factorio ships its own projection in `core/lualib/math3d.lua`:
       return { vec3[1], (vec3[2] + vec3[3]) * math3d.projection_constant }
     end
 
-Screen x is the world east axis untouched; screen y is (ground-depth + height) scaled by
-one shared constant. ONE constant for both terms is the whole story: it is an ORTHOGRAPHIC
-camera at exactly 45 degrees elevation, the unique angle where sin == cos, so a tile of
-ground-depth and a tile of height foreshorten identically.
+Screen x is world east untouched; screen y is (ground-depth + height) scaled by ONE shared
+constant. That makes it an ORTHOGRAPHIC camera at exactly 45 degrees elevation, the unique
+angle where sin == cos, so a tile of ground-depth and a tile of height foreshorten
+identically.
 
-That is not a reading of the source, it is the number the game shipped. base/prototypes/
-entity/fire.lua runs the flamethrower turret's real model coordinates
-(gun_tip_raised = {2.2515, 0, 7.10942}, units_per_tile = 4) through project_vec3 and bakes
-the 64 results into the prototype. fire.lua also pins the sign convention: it scales the
-model by (1/upt, 1/upt, -1/upt) before projecting, so the model's +z is DOWN and the
-projected y is (south - up) * K, which is exactly this module's project().
+The game ships numbers computed with it: base/prototypes/entity/fire.lua runs the
+flamethrower turret's real model coordinates (gun_tip_raised = {2.2515, 0, 7.10942},
+units_per_tile = 4) through project_vec3 and bakes the 64 results into the prototype.
+fire.lua also pins the sign convention: it scales the model by (1/upt, 1/upt, -1/upt)
+before projecting, so the model's +z is DOWN and the projected y is (south - up) * K,
+exactly this module's project().
 
 SCALE
 -----
-1 world tile = 32/scale source pixels. At the scale every stock sprite uses, 0.5, that is
-64 px per tile. Proven two ways: base terrain declares size-1/2/4 tile variants at
-scale 0.5 in 64/128/256 px cells, and `spidertron-animations.lua` comments its leg offsets
-"offset length in tiles (= px / 32)".
+1 world tile = 32/scale source pixels: 64 px per tile at 0.5, the scale every stock sprite
+uses. Proven two ways: base terrain declares size-1/2/4 tile variants at scale 0.5 in
+64/128/256 px cells, and `spidertron-animations.lua` comments its leg offsets "offset length
+in tiles (= px / 32)".
 
 Only the EAST-WEST axis is 64 px per tile. North-south ground and height both land at
-64 * 0.7071 = 45.25 px per tile, because that is what the 45 degree camera does.
+64 * 0.7071 = 45.25 px per tile (the 45 degree camera).
 
 ROTATION
 --------
-64 directions, frame 0 = north, index increasing CLOCKWISE, 8 frames per row. Measured off
-the stock tank turret (tracking the muzzle across its 64 frames walks top -> right ->
-bottom -> left) and confirmed by Wube's own code: fire.lua rotates the model by
+64 directions, frame 0 = north, index increasing CLOCKWISE, 8 frames per row. MEASURED off
+the stock tank turret (the muzzle across its 64 frames walks top -> right -> bottom ->
+left) and confirmed by Wube's own code: fire.lua rotates the model by
 `phi = (r/N - 0.25) * 2pi` about Z, and its model faces +X, so frame 0 points north and
 frame 1 has already moved east. A sheet that wants the other direction sets
 `counterclockwise = true` - the flamethrower turret gun does, the spidertron torso does not.
 
-Rotate the MODEL, never the camera: the sun is fixed in world space, so rotating the camera
-would drag the shadows around with it.
+Rotate the MODEL, never the camera: the sun is fixed in world space, so a rotating camera
+drags the shadows around with it.
 
 ORIGIN PIXEL
 ------------
 The camera axis lands on pixel INDEX (res-1)/2, not res/2 - pixel k covers [k, k+1), so the
-continuous centre res/2 falls on the seam between pixels 191 and 192 of a 384 px render.
-Getting this wrong is a clean half-pixel bias in every shift the packer emits. It showed up
-as exactly that in both validations below before it was fixed - the reference-box run read
-1.49 px instead of 0.99 px, and the muzzle run could not get under half a pixel at all.
+continuous centre res/2 falls between pixels 191 and 192 of a 384 px render. Getting it
+wrong is a half-pixel bias in every shift the packer emits; before the fix both validations
+below showed it (the reference-box run read 1.49 px instead of 0.99 px, the muzzle run could
+not get under half a pixel).
 
 THE SUN: 45 DEGREES, DUE WEST, RUN 1.0
 --------------------------------------
 A point at height h drops its shadow exactly h tiles due EAST. On screen that is a smear of
-(h, h*K) - the same 1/sqrt(2) as the camera, because the sun sits at the same 45 degrees
-the camera does. Five independent lines of evidence, listed with what each one can and
-cannot show:
+(h, h*K) - the camera's 1/sqrt(2), because the sun sits at the camera's 45 degrees. Five
+independent lines of evidence, each with what it can and cannot show:
 
- 1. THE SPIDERTRON'S OWN SHEETS, with no shape assumption whatsoever - the sharpest test
-    and the one that matters most, because C.4 replaces exactly this sprite. Take the UNION
-    of all 64 rotations: the swept solid is a solid of revolution with SOME radius profile
-    r(z), whatever the torso actually looks like, and that is free rather than assumed.
-    Screen x is world east untouched, so over the 64 frames:
+ 1. THE SPIDERTRON'S OWN SHEETS, with no shape assumption - the sharpest test, and the one
+    that matters most since C.4 replaces exactly this sprite. The UNION of all 64 rotations
+    is a solid of revolution with SOME radius profile r(z), whatever the torso looks like,
+    so that is free, not assumed. Screen x is world east untouched, so over the 64 frames:
         body   east/west extent  = +- max_z r(z)              = +-1.0312
         body   south extent      = K * max_z(r(z) - z)        = +0.4688
         body   north extent      = -K * max_z(r(z) + z)       = -1.6562
@@ -84,17 +82,17 @@ cannot show:
         shadow west  predicted -0.6629   measured -0.6719   err -0.6 px
         shadow east  predicted +2.3423   measured +2.2969   err -2.9 px
     (the east residual is a thin antenna: the body's north-most pixel is a spike that loses
-    alpha as a shadow, and it errs SHORT, which is the direction a fading tip errs.)
-    No other Lx predicts anything without first pinning where on the profile the extremes
-    live. Grant it the friendliest reading - the widest ring r = 1.0312 is the one attaining
-    both, so it sits at z = 0.3683 on the south side and z = 1.3110 on the north - and:
+    alpha as a shadow, and it errs SHORT, the direction a fading tip errs.)
+    Any other Lx needs the extremes' place on the profile pinned first. The friendliest
+    reading - the widest ring r = 1.0312 attains both, at z = 0.3683 on the south side and
+    z = 1.3110 on the north - gives:
         Lx = 0.8165 (the poles)   west +3.8 px   east +12.5 px
         Lx = 0.7457 (cannon)      west +5.4 px   east +18.4 px
         Lx = 0.70   (old proof)   west +6.5 px   east +22.3 px
  2. THE FLAMETHROWER TURRET GUN vs its own shadow sheet. fire.lua ships the muzzle's 3D
-    model coordinate, so its height (7.10942/4 = 1.7774 tiles) is KNOWN - which is what
-    breaks the degeneracy every other raster measurement suffers from (a 2D sprite can only
-    ever give you north+height, never either alone). On the nine frames where the barrel
+    model coordinate, so its height (7.10942/4 = 1.7774 tiles) is KNOWN - which breaks the
+    degeneracy of every other raster measurement (a 2D sprite only ever gives north+height,
+    never either alone). On the nine frames where the barrel
     points east, the muzzle rim provably attains BOTH the gun sheet's east extent and the
     shadow sheet's east extent (the rim point maximising `e` also maximises `e + z*Lx` for
     any Lx < 1.2), so differencing the two sheets' east-most alpha cancels the edge
@@ -102,8 +100,8 @@ cannot show:
         smear = (1.6615, 1.1806) tiles, dy/dx = 0.7106 against K = 0.7071
         -> Lx = 0.98 +- 0.03 for a muzzle rim radius of 0.10..0.16 tiles
  3. THE SUBSTATION'S AUTHORED wire/shadow CONNECTION POINTS. Each terminal declares both
-    where the wire meets the pole and where that same point's shadow lands, so the
-    difference is the screen smear with no silhouette guesswork. Its copper terminal (on
+    where the wire meets the pole and where that point's shadow lands, so the difference
+    is the screen smear with no silhouette guesswork. Its copper terminal (on
     the axis, identical in all 4 orientations) gives dy/dx = 0.7069 -> Lx = 1.0003.
  4. THE ENGINE ITSELF: utility-constants ships
     `train_on_elevated_rail_shadow_shift_multiplier = {1.41421356237, 1}` = (1/K, 1). What
@@ -111,9 +109,9 @@ cannot show:
     but a screen smear whose dy/dx is exactly K is Lx = 1, Ly = 0 and nothing else.
  5. THE CANVASES THEMSELVES. A shadow sprite's frame is cut to hold its shadow, so on a
     tall entity the frame width measures the shadow's length. Every tall stock shadow is
-    cut off by its own frame - alpha in the last pixel column - and Lx = 1.0 lands the tip
-    at that edge while 0.8165 leaves half a tile to a whole tile of empty canvas, which is
-    not how Wube cuts sheets (derive/clip_test.py):
+    cut off by its own frame (alpha in the last pixel column); Lx = 1.0 lands the tip at
+    that edge while 0.8165 leaves half a tile to a whole tile of empty canvas, which is not
+    how Wube cuts sheets (derive/clip_test.py):
         entity                top U    shadow alpha E   frame E   Lx=1.0   Lx=0.8165
         small-electric-pole   3.757        3.578         3.594     3.757     3.067
         medium-electric-pole  4.530        3.938         3.953     4.530     3.699
@@ -126,28 +124,28 @@ LIGHT_RUN_Y is 0.0 because nothing measurable disagrees with due east: the spide
 shadow sheet is symmetric north/south to 1.7 px and 0.3 px, and its shadow shift is
 by_pixel(26, 0.5) - half a pixel south against 26 east.
 
-DISSENTERS, recorded so nobody re-derives them and thinks they are news
------------------------------------------------------------------------
-* THE THREE ELECTRIC POLES' CONNECTION POINTS, which is where this module's previous
-  LIGHT_RUN_X of 0.82 came from. Same method as (3) and just as tight - dy/dx = 0.866
-  +- 0.005 over 36 terminals (small 0.8672, medium 0.8660, big 0.8588), i.e. Lx = 0.8165
-  and a 50.8 degree sun. It is WRONG, and (5) says why: on a mast, a 45 degree sun puts the
-  wire's true shadow off the end of the canvas, so the artist put the wire-shadow
-  attachment somewhere readable on the visible shadow instead. The small pole's declared
-  copper shadow point sits at +3.078 while its own drawn shadow reaches +3.578 and is still
-  clipped - the declared point is half a tile short of art that is itself cut off. Tight
-  scatter across four orientations of the same pole is consistency, not accuracy. The same
-  method survives on the SUBSTATION because a squat entity's shadow fits in frame.
+DISSENTERS, recorded so nobody re-derives them as news
+------------------------------------------------------
+* THE THREE ELECTRIC POLES' CONNECTION POINTS, the source of this module's previous
+  LIGHT_RUN_X of 0.82. Same method as (3) and just as tight - dy/dx = 0.866 +- 0.005 over
+  36 terminals (small 0.8672, medium 0.8660, big 0.8588), i.e. Lx = 0.8165 and a 50.8
+  degree sun. It is WRONG, and (5) says why: on a mast a 45 degree sun puts the wire's true
+  shadow off the end of the canvas, so the artist put the wire-shadow attachment somewhere
+  readable on the visible shadow instead. The small pole's declared copper shadow point
+  sits at +3.078 while its own drawn shadow reaches +3.578 and is still clipped - half a
+  tile short of art that is itself cut off. Tight scatter across four orientations of one
+  pole is consistency, not accuracy. The method survives on the SUBSTATION because a squat
+  entity's shadow fits in frame.
 * `cannon_barrel_light_direction = {0.5976251, -0.0242053, -0.8014102}` (ENU), declared on
-  the artillery turret and wagon: run 0.746 east / 0.030 south, a 53.3 degree sun. It is
-  the light used to SHADE a recoil-shifted barrel at runtime, not a shadow-casting
-  direction. It misses the spidertron's shadow edge by 5.4 px and leaves more empty canvas
-  than 0.8165 does on every sprite in (5). Worth knowing it exists - it is the only 3D
-  light vector the game declares anywhere - but the shadow ART does not obey it.
+  the artillery turret and wagon: run 0.746 east / 0.030 south, a 53.3 degree sun. It
+  SHADES a recoil-shifted barrel at runtime; it is not a shadow-casting direction. It
+  misses the spidertron's shadow edge by 5.4 px and leaves more empty canvas than 0.8165 on
+  every sprite in (5). It is the only 3D light vector the game declares anywhere, but the
+  shadow ART does not obey it.
 * SILHOUETTE-BBOX DIFFERENCING on poles (body east extent vs shadow east extent over the
-  body's own screen height) gives 0.69-0.70. It is structurally biased low: it assumes the
-  widest part of the caster is also its top, and on a pole the crossarm sits below the tip.
-  The 0.70 burned into the earlier C3_shadow_proof.png came from this method.
+  body's screen height) gives 0.69-0.70, structurally biased low: it assumes the widest
+  part of the caster is also its top, and on a pole the crossarm sits below the tip. The
+  0.70 in the earlier C3_shadow_proof.png came from this method.
 
 VALIDATED
 ---------
@@ -159,27 +157,25 @@ VALIDATED
   0.718 +- 0.009, i.e. 45.9 degrees, with every u/v harmonic pair 90 +- 1 degrees apart
   (light_positions_fit.py). Authored by eye, so this is a sanity check, not the proof.
 * CAMERA + LIGHT against the renderer: an asymmetric 2.24 x 1.00 x 0.90 tile proxy box
-  (shark proportions, so its silhouette AND its shadow change on every one of the 64
-  rotations - a square box or a round blob gives the same bbox every frame, which is one
-  measurement dressed up as 64), Cycles CPU at 64 px/tile. Rendered body bbox vs the
-  projected corners: max 0.76 px, mean 0.47 px. Rendered shadow bbox vs the SHEARED
-  corners: max 0.97 px, mean 0.63 px. Both at an alpha threshold of 32; across thresholds
-  8..128 the worst edge moves between 0.76 and 1.71 px, and that spread IS the error bar,
-  because a rendered edge is a ramp - about a pixel is the antialiased fringe and it is the
-  floor, not an error.
+  (shark proportions, so its silhouette AND its shadow change on all 64 rotations - a
+  square box or round blob gives the same bbox every frame, one measurement dressed up as
+  64), Cycles CPU at 64 px/tile. Rendered body bbox vs the projected corners: max 0.76 px,
+  mean 0.47 px. Rendered shadow bbox vs the SHEARED corners: max 0.97 px, mean 0.63 px.
+  Both at an alpha threshold of 32; across thresholds 8..128 the worst edge moves between
+  0.76 and 1.71 px, and that spread IS the error bar - a rendered edge is a ramp, and the
+  ~1 px antialiased fringe is the floor, not an error.
 * THE RENDERER against stock art: a caster lathed to the swept envelope above (every corner
   of its profile taken from the BODY sheet) lands its rendered shadow on the stock shadow
-  sprite's swept extents to W +0.0, E +1.0, N -1.0, S +0.0 px. Read the claim correctly:
-  this is the same arithmetic as (1) with Blender in the loop, so it tests the RENDER, not
-  the light. Per FRAME it does not match and cannot - the stock torso is not a solid of
-  revolution, its shadow's east extent swings 1.438..2.297 tiles across the 64 frames.
+  sprite's swept extents to W +0.0, E +1.0, N -1.0, S +0.0 px. This is (1)'s arithmetic
+  with Blender in the loop, so it tests the RENDER, not the light. Per FRAME it does not
+  and cannot match - the stock torso is not a solid of revolution, its shadow's east
+  extent swings 1.438..2.297 tiles across the 64 frames.
 
-The verification kit that produces those numbers (render_proxy / verify_proxy /
-render_torso / shadow_proof / camera_proof / render_muzzle / verify_muzzle /
-light_positions_fit) is C.3 scratchpad work and is not in the repo; what IS in the repo is
-`--verify` here, which re-derives both constants off the installed game's own sprites, and
-tools/tests/test_factorio_camera.py, which checks the projection against eight muzzle
-positions the game itself computes.
+The verification kit behind those numbers (render_proxy / verify_proxy / render_torso /
+shadow_proof / camera_proof / render_muzzle / verify_muzzle / light_positions_fit) was C.3
+scratchpad work and is not in the repo. In the repo: `--verify` here, which re-derives both
+constants off the installed game's sprites, and tools/tests/test_factorio_camera.py, which
+checks the projection against eight muzzle positions the game itself computes.
 
 ENGINE
 ------
@@ -207,9 +203,8 @@ STOCK = dict(frame_w=132, frame_h=138, line_length=8, direction_count=64,
 
 # THE SUN. A point at height Z drops its shadow at ground (Z*LIGHT_RUN_X, Z*LIGHT_RUN_Y)
 # tiles, i.e. on screen at (Z*LIGHT_RUN_X, Z*(1+LIGHT_RUN_Y)*K) from where the point is
-# drawn. See "THE SUN" above for the four derivations and the two dissenters; the short
-# version is that the spidertron's own shadow sheet predicts its west edge to 0.6 px at
-# run 1.0 and misses by 3.8 px at 0.82.
+# drawn. Evidence and dissenters in "THE SUN" above; in short, the spidertron's own shadow
+# sheet predicts its west edge to 0.6 px at run 1.0 and misses by 3.8 px at 0.82.
 LIGHT_RUN_X = 1.0          # tiles east per tile of height
 LIGHT_RUN_Y = 0.0          # tiles south per tile of height - measured as zero
 SUN_ELEVATION_DEG = 45.0   # degrees(atan2(1, hypot(run_x, run_y)))
@@ -238,8 +233,8 @@ def project(x_tiles, y_north_tiles, z_tiles, scale=0.5):
 def project_shadow(x_tiles, y_north_tiles, z_tiles, scale=0.5):
     """Same point's SHADOW: drop it on the ground along the sun, then project that.
 
-    Ground point is (east + z*run_x, north - z*run_y); it has no height term left, which
-    is why a shadow's screen y is pure ground depth."""
+    Ground point is (east + z*run_x, north - z*run_y); no height term is left, so a
+    shadow's screen y is pure ground depth."""
     return project(x_tiles + z_tiles * LIGHT_RUN_X,
                    y_north_tiles - z_tiles * LIGHT_RUN_Y, 0.0, scale)
 
@@ -316,7 +311,7 @@ if bpy is not None:
 
         Blender camera at rotation_euler=(45deg,0,0) looks along (0, sin45, -cos45) with up
         (0, cos45, sin45). Screen-down for a point becomes -(Y*cos45 + Z*sin45), which is
-        Factorio's -(north + up) * 0.7071 exactly - that equality is what pins 45 degrees.
+        Factorio's -(north + up) * 0.7071 exactly - that equality pins 45 degrees.
         """
         cam_data = bpy.data.cameras.new("factorio_cam")
         cam_data.type = "ORTHO"
@@ -370,8 +365,8 @@ if bpy is not None:
 
 
 # --------------------------------------------------------------------------------------
-# Provenance you can re-run. `--verify` re-measures both constants off the installed game's
-# own PNGs, so the numbers in the docstring above are checkable rather than asserted.
+# Re-runnable provenance: `--verify` re-measures both constants off the installed game's
+# own PNGs, so the docstring's numbers are checkable, not just asserted.
 
 FACTORIO_DATA = "/Applications/factorio.app/Contents/data/"
 

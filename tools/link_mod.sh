@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Symlink mod/jamaltron into the player's Factorio mods directory, so the game
-# loads the working tree and an edit is live on the next restart - no zip, no copy.
+# loads the working tree and an edit is live on the next restart (no zip, no copy).
 #
-# That directory is not ours. It holds a hundred real mods and a mod-list.json the
-# game rewrites on every launch, so this script is deliberately paranoid: it backs
-# mod-list.json up OUTSIDE the mods dir first, refuses to clobber anything that is
-# not the symlink it made itself, and re-checks afterwards that the list is still
-# valid JSON and still names every mod it named before. The only write it ever
-# performs is the one symlink.
+# That directory is not ours: it holds real mods (a hundred on the dev machine) and a
+# mod-list.json the game rewrites every launch. So this script backs mod-list.json up
+# OUTSIDE the mods dir first, refuses to clobber anything but its own symlink, and
+# re-checks afterwards that the list is still valid JSON naming every mod it named
+# before. Its only write is the one symlink.
 #
-# Idempotent - run it as many times as you like. Factorio appends its own enabled
-# entry for the mod on the next launch; that append is the game's business, not
-# ours, and the after-check exists to prove nothing else moved.
+# Idempotent. Factorio appends its own enabled entry for the mod on the next launch;
+# the after-check exists to prove nothing else moved.
 #
-# Usage: tools/link_mod.sh [--status | --unlink] [--mods-dir PATH]
+# Usage: tools/link_mod.sh [--status | --unlink] [--mods-dir PATH] [--mod-dir PATH]
+#   --status         report the link and mod-list.json, change nothing
+#   --mod-dir PATH   mod to link (default mod/jamaltron)
 # Env:   FACTORIO_MODS_DIR=PATH    mods directory override
 #        LINK_BACKUP_DIR=PATH      where mod-list.json backups land
 set -euo pipefail
@@ -58,7 +58,7 @@ MOD_NAME="${info%% *}"
 MOD_VER="${info##* }"
 
 # Unversioned link name on purpose: Factorio accepts <name> as well as
-# <name>_<version>, and the bare name means a version bump does not orphan a link.
+# <name>_<version>, and the bare name survives a version bump.
 LINK="$MODS_DIR/$MOD_NAME"
 MOD_LIST="$MODS_DIR/mod-list.json"
 

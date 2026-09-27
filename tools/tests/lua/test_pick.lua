@@ -69,7 +69,7 @@ test("tail-only rows never roll, at any tier", function()
       end
     end
   end
-  assert(tails == 7, "the catalog says 7 tail-only rows, found " .. tails)
+  assert(tails == 8, "the catalog says 8 tail-only rows, found " .. tails)
 end)
 
 test("once_per_save rows leave the roll once fired", function()
@@ -189,7 +189,74 @@ test("every chain head names a row in its own pool", function()
       end
     end
   end
-  assert(heads == 9, "the catalog says 9 chains, found " .. heads)
+  assert(heads == 10, "the catalog says 10 chains, found " .. heads)
+end)
+
+test("shore: each ground adds only its own rows on top of `any`", function()
+  local shore = pools.shore
+  local base = ids(pick.eligible(shore, "unbearable"))
+  assert(count(base) > 0, "the `any` rows carry every stall")
+  for _, row in ipairs(shore.rows) do
+    if base[row.id] then assert(row.sub == "any", row.id .. " rolled with no ground") end
+  end
+  for _, ground in ipairs({"water", "lava", "ammoniacal-solution"}) do
+    local got = ids(pick.eligible(shore, "unbearable", ground))
+    local own = 0
+    for _, row in ipairs(shore.rows) do
+      if row.sub == ground and not row.tail_only then
+        own = own + 1
+        assert(got[row.id], ground .. " did not roll its own " .. row.id)
+      elseif row.sub ~= "any" then
+        assert(not got[row.id], ground .. " rolled " .. row.id .. ", a " .. row.sub .. " row")
+      end
+    end
+    assert(own > 0, ground .. " has no rows of its own")
+    assert(count(got) == count(base) + own, ground .. " lost an `any` row")
+  end
+  -- `void` is a value the split names with zero rows; nil (nothing reported) and a fluid
+  -- the split does not name (modded) land in the same place: the `any` rows, exactly
+  local listed = {}
+  for _, v in ipairs(shore.values) do listed[v] = true end
+  assert(listed.void, "`void` is a ground the detector reports")
+  for _, cond in ipairs({"void", "heavy-oil", false}) do
+    local got = ids(pick.eligible(shore, "unbearable", cond or nil))
+    assert(count(got) == count(base), tostring(cond) .. " is not exactly the `any` rows")
+    for id in pairs(got) do assert(base[id], tostring(cond) .. " added " .. id) end
+  end
+  -- the distinct-strings cells lines.md's coverage table states, quiet / normal / unbearable
+  local cells = {water = {5, 8, 8}, lava = {4, 5, 5}, ["ammoniacal-solution"] = {4, 4, 4},
+                 void = {3, 3, 3}}
+  for ground, want in pairs(cells) do
+    for i, tier in ipairs({"quiet", "normal", "unbearable"}) do
+      local groups = {}
+      for _, row in ipairs(pick.eligible(shore, tier, ground)) do groups[row.grp] = true end
+      assert(count(groups) == want[i], ground .. "/" .. tier .. ": lines.md says " .. want[i]
+        .. " distinct strings, found " .. count(groups))
+    end
+  end
+  -- under low_health.01's speech hush a stall still has a line, on every ground
+  for _, cond in ipairs({"water", "lava", "ammoniacal-solution", "void", false}) do
+    local hushed = ids(pick.eligible(shore, "quiet", cond or nil, nil, "narration"))
+    assert(hushed["shore.01"], tostring(cond) .. ": a hushed stall went silent")
+  end
+end)
+
+test("shore: the ocean head leaves the roll once fired, and its tail never rolls", function()
+  local head
+  for _, row in ipairs(pools.shore.rows) do
+    if row.id == "shore.05" then head = row end
+  end
+  assert(head and head.gate == "once_per_save" and head.follow == "shore.06", "shore.05 -> shore.06")
+  local before = ids(pick.eligible(pools.shore, "unbearable", "water"))
+  assert(before["shore.05"], "the head rolls on water")
+  local after = ids(pick.eligible(pools.shore, "unbearable", "water", {["shore.05"] = true}))
+  assert(not after["shore.05"], "the gated head rolled a second time")
+  for _, tier in ipairs({"quiet", "normal", "unbearable"}) do
+    for _, cond in ipairs({"water", "lava", "ammoniacal-solution", "void", false}) do
+      assert(not ids(pick.eligible(pools.shore, tier, cond or nil))["shore.06"],
+        "shore.06 is tail-only and rolled at " .. tier .. "/" .. tostring(cond))
+    end
+  end
 end)
 
 for i, fn in ipairs(tests) do

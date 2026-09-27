@@ -1,10 +1,9 @@
 """Camera and sun math. The fixtures are Factorio's own numbers, not ours.
 
-The projection cases check against values the GAME computes at data load from
+The projection cases check values the GAME computes at data load from
 base/prototypes/entity/fire.lua's real model coordinates, so they fail if our sign
-convention or our px-per-tile ever drifts from the engine's. The light cases check the
-45 degree sun that C.3 derived; the stock-art ones skip when Factorio is not installed,
-which is the normal state in CI.
+convention or px-per-tile drifts from the engine's. The light cases check C.3's 45 degree
+sun; the stock-art ones skip without Factorio (the normal state in CI).
 """
 
 import ast
@@ -23,9 +22,9 @@ REPO_TOOLS = pathlib.Path(__file__).resolve().parents[1]
 #   gun_tip_raised = {2.2515, 0, 7.10942} units_per_tile = 4
 # and computes prepared_muzzle_animation_shift by tilting the LOWERED tip up about the
 # pivot, turning it about Z, scaling by (1/upt, 1/upt, -1/upt) and projecting. The tilted
-# tip lands NEAR gun_tip_raised but not on it, which is why this repeats the tilt rather
-# than shortcutting to the raised coordinate. Eight of the 64 shipped values, from a
-# --dump-data run against Factorio 2.1.x on 2026-09-20.
+# tip lands NEAR gun_tip_raised but not on it, so this repeats the tilt rather than using
+# the raised coordinate. Eight of the 64 shipped values, from a --dump-data run against
+# Factorio 2.1.x on 2026-09-20.
 TILT_PIVOT = (-1.68551, 0.0, 2.35439)
 GUN_TIP_LOWERED = (4.27735, 0.0, 3.97644)
 GUN_TIP_RAISED = (2.2515, 0.0, 7.10942)
@@ -76,9 +75,8 @@ def test_projection_reproduces_the_shipped_muzzle_positions(r, expected):
 
 
 def test_the_muzzle_orbit_is_a_circle_of_the_declared_radius():
-    # a rigid point on a body turning about Z traces a circle; its screen ellipse is that
-    # circle with the north axis squashed by K. Both amplitudes at once, so a wrong K or a
-    # wrong winding cannot hide.
+    # a rigid point turning about Z traces a circle; on screen, the north axis squashed by
+    # K. Both amplitudes at once, so a wrong K or winding cannot hide.
     ppt = fc.px_per_tile(0.5)
     xs = [fc.project(*_muzzle_enu(r))[0] / ppt for r in range(64)]
     ys = [fc.project(*_muzzle_enu(r))[1] / ppt for r in range(64)]
@@ -142,9 +140,9 @@ def test_frame_zero_is_north_and_the_index_runs_clockwise():
 
 
 def test_stays_importable_from_blender():
-    """Blender has no Pillow and no venv. factorio_camera is imported by both sides, so a
-    non-stdlib import at module level breaks every render script - at render time, on
-    somebody else's machine. --verify imports PIL inside the function for exactly this."""
+    """Blender has no Pillow and no venv, and both sides import factorio_camera, so a
+    module-level non-stdlib import breaks every render script at render time. --verify
+    imports PIL inside the function for this reason."""
     src = (REPO_TOOLS / "render" / "factorio_camera.py").read_text()
     tree = ast.parse(src)
     top = set()
@@ -167,5 +165,5 @@ def test_stays_importable_from_blender():
 def test_light_still_agrees_with_the_shipped_spidertron_art():
     """The swept spidertron torso is a solid of revolution, so its shadow sheet's west and
     east edges follow from its BODY sheet alone once Lx is fixed. At Lx = 1 they land within
-    a pixel and three of a pixel; this is the check that would catch a silent constant edit."""
+    one and three pixels; this catches a silent constant edit."""
     assert fc.verify_against_stock_art()

@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # Package mod/jamaltron as a mod-portal zip.
 #
-# The version comes out of info.json, never out of this script or a flag - one
-# source of truth, so a bumped info.json is the whole release ceremony.
+# The version comes from info.json only (never a flag or this script), so bumping
+# info.json is the whole release ceremony.
 #
-# What the engine actually enforces, which is less than the portal docs imply:
-# for a ZIP mod Factorio reads the mod name and version off the ZIP FILENAME, so
-# <name>_<version>.zip is the part that is not optional. MEASURED 2.1.17: the
-# folder inside the zip is never checked - a jamaltron_0.1.0.zip whose only
-# top-level folder is wrongroot/ loads clean. The naming rule that does bite
-# applies to an UNPACKED mod: a directory in mods/ must be named <name> or
-# <name>_<version> or the game refuses it with "Directory name of mod ... doesn't
-# match the expected ...".
+# The engine enforces less than the portal docs imply. For a ZIP mod Factorio reads
+# name and version off the ZIP FILENAME, so <name>_<version>.zip is mandatory.
+# MEASURED 2.1.17: the folder inside the zip is never checked - a
+# jamaltron_0.1.0.zip whose only top-level folder is wrongroot/ loads clean. The
+# naming rule that does bite is for an UNPACKED mod: a directory in mods/ must be
+# <name> or <name>_<version>, or the game refuses it ("Directory name of mod ...
+# doesn't match the expected ...").
 #
-# This still ships <name>_<version>/ inside <name>_<version>.zip. It is the portal
-# convention, it is the one inner name that is also legal once somebody unzips it
-# into mods/, and it costs nothing.
+# Ships <name>_<version>/ inside anyway: it is the one inner name still legal if
+# someone unzips into mods/ (and the portal convention, at no cost).
 #
-# Output lands in dist/ (gitignored). --verify additionally loads the finished zip
-# in headless Factorio via tools/smoke.sh, which is the only way to prove the
-# thing you are about to upload actually works.
+# Output lands in dist/ (gitignored). --verify loads the finished zip in headless
+# Factorio via tools/smoke.sh, the only proof the upload actually works.
 #
-# Usage: tools/build.sh [--out DIR] [--verify] [-q]
+# Usage: tools/build.sh [--out DIR] [--mod-dir DIR] [--verify] [-q]
+#   --out DIR, --mod-dir DIR   override dist/ and mod/jamaltron
+#   -q                         drop progress lines; the zip path still prints last
+#   -h, --help                 this text
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,17 +76,15 @@ trap 'exit 143' TERM
 rm -rf "$STAGE"
 mkdir -p "$STAGE/$FOLDER"
 # Copy then prune, so the staged tree IS the shipped tree and can be inspected.
-# zip's own -x is belt and braces for anything the prune list misses.
+# zip -x is a backstop for anything the prune list misses.
 cp -R "$MOD_DIR/." "$STAGE/$FOLDER/"
 find "$STAGE" \( \
   -name '.DS_Store' -o -name '._*' -o -name '.gitkeep' -o -name '.gitignore' -o \
   -name '.git' -o -name '*.orig' -o -name '*.rej' -o -name '*~' -o \
   -name '__pycache__' -o -name 'Thumbs.db' \) -exec rm -rf {} +
-# Then sweep the directories that pruning just emptied. scripts/ exists in the
-# working tree only because of a .gitkeep, and without this the zip carries a
-# scripts/ entry with nothing under it. Factorio does not care; a shipped artifact
-# should still contain only what it means to contain. -delete implies -depth, so
-# nested empties collapse in one pass.
+# Sweep directories the prune emptied: one held only by a .gitkeep would otherwise
+# ship as an empty entry (harmless to Factorio, still not meant to ship). -delete
+# implies -depth, so nested empties collapse in one pass.
 find "$STAGE/$FOLDER" -mindepth 1 -type d -empty -delete
 
 [ -f "$STAGE/$FOLDER/info.json" ] || die "staging lost info.json, refusing to ship"
@@ -96,10 +94,9 @@ rm -f "$ZIP"
     -x '*.DS_Store' -x '*/._*' -x '*/.git/*' ) ||
   die "zip failed"
 
-# Verify the shipped layout rather than trusting the code above. The zip FILENAME
-# is the engine's gate and $FOLDER.zip is how it was built; the single inner root
-# is this project's rule (see the header) and the check is here because a staging
-# bug is silent otherwise.
+# Verify the shipped layout instead of trusting the code above. The zip FILENAME
+# is the engine's gate ($FOLDER.zip by construction); the single inner root is this
+# project's rule (header), checked because a staging bug is otherwise silent.
 roots="$(unzip -Z1 "$ZIP" | awk -F/ '{print $1}' | sort -u)"
 [ "$roots" = "$FOLDER" ] ||
   die "zip root is '$(printf '%s ' "$roots")' but this build ships exactly '$FOLDER/'"

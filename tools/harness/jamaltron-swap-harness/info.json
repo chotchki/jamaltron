@@ -1,0 +1,9 @@
+{
+  "name": "jamaltron-swap-harness",
+  "version": "0.1.0",
+  "title": "Jamaltron swap harness",
+  "author": "chotchki",
+  "description": "Headless test driver for scripts/swap.lua and scripts/clock.lua (PLAN D.4.7). Never shipped: tools/smoke.sh --harness loads it into a throwaway profile.",
+  "factorio_version": "2.1",
+  "dependencies": ["jamaltron"]
+}

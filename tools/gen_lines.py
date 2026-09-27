@@ -4,49 +4,46 @@
     uv run --directory tools python gen_lines.py            # write both files
     uv run --directory tools python gen_lines.py --check    # exit 1 if either is stale
 
-THE CATALOG IS THE SINGLE SOURCE, and this file is the only thing allowed to turn it into
-something the mod reads. It parses the machine contract the catalog documents in its own
-"How to read the table" section -- every `## <event>` section carrying a `**key:**` and a
-`**split:**` line and ONE twelve-column table -- validates all of it, and emits two files
-that both say GENERATED in their first line.
+THE CATALOG IS THE SINGLE SOURCE, and this is the only thing allowed to turn it into something
+the mod reads. It parses the machine contract the catalog documents in its "How to read the
+table" section (each `## <event>` section carries a `**key:**` line, a `**split:**` line and ONE
+twelve-column table), validates all of it, and emits two files that say GENERATED on line 1.
 
-TWO FILES, TWO JOBS, ONE KEY BETWEEN THEM. The locale file holds every string, one key per
-ID and NO dedup (the catalog's ruling: ID is for the locale, GRP is for the picker, and a
-reused line stays free to diverge per pool later). The Lua file holds everything the picker
-needs and no strings at all: weights, tiers, channels, the SUB each row answers to, the
-once-per-save gate, the chains with their delays and the anti-repeat group. D.5 renders a
-row as the LocalisedString {"jamaltron-line.<id>", count}.
+TWO FILES, ONE KEY BETWEEN THEM. The locale file holds every string, one key per ID and NO
+dedup (the catalog's ruling: ID is for the locale, GRP is for the picker, and a reused line
+stays free to diverge per pool later). The Lua file holds everything the picker needs and no
+strings: weights, tiers, channels, the SUB each row answers to, the once-per-save gate, the
+chains with their delays and the anti-repeat group. D.5 renders a row as the LocalisedString
+{"jamaltron-line.<id>", count}.
 
 THE LOCALE FILE IS ITS OWN FILE, not locale/en/jamaltron.cfg as PLAN B.5's one-liner says.
-That file is hand-written (entity, item and setting names) and its own header already says
-the speech lines "land in their own file". A generator that owned half a file would eat the
-hand-written half on its first run. Factorio loads every .cfg in locale/en/.
+That one is hand-written (entity, item and setting names; its header says the speech lines
+"land in their own file"), and a generator owning half a file would eat the other half on its
+first run. Factorio loads every .cfg in locale/en/.
 
-DOTTED KEYS ARE FINE, MEASURED rather than assumed, because base Factorio ships none: a
-throwaway mod on 2.1 logged {"x.idle.01"} as its string, {"x.legs_break.17", 3} with the
-count substituted, and an unknown key as `Unknown key: "..."`. So the catalog's
-`jamaltron-line.<id>` contract ships exactly as written.
+DOTTED KEYS ARE FINE, MEASURED because base Factorio ships none: a throwaway mod on 2.1 logged
+{"x.idle.01"} as its string, {"x.legs_break.17", 3} with the count substituted, and an unknown
+key as `Unknown key: "..."`. So `jamaltron-line.<id>` ships exactly as the catalog writes it.
 
-WHAT IT REFUSES, every one of them loudly and all of them at once -- a generator that stops
-at the first problem turns one pass of fixes into ten:
+REFUSES, loudly and all at once (stopping at the first problem turns one pass of fixes into ten):
   * a table row that is not twelve cells, a missing cell, an unknown CH / SOURCE / TIER /
     GATE value, a non-integer weight, a duplicate ID or an ID outside its section's keys
-  * a SUB value its section's `split:` line does not name. The split line is the WHOLE SUB
-    contract: `none` makes SUB advisory and it is dropped, `required` makes every row pick a
-    listed side, `gated` makes `-` and `any` the same always-eligible value
+  * a SUB its section's `split:` line does not name. The split line is the WHOLE SUB contract:
+    `none` makes SUB advisory (dropped), `required` makes every row pick a listed side,
+    `gated` makes `-` and `any` the same always-eligible value
   * a CHAIN that is not `-`, `tail`, `tail-only` or `<id>@<ticks>`; a head whose target is
     missing, in another pool or not marked as a tail; a tail no head names; a head in a pool
-    whose event is itself a swap (legs_break, repaired -- a swap cancels the chain it would
-    schedule); and a delay that is not the catalog's own formula applied to the head
-  * a GRP that is not the ID of the first row carrying the same string. It is COMPUTED;
-    this only checks the column still says what the computation says
-  * any token but {N}, an ASCII apostrophe in a Line (the glyph is U+2019, ruled), and a
-    SPEECH line over the 60-character bubble cap measured AFTER {N} becomes a three-digit
-    count -- except the two rows B.4 Q8 ruled stay long until a real bubble is measured
+    whose own event cancels it (the swaps legs_break and repaired, and died); a delay that is
+    not the catalog's formula applied to the head
+  * a GRP that is not the ID of the first row carrying the same string (COMPUTED; this only
+    checks the column agrees)
+  * any token but {N}; an ASCII apostrophe in a Line (the ruled glyph is U+2019); a SPEECH
+    line over the 60-character bubble cap with {N} at three digits, except the two rows B.4
+    Q8 ruled stay long until a real bubble is measured
   * when character/extracts/ is present: a `verbatim` Line, or a quote behind `ORIGINAL:` or
-    `TRIMMED (...) of` in a Note, that is not an exact substring of its book. The catalog's
-    rule is that a miss is a FABRICATION and gets deleted, not fixed -- so generation stops.
-    The extracts are gitignored, so CI cannot run this half and says so instead of passing
+    `TRIMMED (...) of` in a Note, that is not an exact substring of its book. The catalog rules
+    a miss a FABRICATION, deleted not fixed, so generation stops. The extracts are gitignored,
+    so CI cannot run this half and says so instead of passing
 """
 
 from __future__ import annotations
@@ -91,9 +88,9 @@ OVER_CAP_RULED = {"flopping.38": 61, "jump_refused.19": 64}
 #: Pools whose event IS a swap to or from jamaltron-beached. A swap cancels pending chains,
 #: so a chain headed here could never deliver (the catalog's reachability rule).
 SWAP_POOLS = ("legs_break", "repaired")
-#: And every pool a chain cannot be headed in: the swaps, plus `died` -- the locked semantics
-#: cancel a pending follow-up when the entity dies, and died IS the death. The catalog states
-#: the rule for swaps; death is the same cancel, derived rather than invented.
+#: Every pool a chain cannot be headed in: the swaps plus `died` (the locked semantics cancel a
+#: pending follow-up on death, and died IS the death). The catalog states the rule for swaps;
+#: death is the same cancel, derived not invented.
 NO_CHAIN_POOLS = SWAP_POOLS + ("died",)
 
 #: Lua's reserved words: a pool key becomes a bare identifier in the emitted table.
@@ -219,8 +216,8 @@ def parse_collect(text: str):
             current["ended"] = n
         elif not current["header"] and current.get("ended") \
                 and re.match(r"^\s*\|\s*[a-z_]+\.\d+\s*\|", raw):
-            # A row AFTER its table ended -- a blank line or an indented line broke the table.
-            # Markdown may still render it; this parser would have dropped it without a word.
+            # A row AFTER its table ended (a blank or indented line broke the table). Markdown
+            # may still render it; without this the parser would drop it silently.
             errors.append("line %d: a line row after the table ended at line %d (a blank or "
                           "non-table line splits the table): %s" % (n, current["ended"], raw[:60]))
     out = []
@@ -486,6 +483,24 @@ def lua_row(r: Row, split: str, indent: str = "        ") -> str:
     return "\n".join(lines)
 
 
+def lua_list_wrapped(prefix: str, values: list, indent: str = "        ") -> str:
+    """`<prefix>{"a", "b", ...},` wrapped at LUA_WIDTH on element boundaries -- a gated split
+    that names every refusal reason crosses it, and luacheck fails the file."""
+    if not values:
+        return prefix + "{},"
+    items = [_lua_str(v) for v in values]
+    lines, current = [], prefix + "{"
+    for i, item in enumerate(items):
+        piece = item + (", " if i < len(items) - 1 else "},")
+        if len(current) + len(piece.rstrip()) > LUA_WIDTH and not current.endswith("{"):
+            lines.append(current.rstrip())
+            current = indent + piece
+        else:
+            current += piece
+    lines.append(current)
+    return "\n".join(lines)
+
+
 GENERATED = ("GENERATED by tools/gen_lines.py from character/lines.md. DO NOT EDIT -- the next "
              "run eats the edit.")
 
@@ -530,7 +545,8 @@ def emit_lua(sections: list) -> str:
             out.append("      sides = %s," % _lua_list(values))
         if split == "gated":
             out.append("      dimension = %s," % _lua_str(dim))
-            out.append("      values = %s," % _lua_list(v for v in values if v not in ("-", "any")))
+            out.append(lua_list_wrapped("      values = ", [v for v in values
+                                                        if v not in ("-", "any")]))
         out.append("      swap = %s," % ("true" if key in SWAP_POOLS else "false"))
         out.append("      rows = {")
         for r in prows:

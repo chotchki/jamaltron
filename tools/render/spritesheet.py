@@ -1,15 +1,14 @@
 """Sprite-sheet layout math: frame count + frame size -> the numbers Factorio wants.
 
-Stdlib only, no bpy and no Pillow, so it imports in BOTH interpreters (uv's 3.11
-and Blender's bundled 3.11) and unit-tests without launching Blender. That split
-is the whole point -- see tools/README.md.
+Stdlib only (no bpy, no Pillow), so it imports in BOTH interpreters (uv's 3.11 and
+Blender's bundled 3.11) and unit-tests without launching Blender -- see tools/README.md.
 
 Factorio packs an animation as a grid of equal-size frames: `line_length` frames
 per row, read left-to-right then top-to-bottom. Past one file you switch to
 `filenames` + `lines_per_file`, and the engine derives the file index from the
 frame index. The last file may be SHORT; every earlier file must be full.
 
-Measured against Factorio 2.1.17's shipped assets, not inferred from docs:
+MEASURED against Factorio 2.1.17's shipped assets, not inferred from docs:
   - no PNG in core/base/space-age/quality/elevated-rails exceeds 8192 px on
     either side (8965 files checked), hence MAX_SHEET_SIDE
   - base/graphics/entity/spitter/spitter-run.lua declares width=250 height=220
@@ -24,7 +23,7 @@ import math
 from dataclasses import dataclass
 
 #: Hard ceiling per sheet side, in pixels. Factorio loads a sheet as one GPU
-#: texture; go over and you are gambling on the player's hardware.
+#: texture; past this it depends on the player's hardware.
 MAX_SHEET_SIDE = 8192
 
 
@@ -69,8 +68,8 @@ class SheetLayout:
         """The layout half of a Factorio Animation/RotatedAnimation table.
 
         Caller supplies the rest: `filename`/`filenames`, `shift`, `scale`,
-        `direction_count`, flags. `lines_per_file` is emitted only when it is
-        load-bearing, i.e. when the animation spans more than one file.
+        `direction_count`, flags. `lines_per_file` is emitted only when the
+        animation spans more than one file (it is only required with `filenames`).
         """
         fields = {
             "width": self.frame_width,

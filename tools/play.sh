@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the REAL Factorio GUI on an isolated, persistent playtest profile, so playtesting
-# jamaltron never touches your own game - its saves, mod list, mod settings or keybinds.
+# never touches your own saves, mod list, mod settings or keybinds.
 #
 # Everything lives under .playtest/ at the repo root (gitignored):
 #   config.ini   read-data = the installed game, write-data = .playtest/write
@@ -10,18 +10,22 @@
 #                mod-list.json this script writes; the game adds mod-settings.dat itself
 #
 # Your real profile under ~/Library/Application Support/factorio is never read or written:
-# --config points the game at .playtest/config.ini, whose every path is under .playtest,
-# and --mod-directory points it at .playtest/mods. The same isolation tools/smoke.sh uses,
-# except this one is kept between runs so your test saves and settings survive.
+# --config points at .playtest/config.ini (every path under .playtest), --mod-directory at
+# .playtest/mods. Same isolation as tools/smoke.sh, but kept between runs so test saves and
+# settings survive.
 #
-# In game: /jamaltron-kit gives you a Jamaltron and prints each line's row id in chat;
-# /jamaltron-say, /jamaltron-row and /jamaltron-state are in tools/playtest/.
+# In game: /jamaltron-kit gives you a Jamaltron and logs each line's row id (/jamaltron-ids for chat);
+# /jamaltron-say, -row, -state, -swap and -jump-mode are documented at the top of
+# tools/playtest/jamaltron-playtest/control.lua. His lines log to <profile>/write/factorio-current.log,
+# a --new map's creation to <profile>/create.log.
 #
 # Usage: tools/play.sh [--new] [--base-only] [--reset] [--prepare] [-- factorio args...]
 #   --new        build a fresh map in the profile and load straight into it
 #   --base-only  no Space Age (default: on, like the smoke test's second stage)
 #   --reset      delete the profile first - saves included - and start clean
 #   --prepare    set the profile up (and build the map, with --new) but do not launch
+#   -- ARGS      passed straight to factorio
+#   -h, --help   this text
 # Env:   FACTORIO_BIN=/path/to/factorio   binary override (FACTORIO also accepted)
 #        PLAYTEST_DIR=PATH                profile location override
 set -euo pipefail
@@ -61,9 +65,9 @@ READ_DATA="$(cd -- "$(dirname -- "$FACTORIO_BIN")/../data" 2>/dev/null && pwd)" 
 [ -d "$READ_DATA/base" ] || die "no base game data under $READ_DATA"
 [ -f "$MOD_SRC/info.json" ] || die "no mod at $MOD_SRC"
 
-# The profile must be a directory of its own - never your real one, never a parent of it.
-# Checked BEFORE anything is created (on the lexical path) and again after (on the real one,
-# symlinks resolved), so a bad PLAYTEST_DIR cannot even leave an empty folder behind.
+# The profile must be its own directory - never your real one or a parent of it. Checked
+# BEFORE anything is created (lexical path) and again after (symlinks resolved), so a bad
+# PLAYTEST_DIR cannot even leave an empty folder behind.
 check_dir() {
   case "$1" in
     /|"$HOME"|"$REPO_ROOT") die "refusing to use '$1' as the playtest profile" ;;

@@ -8,124 +8,121 @@
 
 ONE DICT, TWO ARTIFACTS. Every number a prototype needs -- width, height, line_length,
 direction_count, frame_count, lines_per_file, scale, shift -- is computed once, into one
-Python dict per sprite, and that dict is serialized twice: as a Lua table for the data
-stage and as a JSON entry for `tools/lint_sprites.py`. The manifest entry is the Lua table
-plus an `id`, nothing else, because the two artifacts sharing field names is what makes the
-gate real. There is no translation layer for them to drift across, and no number anywhere
-in the repo that a human typed off a render.
+Python dict per sprite, serialized twice: a Lua table for the data stage and a JSON entry
+for `tools/lint_sprites.py`. The manifest entry is the Lua table plus an `id`, nothing else;
+shared field names are what make the gate real. No translation layer to drift across, and
+no number in the repo that a human typed off a render.
 
-WHERE THE OUTPUT GOES, AND WHY IT IS NOT A DETAIL. `--out` names a MOD ROOT, and the tree
-under it is mod-shaped either way:
+WHERE THE OUTPUT GOES MATTERS. `--out` names a MOD ROOT, and the tree under it is
+mod-shaped either way:
 
     <out>/graphics/jamaltron-body.png        the sheets
     <out>/graphics/sprites.json              the manifest, BESIDE the sheets
     <out>/prototypes/sprites_generated.lua   the table the data stage requires
 
-.github/workflows/ci.yml derives `--strict` from the manifest's PATH, in one `case`, and
-the path it matches is `mod/jamaltron/graphics`. A manifest anywhere else is either linted
-in the tolerant mode (useless on art we generated: our sheets come off an exact grid, so
-every warning is a defect) or trips the job's stray-manifest tripwire. Sheets committed
-with no manifest beside them fail CI on purpose. So the default `--out render-out/pack` is
-a dry run that is lintable IN PLACE -- same relative shape, `mod_roots` pointing one
-directory up -- and `--promote` is the deliberate act that writes into the tree carrying
-the RenderHub carve-out licence.
+.github/workflows/ci.yml derives `--strict` from the manifest's PATH, in one `case`, matching
+`mod/jamaltron/graphics`. A manifest anywhere else is either linted tolerant (useless on
+generated art: our sheets come off an exact grid, so every warning is a defect) or trips the
+job's stray-manifest tripwire. Sheets committed with no manifest beside them fail CI on
+purpose. So the default `--out render-out/pack` is a dry run lintable IN PLACE (same
+relative shape, `mod_roots` pointing one directory up), and `--promote` is the deliberate
+act that writes into the tree carrying the RenderHub carve-out licence.
 
-WHAT THE PACKER DECIDES, measured rather than chosen:
+WHAT THE PACKER DECIDES, measured, not chosen:
 
   * THE FRAME BOX is the UNION of every frame's alpha bounding box AT alpha >= 1, padded
-    by `--pad`. One box for the whole sheet, because Factorio gets ONE width, ONE height
-    and ONE shift for all 64 rotations. Union, not per-frame: a box that fits frame 0 clips
-    frame 32. And alpha >= 1 because Factorio composites with the alpha in the PNG, so
-    every non-zero pixel is drawn -- C.4 measured this box at alpha >= 8 and shipped a
-    shark whose tail fin was sliced flat at the frame edge in directions 16 and 48. The
-    faint ramp below the threshold was visible in game. art.SPRITE_VISIBLE_ALPHA is that
-    threshold, it lives in ONE place, and every extent question here asks it.
+    by `--pad`. One box for the whole sheet, because Factorio gets ONE width, height and
+    shift for all 64 rotations; per-frame would fit frame 0 and clip frame 32. Alpha >= 1
+    because Factorio composites with the PNG's alpha, so every non-zero pixel is drawn --
+    C.4 measured this box at alpha >= 8 and shipped a shark whose tail fin was sliced flat
+    at the frame edge in directions 16 and 48 (the faint ramp below 8 was visible in game).
+    art.SPRITE_VISIBLE_ALPHA is that threshold, in ONE place, and every extent question
+    here asks it.
   * THE SHIFT falls out of that box. Our canvas is centred on the entity origin by
     construction (the camera looks at the world origin), so the origin sits at pixel index
-    (res-1)/2 -- see factorio_camera.origin_pixel for why that is not res/2 -- and the
-    shift is the distance from there to the cropped frame's own centre, in tiles.
-    Cross-checked against the stock torso in tests: 132x138 with the entity at pixel
-    (65.5, 106.5) is shift by_pixel(0, -19), which is what Wube declares.
+    (res-1)/2 (factorio_camera.origin_pixel says why not res/2), and the shift is the
+    distance from there to the cropped frame's centre, in tiles. Cross-checked against the
+    stock torso in tests: 132x138 with the entity at pixel (65.5, 106.5) is shift
+    by_pixel(0, -19), which is what Wube declares.
   * LINE_LENGTH IS ALWAYS EMITTED, and it always DIVIDES the frame count. Without it the
     engine's default depends on which prototype field is loading and the linter can only
-    check a frame budget. And a line_length that does not divide the count leaves blank
-    cells in the last row, which `--strict` reports as `unused-frames` -- correctly, since
-    a sheet we generated should not carry frames nothing draws. Ask for 8 (stock's own
-    torso layout) on a count 8 does not divide and you get the largest divisor that fits,
-    with a line on stdout saying so.
-  * CLIPPED IS FATAL, TWICE, and the second one is the gate C.4 did not have. A frame
-    whose visible alpha touches the RENDER CANVAS edge is cut before the packer ever sees
-    it: raise camera.canvas_tiles and re-render, no box can fix that. Then, once the sheets
-    are laid out, EVERY frame is re-measured inside its own cell and must keep the margin
-    `--pad` promised; that check is on the finished pixels, so it does not care whether the
-    box math, the crop, the pad or a threshold somewhere was the thing that went wrong --
-    it is the hand measurement off a shipped PNG, run on every pack. `--allow-clipped`
-    downgrades both to notes for deliberate experiments and says so loudly.
-  * STALE FRAMES ARE FATAL. Every frame directory carries art.py's own config.json; the
-    pass hash in it must match the config being packed, or you are shipping pixels from
-    knobs you have since moved. `--any-config` overrides, for packing somebody else's
-    frames on purpose.
+    check a frame budget. A line_length that does not divide the count leaves blank cells
+    in the last row, which `--strict` reports as `unused-frames` (generated art should not
+    ship frames nothing draws). Ask for 8 (stock's torso layout) on a count 8 does not
+    divide and you get the largest divisor that fits, with a line on stdout saying so.
+  * CLIPPED IS FATAL, TWICE, and the second is the gate C.4 did not have. A frame whose
+    visible alpha touches the RENDER CANVAS edge is cut before the packer sees it: raise
+    camera.canvas_tiles and re-render, no box can fix that. Then, once the sheets are laid
+    out, EVERY frame is re-measured inside its own cell and must keep the margin `--pad`
+    promised. That check runs on the finished pixels, so it catches the box math, the crop,
+    the pad or a threshold alike -- the hand measurement off a shipped PNG, on every pack.
+    `--allow-clipped` downgrades both to notes for deliberate experiments and says so
+    loudly.
+  * STALE FRAMES ARE FATAL. Every frame directory carries art.py's config.json; its pass
+    hash must match the config being packed, or you are shipping pixels from knobs you have
+    since moved. `--any-config` overrides, for packing somebody else's frames on purpose.
 
-SHADOW SHEETS GET SURGERY, BEFORE ANYTHING IS MEASURED, and both halves of that are
-deliberate: RGB forced to black and alpha below RENDER_NOISE_FLOOR zeroed. Factorio draws
-a `draw_as_shadow` sprite as a darkening mask where only alpha matters (stock's
-spidertron-body-shadow.png is a palette PNG of pure black plus alpha), and a Cycles shadow
-catcher scatters alpha 1..7 sampling noise across the whole plane -- MEASURED, 9537 noise
-pixels on a 704px frame. Left in, that noise is a
-faint grey rectangle over every tile the shark stands near. Doing it FIRST is what lets
-the frame box be measured at the visible threshold on this pass too: after the surgery
-there is no sub-floor alpha left to disagree about, so the pixels that get measured are
-the pixels that ship. The noise floor is a fact about the RENDERER; the visible threshold
-is a fact about the ENGINE, and the packer never measures with one and writes the other.
+SHADOW SHEETS GET SURGERY BEFORE ANYTHING IS MEASURED: RGB forced to black, alpha below
+RENDER_NOISE_FLOOR zeroed. Factorio draws a `draw_as_shadow` sprite as a darkening mask
+where only alpha matters (stock's spidertron-body-shadow.png is a palette PNG of pure black
+plus alpha), and a Cycles shadow catcher scatters alpha 1..7 sampling noise across the
+whole plane -- MEASURED, 9537 noise pixels on a 704px frame, which left in is a faint grey
+rectangle over every tile near the shark. Doing it FIRST lets this pass measure its frame
+box at the visible threshold too: no sub-floor alpha is left to disagree about, so the
+measured pixels are the shipped pixels. The noise floor is a fact about the RENDERER, the
+visible threshold a fact about the ENGINE, and the packer never measures with one and
+writes the other.
 
-BASE_ANIMATION: NOT WORTH RENDERING, and the number that settles it is 512/512. Stock
-needs a non-rotating under plate because its legs bolt to the corners of a machine and its
-rotating torso does not reach them; the plate is what the mounts land on. Jamal is in a
-HARNESS -- C.13 moved the mounts inboard to 0.45 of stock, +-0.352 tiles transverse.
-MEASURED on the shipped 64-frame body render at that ratio: all eight mounts land on
-opaque shark at all 64 rotations, 512 of 512 samples, no rotation below 8/8. At the
-unshrunk stock ring the same render covers 171 of 512, which is what a plate would have
-had to cover and is why stock ships one. There is nothing left for a plate to do, so the
-packer emits no base_animation and instead names it in `clear`, because entity.lua
-deepcopies the stock spidertron and an uncleared slot keeps drawing WUBE'S PLATE under our
-shark. The one thing that would reopen this is the in-game walk cycle showing a seam where
-the leg tops meet him; that is F.2's eyeball, not a number.
+THE TINT MASK GETS THE SAME FLOOR, alpha only (its grey RGB is what the tint multiplies, so
+it stays). MEASURED on the beached flop (897cda204427): 36 stray pixels at alpha 1..5 in 18
+of 72 cells, far off the harness band, stretched the mask's union box from 56 to 251 px
+wide -- 7.8 MiB of VRAM holding nothing. The cost is the band's own 1 px antialiasing ramp
+(alpha 1..7, under 3% tint), which the floor also takes. Same order as the shadow: zeroed
+first, then measured at the visible threshold.
 
-THE RUNTIME-TINT MASK is a real render pass (`mask`), not a packer trick: same camera,
-same canvas, one flat grey shader whose alpha is a harness band in the model's own local
-coordinates. See the [mask] block in jamaltron.toml for why the tinted region is the
-harness and not the whole fish. Here it is just another target whose frames crop to their
-own box -- which comes out smaller than the body's, exactly as stock's 130x100 mask does
-against its 132x138 body.
+BASE_ANIMATION: NOT WORTH RENDERING, settled by 512/512. Stock needs a non-rotating under
+plate because its legs bolt to the corners of a machine its rotating torso does not reach;
+the mounts land on the plate. Jamal is in a HARNESS -- C.13 moved the mounts inboard to
+0.45 of stock, +-0.352 tiles transverse. MEASURED on the shipped 64-frame body render at that
+ratio: all eight mounts land on opaque shark at all 64 rotations, 512 of 512 samples, no
+rotation below 8/8. At the unshrunk stock ring the same render covers 171 of 512 (what a
+plate would have to cover, and why stock ships one). So the packer emits no base_animation
+and names it in `clear` instead: entity.lua deepcopies the stock spidertron, and an
+uncleared slot keeps drawing WUBE'S PLATE under our shark. What would reopen this is the
+in-game walk cycle showing a seam where the leg tops meet him -- F.2's eyeball, not a number.
 
-THE WATER REFLECTION is built HERE, from the body frames, because there is nothing to
-render. Stock's spidertron-body-water-reflection.png is one 448x448 frame, variation_count
-1, shift 0, every pixel pure red (255,0,0) with the shape entirely in the alpha: a soft
-blurred ellipse 194x133 px, 1.7x the torso sprite's own footprint, centred on the entity
-origin. The 448 canvas is Wube not cropping a 5.6 KiB palette PNG, not a number to match.
-Ours is the same object derived honestly -- the MEAN alpha of all 64 body rotations, which
-is rotationally symmetric by construction, gained, blurred, recentred on the origin and
-forced to red. A REDUCE target: 64 frames in, one variation out.
+THE RUNTIME-TINT MASK is a real render pass (`mask`), not a packer trick: same camera and
+canvas, one flat grey shader whose alpha is a harness band in the model's local
+coordinates (the [mask] block in jamaltron.toml says why the harness and not the whole
+fish). Here it is another target cropped to its own box, smaller than the body's, as
+stock's 130x100 mask is against its 132x138 body.
 
-PNG CRUSHING: WORTH IT, WITH THE TOOL THAT IS ACTUALLY HERE. pngcrush and optipng are not
-installed on this machine; oxipng is (`brew install oxipng`), and it is the faster tool of
-the three anyway. `--crush` runs it, then re-opens every sheet and compares RGBA bytes
-against the original before keeping the result -- a "lossless" optimizer is a claim, and
-this is a sprite pipeline with no in-game validation to catch a broken claim. Metadata is
-NOT stripped: the config-hash text chunk this tool writes is the provenance, and
-`--strip safe` would quietly take it. Measured savings are printed per sheet. It is off by
-default because it is seconds per sheet and the iteration loop should not pay for it.
+THE WATER REFLECTION is built HERE from the body frames; there is nothing to render. Stock's
+spidertron-body-water-reflection.png is one 448x448 frame, variation_count 1, shift 0, every
+pixel pure red (255,0,0) with the shape entirely in the alpha: a soft blurred ellipse 194x133
+px, 1.7x the torso sprite's footprint, centred on the entity origin. The 448 canvas is Wube
+not cropping a 5.6 KiB palette PNG, not a number to match. Ours is the same object derived
+honestly: the MEAN alpha of all 64 body rotations (rotationally symmetric by construction),
+gained, blurred, recentred on the origin and forced to red. A REDUCE target: 64 frames in,
+one variation out.
 
-Runs on the uv side (Pillow). Imports art.py for the alpha thresholds and the
-cache-directory naming on purpose: if this module computed its own pass directory it would
-eventually disagree with the renderer's, and pack the wrong frames without a word -- and a
-second copy of "what counts as part of the sprite" is the bug this file just fixed.
+PNG CRUSHING: WORTH IT, WITH OXIPNG. pngcrush and optipng are not installed here; oxipng is
+(`brew install oxipng`) and is the fastest of the three anyway. `--crush` runs it, then
+re-opens every sheet and compares RGBA bytes against the original before keeping the result
+-- "lossless" is the optimizer's claim, and this sprite pipeline has no in-game validation to
+catch a broken one. Metadata is NOT stripped: the config-hash text chunk is the provenance,
+and `--strip safe` would quietly take it. Measured savings print per sheet. Off by default:
+seconds per sheet the iteration loop should not pay.
+
+Runs on the uv side (Pillow). Imports art.py for the alpha thresholds and the cache-directory
+naming on purpose: a second pass-directory computation would eventually disagree with the
+renderer's and pack the wrong frames silently, and a second copy of "what counts as part of
+the sprite" is the bug that clipped C.4's tail fin.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
-# directory on sys.path[0], never tools/, and `package = false` means there is no installed
-# `render` to fall back on. Cannot be factored into a helper: importing the helper is the
-# thing that needs the path fixed.
+# directory on sys.path[0], never tools/, and `package = false` means no installed `render`
+# to fall back on. Cannot be a helper: importing the helper is what needs the path fixed.
 import pathlib, sys  # noqa: E401
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -138,6 +135,7 @@ from dataclasses import dataclass, field, replace  # noqa: E402
 
 from render import artconfig as ac  # noqa: E402
 from render import factorio_camera as fc  # noqa: E402
+from render import pose  # noqa: E402
 from render import sheets  # noqa: E402
 from render.art import (REPO, RENDER_NOISE_FLOOR, SPRITE_VISIBLE_ALPHA,  # noqa: E402
                         pass_dir, sequence_samples)
@@ -157,34 +155,34 @@ MANIFEST_VERSION = 1
 #: Fallback when <out>/info.json does not exist (the dry-run tree has none).
 MOD_NAME = "jamaltron"
 
-#: Stock's own torso layout: 64 frames of 132x138 in an 8x8 grid. Ours matches so a
-#: contact sheet and a shipped sheet can be eyeballed against each other.
+#: Stock's torso layout: 64 frames of 132x138 in an 8x8 grid. Ours matches, so a contact
+#: sheet and a shipped sheet can be eyeballed side by side.
 DEFAULT_LINE_LENGTH = 8
 
-#: Pixels of transparent margin around the union alpha box, and it is NOT there to keep
-#: the sprite whole -- the box is measured at SPRITE_VISIBLE_ALPHA, so it already contains
-#: every pixel the engine draws, and a pad that was load-bearing would mean the box was
-#: wrong. MEASURED against the art this mod stands next to: Wube crops FLUSH. The stock
-#: spidertron torso's own 132x138 cells hold alpha>0 pixels at margin 0 on all four edges,
-#: its mask and shadow the same, so the engine's atlas evidently handles a sprite that
-#: touches its cell edge and a margin buys nothing at draw time.
+#: Pixels of transparent margin around the union alpha box. NOT there to keep the sprite
+#: whole: the box is measured at SPRITE_VISIBLE_ALPHA, so it already holds every pixel the
+#: engine draws, and a pad the sprite depended on would mean the box was wrong. MEASURED on
+#: the art this mod stands next to: Wube crops FLUSH. The stock torso's 132x138 cells hold
+#: alpha>0 pixels at margin 0 on all four edges, its mask and shadow the same, so the
+#: engine's atlas evidently handles a sprite touching its cell edge and a margin buys
+#: nothing at draw time.
 #:
 #: What it buys is a FALSIFIABLE GATE. cell_margins() re-measures every finished cell and
-#: tight_frames() requires the margin this promised; at pad 1 that check fails while the
-#: sprite is still INTACT -- one pixel from the edge, nothing lost yet -- instead of after
-#: the pixels are already gone. A gate with no slack is a post-mortem. The bill for it on
-#: the shipped body sheet is 2 px per axis: 2880x2296 without, 2896x2312 with, +1.3% of the
-#: pixels. It does not grow from there -- pixels go as the SQUARE of the box, so a margin
-#: past one pixel is paying real VRAM for detection slack a one-pixel margin already has.
+#: tight_frames() requires the promised margin; at pad 1 that check fails while the sprite
+#: is still INTACT (one pixel from the edge, nothing lost yet) instead of after the pixels
+#: are gone -- a gate with no slack is a post-mortem. The bill on the shipped body sheet is
+#: 2 px per axis: 2880x2296 without, 2896x2312 with, +1.3% of the pixels. Stop there:
+#: pixels go as the SQUARE of the box, so more margin pays real VRAM for detection slack
+#: one pixel already has.
 DEFAULT_PAD = 1
 
 #: How a graphics_set slot wraps its sprite(s). Read off spidertron-animations.lua's
 #: spidertron_torso_graphics_set: `animation` and `base_animation` are layer STACKS,
 #: `shadow_animation` is a BARE sprite, and `water_reflection` is a
-#: WaterReflectionDefinition whose `pictures` stock fills with ONE sprite table, not a list
-#: -- `pictures` is SpriteVariations, and the single-sheet form is the one that may carry
-#: `variation_count`. Wrapping it in a list instead would declare an array of Sprites, and
-#: a Sprite has no variation_count for the engine to read.
+#: WaterReflectionDefinition whose `pictures` stock fills with ONE sprite table, not a list:
+#: `pictures` is SpriteVariations, and only the single-sheet form may carry
+#: `variation_count` (a list declares an array of Sprites, and a Sprite has no
+#: variation_count for the engine to read).
 SLOT_WRAP = {
     "animation": "layers",
     "base_animation": "layers",
@@ -196,19 +194,19 @@ SLOT_WRAP = {
 #: Wraps that name ONE sprite under a key rather than a list of them.
 SINGLE_WRAPS = ("pictures",)
 
-#: Every graphics_set slot the stock spidertron fills with STOCK ART. entity.lua
-#: deepcopies that prototype, so any slot we do not overwrite keeps drawing a spidertron.
-#: The ones no target covers are emitted as `clear` -- see the module docstring.
+#: Every graphics_set slot the stock spidertron fills with STOCK ART. entity.lua deepcopies
+#: that prototype, so any slot we do not overwrite keeps drawing a spidertron; slots no
+#: target covers are emitted as `clear` (see the module docstring).
 STOCK_ART_SLOTS = ("base_animation", "shadow_base_animation", "animation",
                    "shadow_animation", "water_reflection")
 
-#: Which derived px-per-tile a pass renders at. The mask shares the body canvas exactly,
-#: which is what makes its frames croppable against the same origin pixel.
+#: Which derived px-per-tile a pass renders at. The mask shares the body canvas exactly, so
+#: its frames crop against the same origin pixel.
 PASS_PPT = {"body": "body_px_per_tile", "shadow": "shadow_px_per_tile",
             "mask": "body_px_per_tile"}
 
-#: The art.py flags that render each pass, as (preview, full), so "no frames" can say
-#: exactly what to type instead of naming a flag that renders the wrong pass.
+#: The art.py flags that render each pass, as (preview, full), so "no frames" names what to
+#: type, not a flag that renders the wrong pass.
 PASS_FLAG = {"body": ("--preview", "--full"),
              "shadow": ("--shadow", "--shadow --full"),
              "mask": ("--mask", "--mask --full")}
@@ -219,8 +217,8 @@ class Target:
     """One sheet to build: where its frames come from, where its numbers end up.
 
     This table is the contract C.4 fills. Adding a pass means adding a row, not editing
-    the packer -- which is why `pass_name` is allowed to name a render pass that does not
-    exist yet: the row documents the slot and the run prints what is missing.
+    the packer, so `pass_name` may name a render pass that does not exist yet: the row
+    documents the slot and the run prints what is missing.
     """
 
     id: str                       # manifest id, Lua key, and the name in every finding
@@ -229,29 +227,30 @@ class Target:
     pass_name: str                # render pass supplying the frames
     stem: str                     # sheet filename stem under graphics/
     # How Factorio counts the cells: "rotations" -> direction_count, "animation" ->
-    # frame_count, "variations" -> variation_count. Same pixels, three declarations, and
-    # the engine multiplies all three.
+    # frame_count, "variations" -> variation_count. The engine multiplies all three.
     kind: str = "rotations"
     draw_as_shadow: bool = False
     apply_runtime_tint: bool = False
     optional: bool = False        # a missing frame directory is a note, not an error
-    # Name in REDUCERS. A reduce target consumes a whole pass and emits FEWER frames than
-    # it read -- the water reflection is 64 rotations in and one blob out.
+    # Name in REDUCERS. A reduce target consumes a whole pass and emits FEWER frames than it
+    # read (the water reflection: 64 rotations in, one blob out).
     reduce: str | None = None
+    # Zero alpha below the render noise floor BEFORE measuring, RGB kept. The tint mask's
+    # surgery (see the module docstring); a draw_as_shadow target gets it inside blacken.
+    denoise: bool = False
 
 
 #: THE SHIPPED TARGETS. Four sheets, three passes: the reflection rides the body's frames.
 #:
 #: `body_mask` is layer 1 of `animation`, over the body, exactly where stock puts
-#: spidertron-body-mask.png. Without it the entity colour picker does nothing at all,
-#: which would also make D.4's careful preservation of `color` across the beached swap
-#: dead code. It is no longer optional: a promote that quietly shipped no tint layer is
-#: the failure this row exists to prevent.
+#: spidertron-body-mask.png. Without it the entity colour picker does nothing, and D.4's
+#: preservation of `color` across the beached swap is dead code. Not optional: a promote
+#: that quietly shipped no tint layer is the failure this row prevents.
 TARGETS = (
     Target(id="body", slot="animation", order=0, pass_name="body",
            stem="jamaltron-body"),
     Target(id="body_mask", slot="animation", order=1, pass_name="mask",
-           stem="jamaltron-body-mask", apply_runtime_tint=True),
+           stem="jamaltron-body-mask", apply_runtime_tint=True, denoise=True),
     Target(id="shadow", slot="shadow_animation", order=0, pass_name="shadow",
            stem="jamaltron-body-shadow", draw_as_shadow=True),
     Target(id="reflection", slot="water_reflection", order=0, pass_name="body",
@@ -261,26 +260,53 @@ TARGETS = (
 
 
 #: A SEQUENCE sheet (C.21): the beached flop, one direction, N animation frames gathered from
-#: N per-frame cache directories. Body, tint mask and shadow, exactly the standing layers,
-#: as `animation` frames. `stem` is completed with the sequence's name (jamaltron-beached-
-#: body) so a sequence can never overwrite the standing sheets.
+#: N per-frame cache directories. Body, tint mask and shadow (the standing layers) as
+#: `animation` frames. `stem` is completed with the sequence's name (jamaltron-beached-body)
+#: so a sequence can never overwrite the standing sheets.
 #:
-#: NO REFLECTION. Stock's reflection is a rotationally symmetric blob under a torso that
-#: turns; a beached shark lies one way and refuses water, and the reducer's mean-of-rotations
-#: means nothing over animation frames. The slot goes in `clear`, which says so out loud.
+#: A sequence ships a SUBSET when its [sequence] `passes` says so (sequence.PASSES): the
+#: beached flop ships body + shadow and no mask, his harness having broken off with his legs
+#: (chotchki 2026-09-26). drop_unshipped() removes a sheet an earlier pack left behind.
+#:
+#: NO REFLECTION. Stock's reflection is a rotationally symmetric blob under a turning torso;
+#: a beached shark lies one way and refuses water, and a mean-of-rotations means nothing
+#: over animation frames. The slot goes in `clear`, which says so explicitly.
 SEQUENCE_TARGETS = (
     Target(id="body", slot="animation", order=0, pass_name="body", stem="body",
            kind="animation"),
     Target(id="body_mask", slot="animation", order=1, pass_name="mask", stem="body-mask",
-           kind="animation", apply_runtime_tint=True),
+           kind="animation", apply_runtime_tint=True, denoise=True),
     Target(id="shadow", slot="shadow_animation", order=0, pass_name="shadow",
            stem="body-shadow", kind="animation", draw_as_shadow=True),
 )
 
 
-def sequence_targets(name: str) -> tuple:
-    """SEQUENCE_TARGETS with their stems completed for sequence `name`."""
-    return tuple(replace(t, stem=f"{MOD_NAME}-{name}-{t.stem}") for t in SEQUENCE_TARGETS)
+def sequence_targets(name: str, passes=None) -> tuple:
+    """SEQUENCE_TARGETS with their stems completed for sequence `name`, only those whose pass
+    is in `passes` when given (a Sequence's .passes)."""
+    return tuple(replace(t, stem=f"{MOD_NAME}-{name}-{t.stem}") for t in SEQUENCE_TARGETS
+                 if passes is None or t.pass_name in passes)
+
+
+def drop_unshipped(seq, out_root: pathlib.Path) -> list:
+    """Delete the sheets of every sequence target `seq` does NOT ship from out_root's
+    graphics/, and return what went. Otherwise a dropped pass leaves its old sheet behind,
+    unreferenced by manifest and Lua (so no lint sees it), shipping in the zip as dead
+    weight. Exact stems only (`<stem>.png`, `<stem>-<n>.png`): the body's stem is a PREFIX
+    of the mask's, so a glob would take the wrong sheet."""
+    shipped = {t.id for t in sequence_targets(seq.name, seq.passes)}
+    graphics = out_root / GRAPHICS_DIR
+    gone = []
+    for target in sequence_targets(seq.name):
+        if target.id in shipped or not graphics.is_dir():
+            continue
+        for path in sorted(graphics.iterdir()):
+            rest = path.name[len(target.stem):] if path.name.startswith(target.stem) else None
+            if rest == ".png" or (rest and rest.startswith("-") and rest.endswith(".png")
+                                  and rest[1:-4].isdigit()):
+                path.unlink()
+                gone.append(path)
+    return gone
 
 
 def sequence_outputs(name: str) -> tuple:
@@ -300,8 +326,8 @@ class PackError(RuntimeError):
 def frames_dir(cfg, target: Target, *, preview: bool = False, explicit=None):
     """Where `target`'s frames live, or None when its render pass does not exist yet.
 
-    Derived from art.py's own pass_dir(), never recomputed here: a second copy of the
-    cache-naming rule is a second chance to read a directory the renderer never wrote.
+    Derived from art.py's pass_dir(), never recomputed: a second copy of the cache-naming
+    rule is a second chance to read a directory the renderer never wrote.
     """
     if explicit is not None:
         return pathlib.Path(explicit)
@@ -327,11 +353,11 @@ def discover_frames(directory: pathlib.Path) -> list[int]:
 def check_frame_set(frames: list[int], kind: str, total: int, origin: str) -> None:
     """Frames must be a full ring (or a full clip) -- or the sheet lies about its own frames.
 
-    art.py's --preview renders indices 0, 8, 16 ... 56 of 64, and packing those as a
-    64-direction sheet is fine at direction_count 8: frame i covers orientation i/8. A
-    directory holding 48 of 64 frames because a render died halfway is NOT fine, and it
-    looks identical on disk. So the set is checked rather than counted. An `animation`
-    target has no ring: its frames are a clip and must run 0..N-1 with no gap.
+    art.py's --preview renders indices 0, 8, 16 ... 56 of 64, which packs fine at
+    direction_count 8 (frame i covers orientation i/8). A directory holding 48 of 64 frames
+    because a render died halfway is NOT fine and looks identical on disk, so the set is
+    checked, not counted. An `animation` target has no ring: its frames are a clip and must
+    run 0..N-1 with no gap.
     """
     if not frames:
         raise PackError(f"{origin}: no frame_NNN.png files")
@@ -357,9 +383,9 @@ def check_frame_set(frames: list[int], kind: str, total: int, origin: str) -> No
 def check_pass_hash(cfg, target: Target, directory: pathlib.Path, *, any_config: bool):
     """Refuse frames rendered with knobs that have since moved. Returns the sidecar blob.
 
-    art.py writes config.json into every pass directory, holding the resolved knobs AND
-    the per-pass hash. Comparing it here is the difference between "these pixels came
-    from the config I am about to stamp on them" and a hope.
+    art.py writes config.json into every pass directory, holding the resolved knobs AND the
+    per-pass hash. Comparing it here turns "these pixels came from the config I am about to
+    stamp on them" from a hope into a check.
     """
     sidecar = directory / "config.json"
     if not sidecar.is_file():
@@ -371,9 +397,9 @@ def check_pass_hash(cfg, target: Target, directory: pathlib.Path, *, any_config:
         want = ac.pass_hash(cfg, target.pass_name)
         got = blob.get("pass_hashes", {}).get(target.pass_name)
         if got != want and not any_config:
-            # The pass hash covers `model.blend` as a CONTENT digest, so a mismatch can
-            # also mean "the model is not on this machine" rather than "a knob moved".
-            # Say which: the two have completely different fixes.
+            # The pass hash covers `model.blend` as a CONTENT digest, so a mismatch can also
+            # mean "the model is not on this machine", not "a knob moved". Say which: the
+            # fixes differ.
             absent = ""
             if ac.hashable(cfg)["model.blend"] == ac.BLEND_ABSENT:
                 absent = (f"\n  The model is not where this config points "
@@ -395,15 +421,14 @@ def union_box(images, floor: int = SPRITE_VISIBLE_ALPHA):
     """Union of every frame's alpha bounding box. One box for the whole sheet.
 
     THE DEFAULT IS THE VISIBLE THRESHOLD, and every caller here takes it: a box measured
-    at anything higher is a box that cuts pixels the engine draws. Pass a different floor
-    only for a pass whose sub-floor alpha has already been ZEROED in the pixels (the shadow
-    surgery) or to demonstrate the difference in a test -- never to make a subject fit.
+    higher cuts pixels the engine draws. Pass a different floor only for a pass whose
+    sub-floor alpha is already ZEROED in the pixels (the shadow and mask surgery) or to
+    demonstrate the difference in a test -- never to make a subject fit.
 
-    Returns (box, per_frame) so a caller can report WHICH frame is widest -- when the box
-    is bigger than expected the answer is always one rotation, and naming it saves opening
-    64 files. `per_frame` is measured at the SAME threshold as the box, and the refusals
-    below consume it, so no gate can ever be reading a different mask from the box it is
-    guarding.
+    Returns (box, per_frame) so a caller can name WHICH frame is widest (an oversized box is
+    always one rotation, and naming it saves opening 64 files). `per_frame` is measured at
+    the SAME threshold as the box and the refusals below consume it, so no gate reads a
+    different mask from the box it guards.
     """
     per_frame, box = [], None
     for index, img in images:
@@ -420,9 +445,9 @@ def union_box(images, floor: int = SPRITE_VISIBLE_ALPHA):
 def clipped_frames(per_frame, canvas):
     """Frames whose alpha touches the RENDER canvas edge. See the module docstring: fatal.
 
-    Canvas, not frame box: this is the damage no box can undo, because the pixels were
-    never rendered. Whether the BOX then held everything is a separate question, asked
-    after the fact and on the finished cells, by cell_margins() and tight_frames().
+    Canvas, not frame box: damage no box can undo, because the pixels were never rendered.
+    Whether the BOX held everything is asked afterwards, on the finished cells, by
+    cell_margins() and tight_frames().
     """
     width, height = canvas
     return [i for i, b in per_frame
@@ -443,12 +468,11 @@ EDGES = ("L", "T", "R", "B")
 def cell_margins(sheet_images, layout, *, floor: int = SPRITE_VISIBLE_ALPHA):
     """Per frame, the transparent margin inside its own cell of the finished sheet(s).
 
-    Measured on the LAID-OUT pixels -- the same buffers that are about to be saved -- and
-    not on the frames or the box arithmetic that produced them, which is the entire point:
-    box math, `--pad`, the crop, the cell placement and any threshold anybody picked along
-    the way all land in these pixels, and a margin measured here cannot be fooled by a
-    mistake upstream of it. It is the measurement you would make by hand on the shipped
-    PNG when something looks sliced, done on every pack instead.
+    Measured on the LAID-OUT pixels (the buffers about to be saved), not on the frames or
+    the box arithmetic that produced them: box math, `--pad`, the crop, the cell placement
+    and every threshold picked along the way all land in these pixels, so no upstream
+    mistake can fool it. The measurement you would make by hand on the shipped PNG when
+    something looks sliced, done on every pack.
 
     Returns (worst, per_frame): `worst` is edge -> (px, frame index) over every frame, and
     `per_frame` is [(index, (left, top, right, bottom) or None), ...] with None for an
@@ -490,9 +514,9 @@ def margin_line(worst: dict, layout, floor: int) -> str:
 def tight_frames(per_frame, want: int):
     """Frames whose visible pixels sit closer to their cell edge than `want`.
 
-    At `want` 0 this is vacuous by construction -- the cells were cropped out of the box,
-    so nothing can lie outside one -- and that is the honest reason DEFAULT_PAD is 1: the
-    pad is the slack that makes this check able to fail BEFORE a pixel is lost.
+    At `want` 0 this is vacuous by construction (the cells were cropped out of the box, so
+    nothing can lie outside one), which is why DEFAULT_PAD is 1: the pad is the slack that
+    lets this check fail BEFORE a pixel is lost.
     """
     return [(index, margins) for index, margins in per_frame
             if margins is not None and min(margins) < want]
@@ -501,10 +525,10 @@ def tight_frames(per_frame, want: int):
 def sheet_shift(box, canvas, px_per_tile: float):
     """Frame size and Factorio `shift` for a crop out of an origin-centred canvas.
 
-    The canvas is centred on the entity origin, so the origin is at pixel index
-    (res-1)/2. A sprite is drawn with its own CENTRE `shift` tiles from the entity, so
-    the shift is centre-minus-origin measured inside the cropped frame, divided by the
-    render's px-per-tile. `util.by_pixel(x, y)` is this number times 32.
+    The canvas is centred on the entity origin, so the origin is at pixel index (res-1)/2.
+    A sprite's CENTRE is drawn `shift` tiles from the entity, so the shift is
+    centre-minus-origin inside the cropped frame, divided by the render's px-per-tile.
+    `util.by_pixel(x, y)` is this number times 32.
 
     Returns (width, height, (shift_x_tiles, shift_y_tiles)).
     """
@@ -521,10 +545,10 @@ def sheet_shift(box, canvas, px_per_tile: float):
 def choose_line_length(frame_count: int, requested: int, columns_that_fit: int):
     """Largest divisor of `frame_count` that is <= the request and fits the sheet.
 
-    A line_length that does not divide the count leaves blank cells in the last row, and
-    `--strict` -- the mode CI runs our own manifests in -- reports those as unused-frames.
-    Correctly: art we generated should not ship frames nothing draws. Returns
-    (line_length, note) where note is "" when the request survived untouched.
+    A line_length that does not divide the count leaves blank cells in the last row, which
+    `--strict` (CI's mode for our manifests) reports as unused-frames, correctly: generated
+    art should not ship frames nothing draws. Returns (line_length, note), note "" when
+    the request survived untouched.
     """
     if frame_count < 1:
         raise PackError(f"frame_count must be >= 1, got {frame_count}")
@@ -546,27 +570,28 @@ def choose_line_length(frame_count: int, requested: int, columns_that_fit: int):
 
 # ------------------------------------------------------------------- the sprite dict
 
-#: Field order for the one dict. Factorio ignores order; a diff does not, and these two
+#: Field order for the one dict. Factorio ignores order; a diff does not, and the two
 #: artifacts are read side by side when a number looks wrong.
 FIELD_ORDER = ("filename", "filenames", "width", "height", "line_length",
-               "direction_count", "frame_count", "frame_sequence", "variation_count",
+               "direction_count", "frame_count", "frame_sequence", "animation_speed",
+               "variation_count",
                "lines_per_file", "scale", "shift", "draw_as_shadow", "apply_runtime_tint")
 
-#: kind -> the ONE count field Factorio should read, and what the other two default to.
-#: Emitting only the one that applies is deliberate: `direction_count = 1` on a
-#: SpriteVariations is a field that struct does not have, and stock never writes it.
+#: kind -> the ONE count field Factorio should read. Only that one is emitted:
+#: `direction_count = 1` on a SpriteVariations is a field that struct does not have, and
+#: stock never writes it.
 COUNT_FIELD = {"rotations": "direction_count", "animation": "frame_count",
                "variations": "variation_count"}
 
 
 def sprite_fields(target: Target, filenames, layout, shift, scale: float,
-                  frame_sequence=None) -> dict:
+                  frame_sequence=None, animation_speed=None) -> dict:
     """THE dict. The Lua table and the manifest entry are both this, verbatim.
 
-    Built off SheetLayout.prototype_fields() rather than re-deriving the geometry, with
-    one remap: the layout counts FRAMES and only the target knows whether those frames
-    are directions (a rotating body) or animation frames (C.5's flop loop). Factorio
-    spells those as different keys and multiplies them together.
+    Built off SheetLayout.prototype_fields(), not re-derived, with one remap: the layout
+    counts FRAMES and only the target knows whether they are directions (a rotating body)
+    or animation frames (C.5's flop loop). Factorio spells those as different keys and
+    multiplies them.
     """
     proto = layout.prototype_fields()
     count = proto.pop("frame_count")
@@ -582,16 +607,22 @@ def sprite_fields(target: Target, filenames, layout, shift, scale: float,
         raise PackError(f"{target.id}: unknown kind {target.kind!r}, expected one of "
                         f"{', '.join(sorted(COUNT_FIELD))}")
     fields[COUNT_FIELD[target.kind]] = count
-    # A rotated sheet still says frame_count = 1 out loud, because that is the pair a
-    # reader checks; the other two kinds leave the fields their struct does not own alone.
+    # A rotated sheet still says frame_count = 1 explicitly (the pair a reader checks); the
+    # other two kinds leave alone the fields their struct does not own.
     if target.kind == "rotations":
         fields["frame_count"] = 1
     if frame_sequence is not None:
         # C.21's order: 1-based cells, repeats and holds included. Only an animation plays in
-        # an order; a rotation or a variation is picked, never played.
+        # order; a rotation or variation is picked, never played.
         if target.kind != "animation":
             raise PackError(f"{target.id}: frame_sequence on a {target.kind} sheet")
         fields["frame_sequence"] = list(frame_sequence)
+    if animation_speed is not None:
+        # IN THE SHEET, not a comment for the consumer to retype: without it the engine plays
+        # one cell a tick, and the 24 fps flop ran 2.5x fast (MEASURED, 117-tick cycle).
+        if target.kind != "animation":
+            raise PackError(f"{target.id}: animation_speed on a {target.kind} sheet")
+        fields["animation_speed"] = animation_speed
     if "lines_per_file" in proto:
         fields["lines_per_file"] = proto["lines_per_file"]
     fields["scale"] = scale
@@ -610,18 +641,17 @@ def reflection_blob(images, cfg, px_per_tile: float, floor: int):
     """64 body rotations -> one soft red blob. Stock's water reflection, derived.
 
     THE MEAN, not the union. A union is the disc swept by the furthest point from the turn
-    axis -- a 5.6-tile circle for a 4.07-tile shark, which is a reflection of something he
-    never is. The mean is dense where he sits at every heading and faint out at the nose
-    and tail he only sometimes reaches, which after the blur is exactly the soft ellipse
-    Wube ships: theirs is 194x133 px against a 114x88 px torso sprite, 1.7x its footprint.
+    axis -- a 5.6-tile circle for a 4.07-tile shark, a reflection of something he never is.
+    The mean is dense where he sits at every heading and faint at the nose and tail he only
+    sometimes reaches, which after the blur is the soft ellipse Wube ships (theirs is
+    194x133 px against a 114x88 px torso sprite, 1.7x its footprint).
 
-    The canvas GROWS by the blur's own reach first. Blurring in place would push alpha into
-    the canvas edge, and the packer's clipped-frames check would then correctly refuse a
-    sheet that is not actually cut -- fixing that by loosening the check would blind it to
-    the real thing. The margin matters more now that the box is measured at the visible
-    threshold: a Gaussian's skirt runs out to alpha 1, and ALL of it is inside the box. On
-    the shipped render that skirt is what takes the blob from 330x190 to 378x293 px, 193 KiB
-    on one frame -- the honest price of not slicing a soft edge into a hard rectangle.
+    The canvas GROWS by the blur's reach first. Blurring in place pushes alpha into the
+    canvas edge, and the clipped-frames check then rightly refuses a sheet that is not cut;
+    loosening the check would blind it to the real thing. With the box measured at the
+    visible threshold, a Gaussian's skirt runs out to alpha 1 and ALL of it is inside the
+    box: on the shipped render the skirt takes the blob from 330x190 to 378x293 px, 193 KiB
+    on one frame -- the price of not slicing a soft edge into a hard rectangle.
     """
     from PIL import Image, ImageFilter
 
@@ -655,15 +685,15 @@ def reflection_blob(images, cfg, px_per_tile: float, floor: int):
 def recentre_on_origin(alpha, floor: int):
     """Slide a blob so its alpha centroid lands on the canvas's own origin pixel.
 
-    `floor` is the visible threshold, i.e. every non-zero pixel is mass. The blob is the
-    MEAN of 64 clean body frames, so there is no noise here to exclude, and excluding the
-    faint skirt would put the centroid somewhere the blob is not.
+    `floor` is the visible threshold: every non-zero pixel is mass. The blob is the MEAN of
+    64 clean body frames, so there is no noise to exclude, and excluding the faint skirt
+    would put the centroid somewhere the blob is not.
 
-    The render canvas is centred on the entity, but the SHARK is not -- model.offset lifts
-    him and the 45-degree camera turns that lift into up-screen pixels, so his mean alpha
-    sits high. Stock declares the spidertron's reflection at shift 0, i.e. on the entity
-    origin, and this is what lets ours be declared the same way instead of carrying a shift
-    that is really just the body's lift written down twice.
+    The render canvas is centred on the entity, but the SHARK is not: model.offset lifts
+    him and the 45-degree camera turns that into up-screen pixels, so his mean alpha sits
+    high. Stock declares the spidertron's reflection at shift 0 (on the entity origin);
+    recentring lets ours do the same instead of carrying a shift that is just the body's
+    lift written down twice.
     """
     from PIL import Image
 
@@ -684,9 +714,9 @@ def recentre_on_origin(alpha, floor: int):
     return moved, (dx, dy)
 
 
-#: name -> a function taking (images, cfg, px_per_tile, floor) and returning
-#: (images, note). Named rather than passed as a callable so a Target stays a frozen
-#: dataclass of plain data that a test can build without importing Pillow.
+#: name -> a function taking (images, cfg, px_per_tile, floor) and returning (images, note).
+#: Named, not passed as a callable, so a Target stays a frozen dataclass of plain data a
+#: test can build without importing Pillow.
 REDUCERS = {"reflection": reflection_blob}
 
 
@@ -700,9 +730,9 @@ class Packed:
     paths: list[pathlib.Path]
     box: tuple
     layout: SheetLayout
-    #: edge -> (px, frame index): the tightest transparent margin inside a cell, measured
-    #: off the finished sheet. Zero on any edge means a clipped sprite, so this travels
-    #: with the result rather than only appearing in a line of stdout.
+    #: edge -> (px, frame index): the tightest transparent margin inside a cell, measured off
+    #: the finished sheet. Zero on any edge means a clipped sprite, so it travels with the
+    #: result, not just a stdout line.
     margins: dict = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     source: pathlib.Path | None = None
@@ -719,10 +749,10 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
                 any_config: bool = False) -> Packed | None:
     """Frames -> sheet PNG(s) + the sprite dict. None when the target has no frames yet.
 
-    TWO THRESHOLDS, ONE JOB EACH. `visible` is what the engine draws, so it measures every
-    extent and guards every refusal. `noise_floor` is what Cycles scattered, so it only
-    ever DELETES pixels -- the shadow surgery -- and it runs before anything is measured,
-    which is why the two can never disagree about a pixel that ships.
+    TWO THRESHOLDS, ONE JOB EACH. `visible` is what the engine draws: it measures every
+    extent and guards every refusal. `noise_floor` is what Cycles scattered: it only ever
+    DELETES pixels (the shadow surgery), before anything is measured, so the two never
+    disagree about a pixel that ships.
     """
     from PIL import Image
 
@@ -745,8 +775,8 @@ def pack_target(cfg, target: Target, out_root: pathlib.Path, *, mod_name: str,
     check_frame_set(frames, target.kind, cfg["rotations.count"], str(directory))
     blob = check_pass_hash(cfg, target, directory, any_config=any_config)
 
-    # The frames' OWN derived numbers where the sidecar has them: a render's px-per-tile
-    # is a fact about those pixels, not about the config file as it stands today.
+    # The frames' OWN derived numbers where the sidecar has them: a render's px-per-tile is
+    # a fact about those pixels, not the config file as it stands today.
     key = PASS_PPT.get(target.pass_name, "body_px_per_tile")
     derived = (blob or {}).get("derived") or ac.derived(cfg)
     ppt = derived.get(key) or ac.derived(cfg)[key]
@@ -762,12 +792,13 @@ def pack_images(cfg, target: Target, images, ppt: float, out_root: pathlib.Path,
                 mod_name: str, line_length: int = DEFAULT_LINE_LENGTH, pad: int = DEFAULT_PAD,
                 max_side: int = MAX_SHEET_SIDE, visible: int = SPRITE_VISIBLE_ALPHA,
                 noise_floor: int = RENDER_NOISE_FLOOR, allow_clipped: bool = False,
-                source=None, frame_sequence=None, stamp_blob=None) -> Packed:
+                source=None, frame_sequence=None, animation_speed=None,
+                stamp_blob=None) -> Packed:
     """[(index, RGBA image), ...] -> sheet PNG(s) + the sprite dict. Everything after the
     frames are FOUND: the shadow surgery, the box, the refusals, the layout, the stamp.
 
-    Split out of pack_target because a C.21 sequence finds its frames somewhere else -- one
-    per cache directory, not N in one -- and must not get a second copy of anything below.
+    Split from pack_target because a C.21 sequence finds its frames elsewhere (one per
+    cache directory, not N in one) and must not get a second copy of anything below.
     """
     frames = [i for i, _ in images]
     canvas = images[0][1].size
@@ -778,12 +809,16 @@ def pack_images(cfg, target: Target, images, ppt: float, out_root: pathlib.Path,
 
     notes = []
     if target.draw_as_shadow:
-        # FIRST, before any measurement: a raw shadow-catcher frame is 1..7 noise from edge
-        # to edge, and this is what removes it from the PIXELS rather than hiding it behind
-        # a measurement threshold. Everything after this point measures what will ship.
+        # FIRST, before any measurement: a raw shadow-catcher frame is 1..7 noise edge to
+        # edge, and this removes it from the PIXELS instead of hiding it behind a
+        # measurement threshold. Everything after this measures what will ship.
         images = [(i, blacken(img, noise_floor)) for i, img in images]
         notes.append(f"shadow surgery: RGB forced to black, alpha < {noise_floor} zeroed "
                      f"BEFORE the box is measured, so the box sees what ships")
+    elif target.denoise:
+        images = [(i, denoise(img, noise_floor)) for i, img in images]
+        notes.append(f"mask surgery: alpha < {noise_floor} zeroed BEFORE the box is "
+                     f"measured, so a stray render speck cannot stretch the sheet")
     if target.reduce:
         if target.reduce not in REDUCERS:
             raise PackError(f"{target.id}: no reducer named {target.reduce!r}; known: "
@@ -820,9 +855,8 @@ def pack_images(cfg, target: Target, images, ppt: float, out_root: pathlib.Path,
     except ValueError as exc:      # spritesheet.py's own guards, as a packer error
         raise PackError(f"{target.id}: {exc}") from None
 
-    # Laid out in memory and MEASURED BEFORE IT IS SAVED. A sheet that fails the margin
-    # check is never written at all, so a failed pack cannot leave a clipped PNG in a tree
-    # somebody then commits.
+    # Laid out in memory and MEASURED BEFORE IT IS SAVED. A sheet failing the margin check
+    # is never written, so a failed pack cannot leave a clipped PNG for somebody to commit.
     built = build_sheets([img for _, img in images], box, layout)
     worst, per_cell = cell_margins(built, layout, floor=visible)
     notes.append(margin_line(worst, layout, visible))
@@ -853,7 +887,7 @@ def pack_images(cfg, target: Target, images, ppt: float, out_root: pathlib.Path,
 
     scale = fc.NOMINAL_PX_PER_TILE / ppt
     fields = sprite_fields(target, [f"__{mod_name}__/{GRAPHICS_DIR}/{p.name}" for p in paths],
-                           layout, shift, scale, frame_sequence)
+                           layout, shift, scale, frame_sequence, animation_speed)
     for path in paths:
         sheets.stamp_png(path, stamp_blob or ac.stamp(cfg, {
             "sheet": target.id, "frames": frames, "source": str(source),
@@ -866,10 +900,10 @@ def gather_sequence(seq, target: Target, *, preview: bool = False, any_config: b
     """(images, px_per_tile) for one target of a C.21 sequence: frame k is the sequence's
     ONE direction out of unique config k's own cache directory.
 
-    Every directory is verified against ITS OWN config (check_pass_hash, the same refusal a
-    standing pack gets), so a sheet of 72 frames is 72 provenance checks and a stale frame
-    anywhere in it stops the pack. Missing frames are collected and reported together -- one
-    at a time would be 72 runs to find out you have not rendered the sequence.
+    Every directory is verified against ITS OWN config (check_pass_hash, the standing
+    pack's refusal), so a 72-frame sheet is 72 provenance checks and one stale frame stops
+    the pack. Missing frames are reported together; one at a time would take 72 runs to
+    learn the sequence was never rendered.
     """
     from PIL import Image
     name = f"frame_{seq.direction:03d}.png"
@@ -905,42 +939,62 @@ def pack_sequence(seq, out_root: pathlib.Path, *, mod_name: str, targets=None,
                   preview: bool = False, any_config: bool = False, **kw) -> list:
     """Every target of a C.21 sequence -> Packed list. `kw` goes to pack_images.
 
-    Stamped with the SEQUENCE's provenance (sequence.Sequence.provenance), not with one
-    frame's config: the sheet's config_hash is the digest, the same id the manifest and the
-    Lua carry, and the samples it was rendered at are written down."""
+    Stamped with the SEQUENCE's provenance (sequence.Sequence.provenance), not one frame's
+    config: the sheet's config_hash is the digest (the id the manifest and Lua carry), and
+    the samples it was rendered at are recorded."""
     frame_sequence = seq.frame_sequence()
     out = []
-    for target in targets or sequence_targets(seq.name):
+    for target in targets or sequence_targets(seq.name, seq.passes):
         images, ppt = gather_sequence(seq, target, preview=preview, any_config=any_config)
         blob = {"config_hash": seq.digest, "derived": ac.derived(seq.configs[0]),
                 "sequence": seq.provenance(sequence_samples_of(seq, preview))}
         out.append(pack_images(seq.configs[0], target, images, ppt, out_root,
                                mod_name=mod_name, source=f"sequence {seq.name} {seq.digest}",
-                               frame_sequence=frame_sequence, stamp_blob=blob, **kw))
+                               frame_sequence=frame_sequence,
+                               animation_speed=sequence_speed(), stamp_blob=blob, **kw))
     return out
+
+
+#: The engine's clock. An animation_speed is cells per TICK, so a sheet rendered at pose.FPS
+#: plays at FPS / this.
+TICKS_PER_SECOND = 60
+
+
+def sequence_speed() -> float:
+    """animation_speed for a sequence sheet: its render rate against the engine's tick."""
+    return pose.FPS / TICKS_PER_SECOND
 
 
 def sequence_samples_of(seq, preview: bool) -> dict:
     """pass -> the samples its frames were rendered at, for the record."""
     return {t.pass_name: sequence_samples(seq.configs[0], t.pass_name, preview)
-            for t in SEQUENCE_TARGETS}
+            for t in SEQUENCE_TARGETS if t.pass_name in seq.passes}
+
+
+def denoise(img, floor: int):
+    """`img` with every pixel below alpha `floor` made fully transparent, RGB and all; the
+    pixels at or above it are untouched. The one noise-floor cut both surgeries share."""
+    from PIL import Image
+    keep = img.getchannel("A").point(lambda v: 255 if v >= floor else 0)
+    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    out.paste(img, (0, 0), keep)
+    return out
 
 
 def blacken(img, floor: int):
     """A Cycles shadow-catcher frame -> what Factorio's draw_as_shadow actually reads."""
     from PIL import Image
-    alpha = img.getchannel("A").point(lambda v: v if v >= floor else 0)
     out = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    out.putalpha(alpha)
+    out.putalpha(denoise(img, floor).getchannel("A"))
     return out
 
 
 def build_sheets(images, box, layout):
     """Crop every frame to `box` and paste it into its cell. Returns the sheet(s).
 
-    No compositing: `paste` copies alpha verbatim, `alpha_composite` would blend the sprite
-    against the sheet's own transparency and eat the edge ramp. Returns rather than saves so
-    the caller can MEASURE the finished cells before any of them reaches the disk.
+    No compositing: `paste` copies alpha verbatim, while `alpha_composite` would blend the
+    sprite against the sheet's transparency and eat the edge ramp. Returns instead of saving
+    so the caller can MEASURE the finished cells before any reaches the disk.
     """
     from PIL import Image
     per_file = layout.frames_per_file
@@ -970,7 +1024,7 @@ def slot_map(packed: list[Packed]) -> dict:
 
 def clear_list(slots) -> list[str]:
     """Stock slots no sheet of ours covers. entity.lua must nil these or the stock
-    spidertron's own art keeps drawing under (and beside) Jamal."""
+    spidertron's art keeps drawing under (and beside) Jamal."""
     return [s for s in STOCK_ART_SLOTS if s not in slots]
 
 
@@ -978,9 +1032,9 @@ def manifest_blob(cfg, packed: list[Packed], *, mod_name: str, seq=None,
                   samples: dict | None = None) -> dict:
     """The JSON the linter eats. `sprites` entries are the SAME dicts plus an `id`.
 
-    `mod_roots` is relative to the manifest, so the tree lints in place with no flags --
-    and CI's own --mod-root still wins over it (lint_sprites.specs_from_manifest only
-    fills roots the CLI has not already claimed).
+    `mod_roots` is relative to the manifest, so the tree lints in place with no flags; CI's
+    --mod-root still wins (lint_sprites.specs_from_manifest only fills roots the CLI has
+    not claimed).
     """
     slots = slot_map(packed)
     blob = {
@@ -997,6 +1051,7 @@ def manifest_blob(cfg, packed: list[Packed], *, mod_name: str, seq=None,
     }
     if seq is not None:
         blob["sequence"] = {"name": seq.name, "direction": seq.direction,
+                            "passes": list(seq.passes),
                             "played": len(seq.order), "unique": len(seq.configs),
                             "samples": samples or {}, "frame_hashes": list(seq.hashes)}
     return blob
@@ -1034,8 +1089,8 @@ def lua_value(value, indent: str) -> str:
 
 
 def lua_table(fields: dict, indent: str = "") -> str:
-    """Brace on its own line, one field per line: the shape base's own prototype files
-    use, so a generated table reads like a hand-written one in a diff."""
+    """Brace on its own line, one field per line: base's prototype-file shape, so a
+    generated table reads like a hand-written one in a diff."""
     body = ",\n".join(f"{indent}  {key} = {lua_value(value, indent + '  ')}"
                       for key, value in fields.items())
     return indent + "{\n" + body + "\n" + indent + "}"
@@ -1044,11 +1099,11 @@ def lua_table(fields: dict, indent: str = "") -> str:
 def lua_blob(cfg, packed: list[Packed], *, seq=None, origin: str = "render/jamaltron.toml") -> str:
     """The generated data-stage module. Same dicts, Lua syntax, nothing added.
 
-    Emits the sprites by id AND assembled into their graphics_set slots, sharing the same
-    table references -- so `sprites.body` and `slots.animation.layers[1]` are one table in
-    Lua exactly as they are one dict here. No ---@type annotations: the slot decides
-    whether a table is a RotatedAnimation or a RotatedSprite, so the annotation belongs at
-    the assignment in entity.lua, where a wrong one is a real finding.
+    Emits the sprites by id AND assembled into their graphics_set slots, sharing table
+    references, so `sprites.body` and `slots.animation.layers[1]` are one table in Lua as
+    they are one dict here. No ---@type annotations: the slot decides whether a table is a
+    RotatedAnimation or a RotatedSprite, so the annotation belongs at the assignment in
+    entity.lua, where a wrong one is a real finding.
     """
     slots = slot_map(packed)
     ident = seq.digest if seq is not None else ac.config_hash(cfg)
@@ -1066,13 +1121,14 @@ def lua_blob(cfg, packed: list[Packed], *, seq=None, origin: str = "render/jamal
     ]
     if seq is not None:
         lines += [
-            "-- SEQUENCE %s (C.21): %d played frames at 24 fps out of %d unique renders, one"
-            % (seq.name, len(seq.order), len(seq.configs)),
+            "-- SEQUENCE %s (C.21): %d played frames at %d fps out of %d unique renders, one"
+            % (seq.name, len(seq.order), pose.FPS, len(seq.configs)),
             "-- direction (%d). frame_sequence is the order they play in; a repeated cell is"
             % seq.direction,
             "-- loaded once. config_hash below is the digest over every frame's own config",
-            "-- hash, so it moves if any frame's knobs do. Play it at animation_speed 0.4",
-            "-- (24 fps against the engine's 60 ticks).",
+            "-- hash, so it moves if any frame's knobs do. Every sheet carries its",
+            "-- animation_speed (%s: %d fps against the engine's %d ticks a second)."
+            % (lua_value(sequence_speed(), ""), pose.FPS, TICKS_PER_SECOND),
             "--",
         ]
     lines += [
@@ -1138,7 +1194,7 @@ def crush(paths, *, tool: str | None = None) -> list[str]:
     """oxipng over the sheets, kept only when the pixels come back identical.
 
     Returns report lines. pngcrush and optipng are not installed here (and oxipng is the
-    faster of the three); when none of them is present this says so and changes nothing.
+    fastest of the three); with no oxipng this says so and changes nothing.
     """
     from PIL import Image
     binary = tool or shutil.which("oxipng")
@@ -1152,7 +1208,7 @@ def crush(paths, *, tool: str | None = None) -> list[str]:
         source.load()
         original, was_stamped = source.convert("RGBA").tobytes(), bool(source.text)
         backup = path.read_bytes()      # in memory: a stray .orig beside the sheets is
-        started = time.time()           # a file CI has to have an opinion about
+        started = time.time()           # one more file CI has to judge
         # No --strip: the config-hash text chunk IS the provenance, and `--strip safe`
         # takes it. -o 4 is oxipng's cost/benefit knee on sheets this size.
         proc = subprocess.run([binary, "-o", "4", "--quiet", str(path)],
@@ -1188,8 +1244,8 @@ def verify(manifest_path: pathlib.Path, mod_root: pathlib.Path, *,
            mod_name: str = MOD_NAME, strict: bool = True):
     """Run the C.8 gate over what we just wrote. Returns (ok, text).
 
-    Same code CI runs, same --strict, so a sheet that would turn CI red turns pack.py red
-    first. Importing rather than shelling out keeps the failure a Python value.
+    Same code and --strict as CI, so a sheet that would fail CI fails pack.py first.
+    Importing, not shelling out, keeps the failure a Python value.
     """
     import lint_sprites as lint
 
@@ -1297,7 +1353,7 @@ def main(argv=None):
         sys.stderr.write("pack.py: --frames-dir does not apply to a sequence; its frames "
                          "come from one cache dir per frame config\n")
         return 2
-    catalogue = sequence_targets(seq.name) if seq is not None else TARGETS
+    catalogue = sequence_targets(seq.name, seq.passes) if seq is not None else TARGETS
 
     wanted = set(args.targets.split(",")) if args.targets else None
     targets = [t for t in catalogue if wanted is None or t.id in wanted]
@@ -1322,6 +1378,9 @@ def main(argv=None):
                                    allow_clipped=args.allow_clipped)
             for item in packed:
                 report(item)
+            for path in drop_unshipped(seq, root):
+                print("  removed %s (sequence %s ships passes %s)"
+                      % (_relative(path), seq.name, "+".join(seq.passes)))
         for target in (targets if seq is None else ()):
             item = pack_target(cfg, target, root, mod_name=mod_name,
                                line_length=args.line_length, pad=args.pad,
@@ -1341,9 +1400,9 @@ def main(argv=None):
         sys.stderr.write("pack.py: nothing packed; no target had frames\n")
         return 1
 
-    # Two cross-target facts no single sheet can see. Neither is fatal -- a coarse sheet
-    # is a legitimate thing to look at -- but both ship as a wrong-looking vehicle rather
-    # than as an error, which is exactly the class of thing that needs saying out loud.
+    # Two cross-target facts no single sheet can see. Neither is fatal (a coarse sheet is
+    # legitimate to look at), but both ship as a wrong-looking vehicle instead of an error,
+    # so they get said explicitly.
     rotating = {p.fields["direction_count"] for p in packed
                 if p.target.kind == "rotations"}
     if len(rotating) > 1:
@@ -1352,7 +1411,7 @@ def main(argv=None):
               % ", ".join(str(n) for n in sorted(rotating)))
     if seq is not None and args.preview:
         # The standing path's preview guard is a coarse direction_count, which an animation
-        # never has -- so without this a preview-samples flop promotes in silence.
+        # never has, so without this a preview-samples flop promotes silently.
         print("  WARN packed at PREVIEW samples (%s): fine to look at, not the shipping "
               "sheet. Drop --preview (after art.py --sequence without it) to ship"
               % ", ".join("%s %d" % kv for kv in sequence_samples_of(seq, True).items()))

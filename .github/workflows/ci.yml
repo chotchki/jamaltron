@@ -1,31 +1,29 @@
-# CI for jamaltron: the two gates that can actually run on a free ubuntu runner.
+# CI for jamaltron: every gate that can run on a free ubuntu runner.
 #
-# WHAT IS NOT HERE, and why - all three are unavailable in CI by construction:
-#   * FACTORIO. Not installed, and installing it would buy nothing for sprites.
-#     MEASURED 2026-09-19 against 2.1.17: `--dump-data` and `--create` are sprite-BLIND
-#     on both the mac full build and headless - exit 0 with a PNG missing entirely AND
-#     with a declared-vs-actual size mismatch. The headless linux build ships ZERO PNGs,
-#     so it can never check sprites at all. The one mode that rasterizes,
-#     `--dump-icon-sprites`, is mac-only behind a MODAL DIALOG that hangs the process.
-#     PLAN F.1 wants headless Factorio for the jump/break/repair SCRIPT harness, which is
-#     a different job with different needs (a game download, a mod symlink, a log parse).
-#     It is not this file's business and it does not call the linter.
-#   * BLENDER, and the bought hammerhead model. The model is gitignored because the
-#     RenderHub licence forbids redistributing it, so a runner can never have it. Nothing
-#     under tools/render/ that needs `bpy` is reachable here; the harness's pure-arithmetic
-#     half (spritesheet layout, camera projection, config resolution, mount self-check) is
-#     unit-tested and that half is what the `tests` job runs.
-#   * shellcheck / luacheck / lua-language-server. tools/lint.sh is the Lua gate and is not
-#     wired up yet - a separate change, not C.11.
+# NOT HERE, and why (the first two are unavailable in CI by construction):
+#   * FACTORIO. Installing it buys nothing for sprites. MEASURED 2026-09-19 against 2.1.17:
+#     `--dump-data` and `--create` are sprite-BLIND on both the mac full build and headless -
+#     exit 0 with a PNG missing entirely AND with a declared-vs-actual size mismatch. The
+#     headless linux build ships ZERO PNGs, so it can never check sprites. The one mode that
+#     rasterizes, `--dump-icon-sprites`, is mac-only behind a MODAL DIALOG that hangs the
+#     process. PLAN F.1's headless SCRIPT harness (jump/break/repair) is a different job (a
+#     game download, a mod symlink, a log parse), not this file's, and does not call the linter.
+#   * BLENDER and the bought hammerhead model. The model is gitignored (the RenderHub licence
+#     forbids redistributing it), so no runner has it and nothing under tools/render/ that
+#     needs `bpy` runs here. The pure-arithmetic half (spritesheet layout, camera projection,
+#     config resolution, mount self-check) is unit-tested in the `tests` job.
+#   * shellcheck. Not installed anywhere, so tools/*.sh has never been linted (tools/lint.sh
+#     says the same). A cheap apt install, not written yet.
 #
-# So: python tests, and tools/lint_sprites.py. That is the whole surface, and the sprite
-# linter is the ONLY sprite validation that exists anywhere - see its module docstring.
+# So: python tests (with the pure-Lua unit suites running under lua5.2 inside them),
+# tools/lint_sprites.py, and tools/lint.sh's two Lua gates as two jobs (PLAN C.14). The
+# sprite linter is the ONLY sprite validation anywhere - see its docstring.
 name: CI
 
 on:
-  # push-on-main + pull_request, deliberately NOT push-on-every-branch: that pairing
-  # runs a PR branch twice for one signal. A branch with no PR gets no CI, which is the
-  # trade we want while this is a one-person repo.
+  # push-on-main + pull_request, NOT push-on-every-branch: that pairing runs a PR branch
+  # twice for one signal. A branch with no PR gets no CI, the right trade while this is a
+  # one-person repo.
   push:
     branches: [main]
   pull_request:
@@ -38,12 +36,38 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # THE MODE SPLIT LIVES HERE. This is the one tree that holds sheets WE generated, and
-  # therefore the only tree that may be linted with --strict. Both the classifier and the
-  # mode switch below read this variable - neither of them names the path itself, and
-  # neither of them takes a mode as input. See the `Sprite gate` step for the argument.
+  # THE MODE SPLIT LIVES HERE: the one tree holding sheets WE generated, so the only tree
+  # linted with --strict. The classifier and the mode switch both read this variable;
+  # neither names the path or takes a mode as input. The argument is at `Sprite gate`.
   STRICT_TREE: mod/jamaltron/graphics
   MOD_ROOT: mod/jamaltron
+
+  # THE LUA PINS (PLAN C.14). Each is a version something local was MEASURED against, not
+  # a latest: a floating tool in a gate fails builds nobody changed.
+  #
+  # LUA_VERSION is the interpreter for the pure-Lua unit suites AND luacheck. "5.2" on
+  # purpose: Factorio runs a modified Lua 5.2.1 and noble's lua5.2 (5.2.4) is the closest a
+  # runner can apt-get. The local default is whatever `lua` is (5.5 on chotchki's mac),
+  # which silently accepts 5.3+ semantics the game lacks (`//`, integer-vs-float tostring,
+  # math.type, utf8). MEASURED 2026-09-26 in an ubuntu:24.04 amd64 container: all 13 suites
+  # pass on lua5.2, lua5.4 and luajit. Package name, binary name and JAMALTRON_LUA all
+  # derive from this one variable, so installed and tested interpreters cannot disagree.
+  LUA_VERSION: "5.2"
+  # luarocks, not apt: noble ships luacheck 1.1.2, local tools/lint.sh runs brew's 1.2.0.
+  # Same version both sides, or a warning is local-only.
+  LUACHECK_VERSION: "1.2.0"
+  # fmtk renders the Factorio API json into LuaLS defs, and its version changes the
+  # BUNDLE: MEASURED 2026-09-26, 2.0.8 --online against 2.1.17 is byte-identical to the
+  # local defs (`tools/gen-defs.sh --check` passes); 2.1.9 (npm latest) emits 1168 files
+  # instead of 1156 from the same json. FACTORIO_API_VERSION must be a FULL version:
+  # lua-api.factorio.com has no /2.1/ alias, and `latest` is the drift this avoids.
+  FMTK_VERSION: "2.0.8"
+  FACTORIO_API_VERSION: "2.1.17"
+  # The release tarball, pinned by version AND by sha256 (GitHub's own asset digest, read
+  # 2026-09-26 with `gh api repos/LuaLS/lua-language-server/releases/tags/3.19.1`). 3.19.1
+  # is the brew version tools/lint.sh runs locally.
+  LUALS_VERSION: "3.19.1"
+  LUALS_SHA256: e9235d2d72ef55bc41cf8c99cda2ed64777682024b4bb81f5dea425060c5cbb8
 
 jobs:
   tests:
@@ -52,10 +76,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # uv is pinned to the version that produced tools/uv.lock. `version:` left empty
-      # resolves to `latest`, which is an unpinned toolchain in a file whose whole job is
-      # pinning. cache key is the lockfile alone (the action's default glob also keys on
-      # pyproject.toml, which drifts without changing the resolved set).
+      # uv pinned to the version that produced tools/uv.lock (empty `version:` resolves to
+      # `latest`, an unpinned toolchain in a file whose whole job is pinning). Cache key is
+      # the lockfile alone: the default glob also keys on pyproject.toml, which drifts
+      # without changing the resolved set.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.8"
@@ -66,19 +90,107 @@ jobs:
           # uv downloads that interpreter; cache it or every run pays for it again.
           cache-python: true
 
-      # Drift gate first: if pyproject.toml and uv.lock disagree, say so plainly instead
-      # of letting the next command silently re-resolve and test a different dependency
-      # set than the one that is committed.
+      # Drift gate first: if pyproject.toml and uv.lock disagree, fail plainly instead of
+      # letting the next command silently re-resolve and test a different dependency set
+      # than the committed one.
       - name: uv.lock is current
         working-directory: tools
         run: uv lock --check
 
-      # The documented invocation (tools/README.md). --directory chdirs, which is load
-      # bearing: `uv run --project tools pytest` takes the repo root as rootdir, never
-      # reads tools/pyproject.toml, ignores its `pythonpath = ["."]`, and dies with
-      # ModuleNotFoundError: No module named 'render'.
+      # tools/tests/lua/*.lua are the pure-Lua unit suites (the picker, the jump, the
+      # breakage state machine...), run by tools/tests/test_speech_lua.py under the
+      # interpreter JAMALTRON_LUA names - and a NAMED interpreter that is missing FAILS
+      # there instead of the local-dev skip. So losing this step fails the job; it cannot
+      # quietly turn every suite into a skip.
+      - name: Install lua${{ env.LUA_VERSION }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends "lua$LUA_VERSION"
+          "lua$LUA_VERSION" -v
+
+      # The documented invocation (tools/README.md). It must be --directory, which chdirs:
+      # `uv run --project tools pytest` takes the repo root as rootdir, never reads
+      # tools/pyproject.toml's `pythonpath = ["."]`, and dies with ModuleNotFoundError: No
+      # module named 'render'.
       - name: pytest
-        run: uv run --directory tools pytest
+        run: JAMALTRON_LUA="lua$LUA_VERSION" uv run --directory tools pytest
+
+  # PLAN C.14: tools/lint.sh's two gates as two jobs, so each reports on its own - a
+  # luacheck finding does not hide the type check's verdict, and a lua-api.factorio.com
+  # outage (the type check's only network dependency) does not hide luacheck's. Both call
+  # `tools/lint.sh --only <gate>`, never bare: bare, a missing binary SKIPS its gate (right
+  # for a laptop), so a job that installed nothing would pass on the other gate. --only
+  # makes the named gate mandatory. Same command as local, so a failure here reproduces
+  # with the same line on a laptop.
+  luacheck:
+    name: lua gate - luacheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # luacheck's dependency luafilesystem is a C module, hence the -dev headers. luarocks
+      # gets the Lua version explicitly so the rock is built for the Lua installed above,
+      # not whatever noble's luarocks 3.8 picks by default.
+      - name: Install luacheck ${{ env.LUACHECK_VERSION }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            "lua$LUA_VERSION" "liblua$LUA_VERSION-dev" luarocks
+          sudo luarocks --lua-version "$LUA_VERSION" install luacheck "$LUACHECK_VERSION"
+          luacheck --version
+
+      - name: luacheck
+        run: tools/lint.sh --only luacheck
+
+  types:
+    name: lua gate - types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # fmtk's package.json declares engines.node ">20" (21+), and the runner's default
+      # node is whatever the image ships this month. Pinned to 24, what the local 2.0.8 run
+      # was measured on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      # Into a prefix under RUNNER_TEMP, not -g: no sudo, and the pinned version is the
+      # only fmtk on PATH.
+      - name: Install fmtk ${{ env.FMTK_VERSION }}
+        run: |
+          set -euo pipefail
+          npm install --no-fund --no-audit --prefix "$RUNNER_TEMP/fmtk" \
+            "factoriomod-debug@$FMTK_VERSION"
+          echo "$RUNNER_TEMP/fmtk/node_modules/.bin" >> "$GITHUB_PATH"
+
+      # THE DEFS STEP. .ls-defs/factorio/ is gitignored, so a checkout has none, and
+      # tools/lint.sh REFUSES the type gate without it (56 bogus problems otherwise,
+      # measured). No game here, so --online instead of letting gen-defs.sh go looking.
+      # The pinned API version is explicit; with none it pulls `latest` and only WARNs.
+      - name: Generate Factorio type defs (${{ env.FACTORIO_API_VERSION }}, fmtk ${{ env.FMTK_VERSION }})
+        run: tools/gen-defs.sh --online --api-version "$FACTORIO_API_VERSION"
+
+      # sha256 before extraction: a pinned version with no hash trusts whatever the release
+      # asset is today. The tarball is the whole server (bin/ plus the Lua it loads), so it
+      # runs where it lands; lint.sh passes --logpath, so nothing lands in the checkout.
+      - name: Install lua-language-server ${{ env.LUALS_VERSION }}
+        run: |
+          set -euo pipefail
+          tarball="lua-language-server-$LUALS_VERSION-linux-x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/LuaLS/lua-language-server/releases/download/$LUALS_VERSION/$tarball"
+          echo "$LUALS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/luals"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/luals"
+          echo "$RUNNER_TEMP/luals/bin" >> "$GITHUB_PATH"
+
+      - name: lua-language-server --check
+        run: tools/lint.sh --only types
 
   sprites:
     name: sprite gate
@@ -87,30 +199,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No uv, no venv, no Pillow. lint_sprites.py is stdlib-only on purpose and reads
-      # PNG dimensions out of the 24-byte IHDR, so the runner's own python3 is the whole
-      # toolchain. `python3 tools/lint_sprites.py` from the repo root also puts tools/ on
-      # sys.path[0], which is how `from render.spritesheet import ...` resolves.
+      # No uv, no venv, no Pillow: lint_sprites.py is stdlib-only on purpose and reads PNG
+      # dimensions from the 24-byte IHDR, so the runner's python3 is the whole toolchain.
+      # Run from the repo root, `python3 tools/lint_sprites.py` puts tools/ on sys.path[0],
+      # which is how `from render.spritesheet import ...` resolves.
       - name: python3 version
         run: python3 -VV
 
-      # Classify what is COMMITTED, from the git index rather than a find: a gitignored
-      # render-out/ PNG must not trip the gate, and a committed sprite must always trip it.
-      # A "manifest" is C.7's pack.py output - {"sprites": [...]} or a bare list of sprite
-      # entries - recognised by CONTENT, because the filename is C.7's to choose and this
-      # gate must not go quiet just because pack.py named its output something else.
+      # Classify what is COMMITTED, from the git index not a find: a gitignored render-out/
+      # PNG must not trip the gate, a committed sprite must always trip it. A "manifest" is
+      # C.7's pack.py output ({"sprites": [...]} or a bare list of sprite entries),
+      # recognised by CONTENT: the filename is C.7's to choose, and this gate must not go
+      # quiet because pack.py renamed its output.
       #
-      # BOTH OF PACK.PY'S ARTIFACTS, not just the JSON. The manifest is what the linter was
-      # written against, but `prototypes/sprites_generated.lua` is THE FILE THE GAME READS,
-      # and for its first phase this gate never looked at it: the classifier matched .json
-      # and nothing else. The two agree today because one dict is serialized twice, and
-      # agreeing today is not a gate - a subset pack (`--targets body`) emits a Lua table
-      # that is missing layers the manifest beside it still describes. lint_sprites.py has
-      # a Lua front end and reads the generated module without a flag, so checking the
-      # artifact the engine loads costs one more branch here. Recognised by its own
-      # generated-by banner, for the same reason manifests are recognised by content: a
-      # hand-written prototype that mentions `filename` is not this, and must not be
-      # dragged into --strict.
+      # BOTH OF PACK.PY'S ARTIFACTS, not just the JSON. `prototypes/sprites_generated.lua`
+      # is THE FILE THE GAME READS, and the gate's first version matched .json only. The two
+      # agree today because one dict is serialized twice, but agreeing today is not a gate:
+      # a subset pack (`--targets body`) emits a Lua table missing layers the manifest beside
+      # it still describes. lint_sprites.py reads the generated module without a flag, so
+      # this costs one more branch. Recognised by its generated-by banner, for the same
+      # reason manifests are recognised by content: a hand-written prototype mentioning
+      # `filename` is not this and must not be dragged into --strict.
       - name: Classify committed sprite declarations
         run: |
           python3 - <<'PY'
@@ -153,9 +262,8 @@ jobs:
               elif low.endswith(".json") and declares_sprites(path):
                   (ours if inside else stray).append(path)
               elif low.endswith(".lua") and generated_lua(path):
-                  # The generated module lives in prototypes/, not graphics/, because that
-                  # is where the data stage requires it from - so it is OURS by mod root,
-                  # not by the sheet tree.
+                  # The generated module lives in prototypes/ (where the data stage
+                  # requires it from), so it is OURS by mod root, not by the sheet tree.
                   (ours if mod_root in parents else stray).append(path)
 
           for name, rows in (("ours", ours), ("stray", stray), ("sheets", sheets)):
@@ -165,9 +273,8 @@ jobs:
                 f"declarations_of_ours={len(ours)} declarations_elsewhere={len(stray)}")
           PY
 
-      # Two structural tripwires. Both exist because the alternative failure is a green
-      # job that checks nothing, which is worse than no job at all (the rule tools/lint.sh
-      # applies to its own two gates).
+      # Two structural tripwires, both because the alternative is a passing job that checks
+      # nothing, worse than no job (tools/lint.sh's rule for its own gates).
       - name: Structural tripwires
         run: |
           set -euo pipefail
@@ -175,11 +282,10 @@ jobs:
           mapfile -t sheets < "$RUNNER_TEMP/sprite-sheets.txt"
           mapfile -t ours   < "$RUNNER_TEMP/sprite-ours.txt"
 
-          # (1) A manifest outside the strict tree would be linted in DEFAULT mode, and
-          # default mode on our own exact sheets is the useless half of the split. There is
-          # also nowhere else for one to legitimately live: the only other kind of
-          # declaration is base-derived, and base-derived needs --factorio-data, which no
-          # runner has. So a manifest anywhere else is a mistake, not a lane.
+          # (1) A manifest outside the strict tree would lint in DEFAULT mode, the useless
+          # half of the split for our exact sheets. Nor can one legitimately live elsewhere:
+          # the only other kind of declaration is base-derived, which needs --factorio-data,
+          # which no runner has. So a manifest anywhere else is a mistake, not a lane.
           if [ "${#stray[@]}" -gt 0 ]; then
             printf 'sprite gate: FAILED - sprite declaration outside %s (Lua: %s):\n' \
               "$STRICT_TREE" "$MOD_ROOT"
@@ -190,11 +296,9 @@ jobs:
             exit 1
           fi
 
-          # (2) THE GATE MUST START BITING THE MOMENT C.4 LANDS SHEETS. Sheets committed
-          # with no manifest describing them are sheets nothing checks, and the linter
-          # cannot invent the declaration - C.7's pack.py emits the Lua table and the
-          # manifest from one dict so the two cannot drift. Until then this is the case
-          # that keeps the job honest instead of decorative.
+          # (2) SHEETS WITH NO MANIFEST FAIL (C.4 landed the first sheets). Nothing checks a
+          # sheet no manifest describes, and the linter cannot invent the declaration (C.7's
+          # pack.py emits it).
           if [ "${#sheets[@]}" -gt 0 ] && [ "${#ours[@]}" -eq 0 ]; then
             printf 'sprite gate: FAILED - %d sheet(s) under %s and no manifest:\n' \
               "${#sheets[@]}" "$STRICT_TREE"
@@ -206,46 +310,42 @@ jobs:
           fi
           echo "sprite gate: tripwires clear"
 
-      # THE MODE SPLIT, and it is the whole content of PLAN C.11.
+      # THE MODE SPLIT, the whole content of PLAN C.11.
       #
-      # --strict is NEVER typed at a command line and never passed in. It is derived from
-      # the target's path, in one `case`, so the two ways to get this wrong are both
-      # unreachable from here:
+      # --strict is NEVER typed or passed in. It is derived from the target's path in one
+      # `case`, so both ways to get this wrong are unreachable from here:
       #
-      #   * --strict on BASE-DERIVED art => permanently red CI, for TWO separate reasons,
-      #     both re-confirmed 2026-09-20 against the installed 2.1.17 data dir:
+      #   * --strict on BASE-DERIVED art => permanently failing CI, for TWO reasons, both
+      #     re-confirmed 2026-09-20 against the installed 2.1.17 data dir:
       #       - `unused-frames`, a check --strict ADDS, fires 7 times on stock's own
       #         spidertron leg sheets (spidertron-legs-knee.png holds 24 frames, the
-      #         declaration uses 8). Shipping more art than you index is a SMELL in art
-      #         you generated and NORMAL in art you share, which is why it cannot be a
-      #         default. Default mode on that same file: 25 declarations, 0 warnings.
+      #         declaration uses 8). More art than you index is a SMELL in art you
+      #         generated and NORMAL in art you share, so it cannot be a default. Default
+      #         mode on that same file: 25 declarations, 0 warnings.
       #       - `ragged-sheet` goes from WARN to fatal. MEASURED: 11 of the 4424 sprite
-      #         declarations Factorio ships are PADDED rather than torn to an exact
-      #         multiple of the frame size (pump-north.png carries 9 spare pixel rows).
-      #     The engine loads all of it happily. None of it is a defect and we do not get
-      #     to call it one.
-      #   * DEFAULT mode on OUR art => a useless gate. Our sheets come out of a renderer
-      #     that lays frames on an exact grid, so a ragged sheet means the render and the
-      #     declaration disagree about the frame size, and unused trailing frames mean the
-      #     declaration is ignoring rotations we paid Cycles to draw. Both are WARN by
-      #     default (correct, when you are pointed at somebody else's art) and both are
-      #     failures for us. --strict is what promotes them.
+      #         declarations Factorio ships are PADDED past an exact multiple of the frame
+      #         size (pump-north.png carries 9 spare pixel rows).
+      #     The engine loads all of it; none of it is a defect and we do not get to call
+      #     it one.
+      #   * DEFAULT mode on OUR art => a useless gate. Our renderer lays frames on an exact
+      #     grid, so a ragged sheet means render and declaration disagree on frame size, and
+      #     unused trailing frames mean the declaration ignores rotations we paid Cycles to
+      #     draw. Both are WARN by default (correct for somebody else's art) and failures
+      #     for us; --strict promotes them.
       #
-      # The base-derived branch is a BACKSTOP, not a lane: the tripwire step above already
-      # fails the job on a manifest outside the strict tree, so nothing reaches it today.
-      # It exists so that widening the target list can never silently promote base-derived
-      # art into --strict - it refuses, loudly, naming the reason, instead of skipping.
-      # It could not run here anyway: resolving `__base__/...` needs --factorio-data
-      # pointed at a real install, and an unmapped mod is an `unknown-mod` ERROR. That
-      # lane is a local calibration run, not CI:
+      # The base-derived branch is a BACKSTOP, not a lane: the tripwire step already fails
+      # the job on a manifest outside the strict tree, so nothing reaches it today. It
+      # exists so widening the target list can never silently promote base-derived art into
+      # --strict - it refuses loudly, with the reason, instead of skipping. It could not run
+      # here anyway: `__base__/...` needs --factorio-data pointed at a real install (an
+      # unmapped mod is an `unknown-mod` ERROR). That lane is a local calibration run:
       #
       #   python3 tools/lint_sprites.py \
       #     --factorio-data /Applications/factorio.app/Contents/data \
       #     /Applications/factorio.app/Contents/data/base/prototypes/entity/spidertron-animations.lua
       #
-      # Exit status from the linter: 0 clean, 1 findings, 2 bad usage. Zero declarations
-      # found is a FAILURE inside the linter too, so a manifest that exists but describes
-      # nothing cannot pass.
+      # Linter exit status: 0 clean, 1 findings, 2 bad usage. Zero declarations found is a
+      # FAILURE inside the linter too, so a manifest describing nothing cannot pass.
       - name: Sprite gate
         run: |
           set -euo pipefail
@@ -274,9 +374,9 @@ jobs:
             case "$target" in
               "$STRICT_TREE"/* | "$MOD_ROOT"/*.lua)
                 # OURS. Generated on an exact grid, so every warning is a real defect.
-                # Two roots because pack.py writes two artifacts: the manifest beside the
-                # sheets, and the Lua table the data stage requires. Both come out of one
-                # dict, both are ours, both lint the same way.
+                # Two roots because pack.py writes two artifacts from one dict (the
+                # manifest beside the sheets, the Lua table the data stage requires);
+                # both lint the same way.
                 flags=(--strict)
                 ;;
               *)
@@ -288,8 +388,8 @@ jobs:
                 return 2
                 ;;
             esac
-            # Echo the array itself rather than a retyped copy of it, so what the log
-            # claims ran cannot drift from what ran.
+            # Echo the array itself, not a retyped copy, so what the log claims ran
+            # cannot drift from what ran.
             local -a cmd=(python3 tools/lint_sprites.py "${flags[@]}"
                           --mod-root "jamaltron=$MOD_ROOT" "$target")
             printf '+ %s\n' "${cmd[*]}"

@@ -22,26 +22,25 @@ THE DESIGN CONSTRAINT IS FEEDBACK SPEED, NOT FEATURES. A 64-rotation Cycles shee
 wrong loop for "make him 10% bigger and nudge the pitch": by the time it finishes you have
 forgotten what you were comparing against. So:
 
-  * --preview renders 8 of the 64 directions at the SAME angles the full sheet uses, so
-    preview frames are a strict subset and nothing is thrown away when you commit to --full.
+  * --preview renders 8 of the 64 directions at the SAME angles the full sheet uses, a
+    strict subset, so nothing is thrown away when you commit to --full.
   * frames are cached under the hash of only the knobs that affect that pass. Change
     `compare.background` and 64 Cycles frames survive; change `model.scale` and none do.
   * --jobs runs several Blenders over disjoint frame sets. A sprite-sized tile is pure
-    launch overhead for one process and this machine has 12 performance cores.
+    launch overhead for one process, and this machine has 12 performance cores.
 
-EVERY OUTPUT IS TRACEABLE. Each sheet carries the config hash in a PNG text chunk, in a
-visible footer, and in a sidecar `.json` holding the fully resolved knobs. A sheet you
-found in a folder three weeks later still knows what made it.
+EVERY OUTPUT IS TRACEABLE. Each sheet carries the config hash in a PNG text chunk, a visible
+footer and a sidecar `.json` holding the fully resolved knobs, so a sheet found in a folder
+weeks later still knows what made it.
 
 Renders land in render-out/ (gitignored). Promoting a sheet into mod/jamaltron/graphics/
-is a DELIBERATE act -- that directory carries the RenderHub carve-out licence and this
-tool will not put anything there for you.
+is a DELIBERATE act: that directory carries the RenderHub carve-out licence, and this tool
+never writes there.
 """
 
 # sys.path, verbatim per tools/README.md -- Python and Blender both put THIS file's own
-# directory on sys.path[0], never tools/, and `package = false` means there is no installed
-# `render` to fall back on. Cannot be factored into a helper: importing the helper is the
-# thing that needs the path fixed.
+# directory on sys.path[0], never tools/, and `package = false` means no installed `render`
+# to fall back on. Cannot be a helper: importing the helper is what needs the path fixed.
 import pathlib, sys  # noqa: E401
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -75,10 +74,9 @@ def out_root(cfg) -> pathlib.Path:
 def shorten(path: pathlib.Path) -> str:
     """A path for a human, repo-relative WHERE THAT IS POSSIBLE.
 
-    `output.dir` takes an absolute path -- out_root() says so -- and every render then
-    printed it through Path.relative_to(REPO), which RAISES on a path outside the repo.
-    A progress line is not a place to throw from: rendering into /tmp is exactly what you
-    do when you want a timing run that does not touch the shipped cache.
+    `output.dir` takes an absolute path (out_root()), and Path.relative_to(REPO) RAISES on
+    a path outside the repo. A progress line must not throw: rendering into /tmp is how a
+    timing run avoids touching the shipped cache.
     """
     try:
         return str(path.relative_to(REPO))
@@ -87,16 +85,16 @@ def shorten(path: pathlib.Path) -> str:
 
 
 def pass_dir(cfg, which: str, samples: int) -> pathlib.Path:
-    """Cache directory for one pass. Named by the hash of the knobs that change its
-    pixels, plus the sample count -- preview and full differ ONLY in samples, and a
-    16-sample frame must never be served as a 64-sample one."""
+    """Cache directory for one pass: the hash of the knobs that change its pixels, plus
+    the sample count (preview and full differ ONLY in samples, and a 16-sample frame must
+    never be served as a 64-sample one)."""
     return out_root(cfg) / which / f"{ac.pass_hash(cfg, which)}_s{samples}"
 
 
 def blend_path(cfg) -> pathlib.Path:
-    """Where the model is. artconfig owns the resolution because it DIGESTS this file --
-    two resolvers and the hash would describe a different file from the one Blender
-    opened. Kept as a name here because tune.py and the render loop both call it."""
+    """Where the model is. artconfig owns the resolution because it DIGESTS this file; two
+    resolvers and the hash could describe a different file from the one Blender opened.
+    Kept as a name here because tune.py and the render loop both call it."""
     return ac.blend_path(cfg)
 
 
@@ -111,9 +109,9 @@ def chunk(items, n):
 
 def run_blender(blend, config_json, which, frames, outdir, quiet=True):
     # --python-exit-code 1: WITHOUT it a Python exception inside render_jamal exits Blender
-    # with 0, so a crash that happened after the FIX lines printed looked like a render that
-    # finished -- no frames, engine "?", and a cheerful "1 frames in 0.58s". MEASURED, that is
-    # exactly how a shadowed variable in main() hid.
+    # with 0, so a crash after the FIX lines looked like a finished render -- no frames,
+    # engine "?", and a cheerful "1 frames in 0.58s". MEASURED: a shadowed variable in
+    # main() hid exactly that way.
     cmd = [BLENDER, "-b", str(blend), "--python-exit-code", "1",
            "--python", str(RENDER_SCRIPT), "--",
            "--config", str(config_json), "--pass", which,
@@ -137,14 +135,12 @@ def run_blender(blend, config_json, which, frames, outdir, quiet=True):
 def warn_notes(notes):
     """The notes that are WARNINGS. render_pass prints these however quiet the pass is.
 
-    FIX / CAM / SUN / RENDER / POSE are a running commentary and belong behind `-v`. A WARN is
-    the renderer telling you the picture is wrong, and it is worth nothing if only `-v` shows
-    it: C.5's own "the posed body reaches 0.36 tiles BELOW the ground plane" -- the one line
-    that explains a flop whose shadow comes back sliced -- landed in a list nobody printed,
-    and both the CLI and the tuner were quiet, so nobody saw it in either.
+    FIX / CAM / SUN / RENDER / POSE are running commentary and belong behind `-v`. A WARN
+    says the picture is wrong and is worthless if only `-v` shows it: C.5's "the posed body
+    reaches 0.36 tiles BELOW the ground plane" (the one line explaining a flop whose shadow
+    comes back sliced) landed in a list nobody printed, CLI and tuner both quiet.
 
-    Deduped one level up, because N jobs are N Blenders and each one says it about its own
-    frames.
+    Deduped one level up: N jobs are N Blenders, each saying it about its own frames.
     """
     return [n for n in notes if n.startswith("WARN ")]
 
@@ -154,14 +150,14 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     """Render the missing frames of one pass. Returns (directory, stats).
 
     `quiet` drops the one progress line per pass and nothing else -- a sequence renders one
-    pass per FRAME, and 72 of those lines bury the WARNs, which still print."""
+    pass per FRAME, and 72 such lines bury the WARNs (which still print)."""
     outdir = pass_dir(cfg, which, samples)
     outdir.mkdir(parents=True, exist_ok=True)
     have = {i for i in frames if (outdir / f"frame_{i:03d}.png").exists()}
     todo = [i for i in frames if force or i not in have]
 
-    # The sidecar IS the payload handed to Blender: one file, so a cached frame and the
-    # config that made it can never drift apart.
+    # The sidecar IS the payload handed to Blender: one file, so a cached frame and its
+    # config cannot drift apart.
     payload = outdir / "config.json"
     blob = ac.stamp(cfg, {"pass": which, "samples": samples, "frames": sorted(frames)})
     payload.write_text(json.dumps(blob, indent=2, sort_keys=True))
@@ -192,8 +188,8 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
                        for i, g in enumerate(groups)]
             results = [f.result() for f in futures]
     wall = time.time() - t0
-    # And never trust the exit code alone: a render that asked for N frames and wrote fewer
-    # is a failed render, whatever Blender said about it.
+    # Never trust the exit code alone: asked for N frames and wrote fewer is a failed
+    # render, whatever Blender said.
     lost = [i for i in todo if not (outdir / f"frame_{i:03d}.png").exists()]
     if lost:
         raise SystemExit(f"blender reported success but wrote no frame for {lost[:8]} in "
@@ -214,9 +210,9 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
     warn_if_clipped(cfg, outdir, frames, which)
     stats = {"seconds": wall, "rendered": len(todo), "cached": len(frames) - len(todo),
              "engine": engine, "jobs": len(groups)}
-    # THE POSED BOX, unioned over however many Blenders ran. artconfig.derived() reports the
-    # REST box off a measured constant, which is right for the standing shark and wrong the
-    # moment he thrashes -- C.17 needs the real one and so does anyone pricing the bounce.
+    # THE POSED BOX, unioned over every Blender that ran. artconfig.derived() reports the
+    # REST box off a measured constant: right for the standing shark, wrong once he
+    # thrashes. C.17 needs the real one, as does anyone pricing the bounce.
     boxes = [r[0]["box_tiles"] for r in results if (r[0] or {}).get("box_tiles")]
     if boxes:
         stats["box_tiles"] = [[min(b[k][0] for b in boxes), max(b[k][1] for b in boxes)]
@@ -227,8 +223,9 @@ def render_pass(cfg, which, frames, samples, *, jobs=1, force=False, verbose=Fal
             print("   " + w)
     record_warnings(outdir, [(g, warn_notes(r[1])) for g, r in zip(groups, results)])
     # A partial hit: the cached frames' caveats, minus any the fresh chunk just printed --
-    # the standing shark's burial is the same sentence on every frame, and saying it twice,
-    # once tagged, is noise the tuner's warning box would faithfully show twice.
+    # the standing shark's burial is the same sentence on every frame, and replaying it
+    # (tagged with its frames) beside the fresh copy would show it twice in the tuner's
+    # warning box.
     fresh = {w for r in results for w in warn_notes(r[1])}
     replay_warnings(outdir, [i for i in frames if i not in todo], skip=fresh)
     for r in results:
@@ -247,18 +244,17 @@ CLIP_TABLE_WARN = "WARN clip table vs the model"
 def record_warnings(outdir, groups) -> None:
     """Keep each render's WARN lines beside the frames they are about (C.23).
 
-    A WARN is something only a render can know -- the posed body under the floor, the clip
-    table drifting from the model -- and it used to exist exactly once, on the cold render.
-    Run the identical command again and the frames came out of the cache with nothing said,
-    which is precisely when somebody is re-running it to look at the problem. So every
-    frame a process rendered is filed under that process's warnings (a Blender renders a
-    chunk of frames and warns about the chunk, so the attribution is per chunk, never
-    finer), a re-render replaces a frame's entry, and a clean re-render clears it.
+    A WARN is something only a render can know (the posed body under the floor, the clip
+    table drifting from the model), and it used to print once, on the cold render; the
+    identical command re-run came out of the cache silent, exactly when somebody re-runs it
+    to look at the problem. So every frame a process rendered is filed under that process's
+    warnings (a Blender warns about its whole chunk, so attribution is per chunk, never
+    finer), a re-render replaces a frame's entry and a clean re-render clears it.
 
-    NOT the clip-table check. It describes pose.py against the model, not these frames, and
-    the table is deliberately outside every hash (pose.table_digest) -- so after the table is
-    fixed the frames stay cached and a recorded mismatch would replay a problem that no longer
-    exists. Every cold posed render re-checks the table anyway.
+    NOT the clip-table check: it describes pose.py against the model, not these frames, and
+    the table is deliberately outside every hash (pose.table_digest), so after a table fix
+    the frames stay cached and a recorded mismatch would replay a fixed problem. Every cold
+    posed render re-checks the table anyway.
     """
     path = pathlib.Path(outdir) / WARNINGS_FILE
     try:
@@ -279,9 +275,9 @@ def record_warnings(outdir, groups) -> None:
 def replay_warnings(outdir, frames, skip=()) -> list:
     """Print, and return, the recorded WARNs for frames this run served from the cache.
 
-    Printed as ordinary `WARN` lines -- the tuner lifts anything starting with WARN into its
-    warning box -- with the frames named, so a cached picture carries the same caveat the cold
-    render did."""
+    Printed as ordinary `WARN` lines (the tuner lifts anything starting with WARN into its
+    warning box) with the frames named, so a cached picture carries the cold render's
+    caveat."""
     try:
         book = json.loads((pathlib.Path(outdir) / WARNINGS_FILE).read_text())
     except (OSError, ValueError):
@@ -305,55 +301,52 @@ CANVAS_KNOB = {"body": "camera.canvas_tiles", "shadow": "camera.shadow_canvas_ti
 
 
 #: Alpha at which a pixel IS PART OF THE SPRITE, because Factorio DRAWS it: the engine
-#: composites with the alpha in the PNG, so an alpha-1 pixel is a faint pixel, not an
-#: absent one. Every question of the form "how big is he" or "did a crop cut him" -- the
-#: packer's frame box, the refusals around it, the compare cell's own crop check -- is
-#: asked at THIS number.
+#: composites with the PNG's alpha, so an alpha-1 pixel is faint, not absent. Every "how
+#: big is he" or "did a crop cut him" question (the packer's frame box, the refusals around
+#: it, the compare cell's crop check) is asked at THIS number.
 #:
-#: It used to be 8, and that is exactly how C.4 shipped a shark with his tail fin sliced
-#: off: the fin tip's antialiasing ramp does not clear alpha 8, so it was measured OUT of
-#: the box that was supposed to contain it, and the gate meant to catch a cut sprite was
-#: reading the same thresholded mask and therefore agreed that nothing was wrong. The
-#: faint pixels were visible in game. He was clipped at the frame edge in dir 16 and 48.
+#: It used to be 8, which is how C.4 shipped a shark with his tail fin sliced off: the fin
+#: tip's antialiasing ramp does not clear alpha 8, so it was measured OUT of the box meant to
+#: contain it, and the cut-sprite gate read the same thresholded mask and agreed nothing was
+#: wrong. The faint pixels were visible in game; he was clipped at the frame edge in dir 16
+#: and 48.
 SPRITE_VISIBLE_ALPHA = 1
 
-#: Alpha below which a Cycles SHADOW-CATCHER frame is SAMPLING NOISE rather than shadow.
-#: NOT a claim about what is visible -- see above -- but about what the renderer scattered:
-#: MEASURED on a 704 px shadow frame, the alpha>=1 bbox is the whole canvas (9537 noise
-#: pixels) while the alpha>=8 bbox is (271,318)-(513,386), which is the shadow. pack.py
-#: ZEROES everything under this in the shadow sheets it writes, and it does so BEFORE it
-#: measures them, which is what makes both thresholds agree about the pixels that ship.
+#: Alpha below which a Cycles SHADOW-CATCHER frame is SAMPLING NOISE, not shadow. A claim
+#: about what the renderer scattered, not what is visible: MEASURED on a 704 px shadow
+#: frame, the alpha>=1 bbox is the whole canvas (9537 noise pixels) while the alpha>=8 bbox
+#: is (271,318)-(513,386), the shadow. pack.py ZEROES everything under this in the shadow
+#: sheets it writes BEFORE measuring them, so both thresholds agree on the pixels that ship.
 RENDER_NOISE_FLOOR = 8
 
 #: Per PASS, what counts as sprite in a RAW render. Body and mask are transparent-film
-#: renders whose alpha IS the subject's own coverage -- MEASURED on the shipped 64-frame
-#: body pass, the alpha>=1 union is one pixel wider per side than the alpha>=8 one and
-#: there is no stray alpha anywhere else on the canvas -- so the visible threshold is the
-#: honest one there. A raw shadow frame is noise edge to edge, so asking the visible
-#: question of one reports every frame clipped, every run, and the warning stops working.
+#: renders whose alpha IS the subject's coverage (MEASURED on the shipped 64-frame body
+#: pass: the alpha>=1 union is one pixel wider per side than alpha>=8, no stray alpha
+#: elsewhere), so the visible threshold is honest there. A raw shadow frame is noise edge
+#: to edge; the visible question reports every frame clipped every run, and the warning
+#: stops meaning anything.
 PASS_ALPHA_FLOOR = {"shadow": RENDER_NOISE_FLOOR}
 
 
 def pass_alpha_floor(which: str) -> int:
     """What counts as sprite in a raw `which`-pass frame. One lookup, so no caller picks
-    the noise floor for a body frame by accident -- which is the bug this fixes."""
+    the noise floor for a body frame by accident."""
     return PASS_ALPHA_FLOOR.get(which, SPRITE_VISIBLE_ALPHA)
 
 
 def warn_if_clipped(cfg, outdir, frames, which, floor: int | None = None):
     """Shout when the render ran out of canvas. Measured off the alpha, every run.
 
-    A clipped frame does not look broken, it looks like a shark with a flat dorsal fin,
-    and you will spend twenty minutes on the LIGHTING before you notice the canvas. At the
-    VISIBLE threshold (the default, per pass) the shipped 6-tile body canvas holds scale
-    0.81 with 12 px -- 0.19 tiles -- to spare at the SIDES, frames 16 and 48, the broadside
-    pair. Scaled off that margin the first cut lands just under 0.86. Read at alpha >= 8
-    the same canvas looked good to 0.87, because that reading hands you a pixel of margin
-    per side that is not actually empty. Either way it is one nudge of the scale slider,
-    which is why this runs on every pass.
+    A clipped frame does not look broken, it looks like a shark with a flat dorsal fin, and
+    you spend twenty minutes on the LIGHTING before noticing the canvas. At the VISIBLE
+    threshold (the default, per pass) the shipped 6-tile body canvas holds scale 0.81 with
+    12 px (0.19 tiles) to spare at the SIDES, frames 16 and 48, the broadside pair; scaled
+    off that margin the first cut lands just under 0.86. At alpha >= 8 the same canvas
+    looked good to 0.87, a pixel of margin per side that is not actually empty. Either way
+    it is one nudge of the scale slider, so this runs on every pass.
 
     Runs on cached frames too: the second run at a too-big scale is the one where you have
-    forgotten, and a warning that only fires on a cache miss is a warning you never see.
+    forgotten, and a cache-miss-only warning is never seen.
     """
     from PIL import Image
     floor = pass_alpha_floor(which) if floor is None else floor
@@ -380,16 +373,15 @@ def warn_if_clipped(cfg, outdir, frames, which, floor: int | None = None):
 def cell_fit_line(cfg, cuts, needs) -> str:
     """One line saying whether the compare CELL held every frame, and what it cost.
 
-    The render canvas has had a warning since C.10; the cell it gets composited into had
-    none, and a cell that is too small crops the sprite silently -- it reads as a tight
-    crop, not as a bug. That is the worst possible failure for THIS image, because the
-    compare sheet is where scale, pivot and offset get decided: every one of those
-    judgements is made against a picture the sheet cropped. So the verdict goes on stdout
-    AND in the footer, whether or not it is bad news, the way the mount self-check does.
+    The render canvas has warned since C.10; the cell it is composited into did not, and a
+    too-small cell crops the sprite silently (it reads as a tight crop, not a bug). That is
+    the worst failure for THIS image, where scale, pivot and offset are decided against the
+    cropped picture. So the verdict goes on stdout AND in the footer, good news or bad, like
+    the mount self-check.
     """
     have, oy = cfg["compare.cell_tiles"], cfg["compare.origin_y"]
-    # Rounded UP to the printed precision: 0.01 tiles is 0.64 px, and a recommendation
-    # you paste in that still crops by half a pixel is worse than no recommendation.
+    # Rounded UP to the printed precision: 0.01 tiles is 0.64 px, and a pasted
+    # recommendation that still crops half a pixel is worse than none.
     want = math.ceil((max(needs) if needs else 0.0) * 100) / 100
     bad = [(label, cut) for label, cut in cuts if any(cut)]
     if not bad:
@@ -405,11 +397,11 @@ def cell_fit_line(cfg, cuts, needs) -> str:
 
 
 def downsample(outdir, frames, target_px):
-    """Supersampled frames -> the STAMPED size, Lanczos. Done here and not in Blender
-    because Blender has no Pillow and the uv side does.
+    """Supersampled frames -> the STAMPED size, Lanczos. Here, not in Blender, because
+    Blender has no Pillow.
 
-    Resizes to the derived target rather than width // factor, so the file on disk and the
-    resolution in its own sidecar cannot disagree by a rounding."""
+    Resizes to the derived target, not width // factor, so the file on disk and its
+    sidecar's resolution cannot disagree by a rounding."""
     from PIL import Image
     for i in frames:
         p = outdir / f"frame_{i:03d}.png"
@@ -434,8 +426,8 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
     ppt = d["body_px_per_tile"] if which != "shadow" else d["shadow_px_per_tile"]
     cell = int(round(cfg["compare.cell_tiles"] * d["sprite_px_per_tile"]))
     cols, rows = sheets.contact_grid(len(frames))
-    # Reserved, filled once the cells have been measured -- drop the placeholder and the
-    # grid is laid out one line short and the text renders off-canvas.
+    # Reserved, filled once the cells are measured -- without the placeholder the grid is
+    # laid out one line short and the text renders off-canvas.
     foot = footer_lines(cfg, label, passes) + [""]
     lay = sheets.GridLayout(cols=cols, rows=rows, cell=cell, left=10, top=22,
                             bottom=sheets.footer_height(len(foot)))
@@ -462,10 +454,10 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
         canvas.alpha_composite(bg, (x, y))
         draw.text((x + 3, y - 15), f"{i:02d} {ac.compass(i, cfg['rotations.count'])}",
                   font=font, fill=(190, 196, 202, 255))
-    # The SHADOW pass renders on an 11-tile canvas because a 45-degree sun runs the shadow
-    # a tile east per tile of height, so a body-sized contact cell is a deliberate window
-    # onto it, not a defect -- it goes in the footer without the shout. Body and mask ride
-    # the compare cell exactly, and a crop there is the bug this check exists for.
+    # The SHADOW pass renders on an 11-tile canvas (a 45-degree sun runs the shadow a tile
+    # east per tile of height), so a body-sized contact cell is a deliberate window onto
+    # it: footer only, no shout. Body and mask ride the compare cell exactly, and a crop
+    # there is the bug this check exists for.
     foot[-1] = cell_fit_line(cfg, cuts, needs)
     if which != "shadow" and any(any(cut) for _, cut in cuts):
         print("  WARN " + foot[-1])
@@ -479,19 +471,17 @@ def contact_sheet(cfg, which, frames, bodydir, label, passes=()):
 def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     """Stock / jamaltron / overlay, at matched rotations, with the leg mounts on top.
 
-    The STOCK row is base_animation (the non-rotating under-plate the legs attach to) and
-    then the rotating torso over it, in Factorio's own draw order. That plate is the layer
-    the mount markers land on, so leaving it out understates stock's footprint and makes
-    the shark look like he has more to cover than he does -- and this sheet is where the
-    shark's size gets decided. sheets.mount_selfcheck() proves the markers against it,
-    every run, and the verdict goes to stdout, into the footer and into the sidecar.
+    The STOCK row is base_animation (the non-rotating under-plate the legs attach to) with
+    the rotating torso over it, in Factorio's draw order. The mount markers land on that
+    plate, so leaving it out understates stock's footprint and makes the shark look like he
+    has more to cover -- on the sheet where his size is decided. sheets.mount_selfcheck()
+    proves the markers against it every run; the verdict goes to stdout, the footer and the
+    sidecar.
 
-    TWO MOUNT RINGS, and mixing them up is the whole reason this note exists. The
-    self-check is about STOCK art, so it uses stock's own declared positions. Everything
-    drawn on the JAMALTRON row -- the markers, the legs, the coverage count -- uses the
-    ratio and lift entity.lua actually ships (C.13 and C.27, read out of shared.lua),
-    because a sheet that marks a ring this mod no longer declares is answering a question
-    nobody is asking.
+    TWO MOUNT RINGS, do not mix them up. The self-check is about STOCK art, so it uses
+    stock's declared positions. Everything on the JAMALTRON row (markers, legs, coverage
+    count) uses the ratio and lift entity.lua ships (C.13 and C.27, read out of shared.lua);
+    marking stock's ring on that row would answer a question nobody is asking.
     """
     from PIL import Image, ImageDraw
     d = ac.derived(cfg)
@@ -508,9 +498,9 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
     check = sheets.mount_selfcheck()
     check_line = sheets.selfcheck_line(check)
     print("  " + check_line)
-    # Measured off the cells as they are drawn, but the footer's HEIGHT has to be known
-    # before the canvas exists. So the line is reserved here and filled in below; drop the
-    # placeholder and the grid is laid out one line short and the text renders off-canvas.
+    # Measured off the cells as drawn, but the footer's HEIGHT must be known before the
+    # canvas exists, so the lines are reserved here and filled below (without the
+    # placeholders the grid is one line short and the text renders off-canvas).
     coverage, cuts, needs = [], [], []
     foot = footer_lines(cfg, "compare", passes) + [
         "leg mounts at %.2f of stock (C.13), lifted %.3f tiles (C.27), span %+.0f..%+.0f px "
@@ -576,8 +566,8 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
                 bg.alpha_composite(jam_body)
             else:
                 if stock_body is not None:
-                    # Ghost the FULL stock footprint, plate included -- the overlay is
-                    # read as "where does stock end", and the plate is where it ends.
+                    # Ghost the FULL stock footprint, plate included: the overlay answers
+                    # "where does stock end", and the plate is where it ends.
                     ghost = Image.new("RGBA", stock_body.size, (0, 0, 0, 0))
                     if stock_base is not None:
                         ghost.alpha_composite(stock_base)
@@ -629,15 +619,17 @@ def compare_sheet(cfg, bodydir, shadowdir, frames, passes=()):
 
 # ---------------------------------------------------------------------- C.21 sequence
 
-#: The three passes a sequence sheet needs, and the samples knob each renders at. Body and
-#: mask follow --preview the way --full does; the shadow has one sample count either way.
+#: The three passes a sequence sheet CAN ship, and the samples knob each renders at. Body and
+#: mask follow --preview like --full does; the shadow has one sample count either way. Which
+#: ones a sequence renders is ITS call (sequence.Sequence.passes): the beached flop ships no
+#: mask, so --sequence never launches a mask Blender for it.
 SEQUENCE_PASSES = (("body", "render.samples", "render.preview_samples"),
                    ("mask", "render.samples", "render.preview_samples"),
                    ("shadow", "render.shadow_samples", "render.shadow_samples"))
 
 #: GIF delays are whole CENTISECONDS, so 24 fps (41.67 ms) cannot be one number. Five frames
-#: at 40 ms and one at 50 average exactly 41.67 -- the tempo the tuner and the game play at,
-#: with a 10 ms wobble once every quarter second that nobody can see.
+#: at 40 ms and one at 50 average exactly 41.67 (the tuner's and the game's tempo), with an
+#: invisible 10 ms wobble once every quarter second.
 GIF_DELAYS_MS = (40, 40, 40, 40, 40, 50)
 
 
@@ -648,18 +640,19 @@ def sequence_samples(cfg, which: str, preview: bool) -> int:
 
 
 def render_sequence(seq, *, preview=False, jobs=4, force=False, verbose=False) -> dict:
-    """Every unique config of a C.21 sequence, at its one direction, through all three passes.
+    """Every unique config of a C.21 sequence, at its one direction, through every pass it
+    ships (seq.passes -- all three unless its [sequence] table says otherwise).
 
-    ONE BLENDER PER FRAME PER PASS, and that is the cost of one frame = one config = one
-    hash: a pass cannot render two configs. So the parallelism is ACROSS configs -- `jobs`
-    Blenders at once, each rendering one frame -- rather than across directions the way a
-    wheel renders. Everything lands in the ordinary per-config cache, so the frames the tuner
-    already rendered at this direction are served from it, and pack.py finds them by the
-    same pass_dir() rule the tuner used.
+    ONE BLENDER PER FRAME PER PASS, the cost of one frame = one config = one hash: a pass
+    cannot render two configs. So the parallelism is ACROSS configs (`jobs` Blenders at
+    once, one frame each), not across directions as a wheel renders. Everything lands in
+    the ordinary per-config cache, so frames the tuner already rendered at this direction
+    are served from it, and pack.py finds them by the same pass_dir() rule.
     """
     t0 = time.time()
-    tasks = [(k, cfg, which) for k, cfg in enumerate(seq.configs) for which, _, _ in SEQUENCE_PASSES]
-    stats = {which: {"rendered": 0, "cached": 0} for which, _, _ in SEQUENCE_PASSES}
+    passes = [which for which, _, _ in SEQUENCE_PASSES if which in seq.passes]
+    tasks = [(k, cfg, which) for k, cfg in enumerate(seq.configs) for which in passes]
+    stats = {which: {"rendered": 0, "cached": 0} for which in passes}
 
     def one(task):
         k, cfg, which = task
@@ -682,14 +675,13 @@ def sequence_gif(seq, *, preview=False):
     """The whole cycle as an animated GIF at 24 fps: shadow under body over the compare
     ground, one frame per PLAYED frame, labelled with its beat. Returns the path.
 
-    THIS is how you watch a flop that is more than one clip. The tuner plays one clip's loop;
-    a sequence is several clips, holds and ramps, and the seams between beats are exactly
-    what needs watching. Same pixels the pack gathers, same order Factorio plays them in.
+    THIS is how to watch a flop that is more than one clip. The tuner plays one clip's loop;
+    a sequence is several clips, holds and ramps, and the seams between beats are what
+    needs watching. Same pixels the pack gathers, in Factorio's play order.
 
     The two passes render on different canvases (6 and 11 tiles, same px-per-tile), so both
     are placed on the shadow's canvas by their shared ORIGIN PIXEL, then the stack is cropped
-    to the union of everything visible across the cycle -- one box, so nothing moves in the
-    frame except him.
+    to the union of everything visible across the cycle -- one box, so only he moves.
     """
     from PIL import Image, ImageDraw
     base = seq.configs[0]
@@ -747,8 +739,8 @@ def sequence_gif(seq, *, preview=False):
 
 def footer_lines(cfg, label, passes=()):
     """The visible half of the provenance. `passes` is what ACTUALLY rendered -- a shadow
-    sheet footer that reads "EEVEE/64 samples" because those are the body knobs is a lie
-    you will believe three weeks from now."""
+    sheet footer reading "EEVEE/64 samples" because those are the body knobs is a lie you
+    will believe weeks later."""
     d = ac.derived(cfg)
     rendered = "  ".join("%s %s/%d" % (name, engine, samples)
                          for name, engine, samples in passes) or "no render pass"
@@ -762,18 +754,21 @@ def footer_lines(cfg, label, passes=()):
            cfg["sun.azimuth"], cfg["sun.elevation"], cfg["sun.energy"], cfg["sun.ambient"],
            cfg["render.use_subsurface"], cfg["render.use_normal_map"]),
     ]
-    # THE POSE LINE, and only when there is one. A flop sheet whose footer reads like the
-    # standing sheet's is a sheet you will misfile three weeks from now: at 132 px a rolled
-    # thrash frame and a standing frame are not always distinguishable by eye.
+    # THE POSE LINE, only when there is one. A flop sheet whose footer reads like the
+    # standing sheet's gets misfiled: at 132 px a rolled thrash frame and a standing frame
+    # are not always distinguishable by eye.
     if cfg["model.action"] != pose.REST or cfg["bounce.height"]:
         clip = pose.clip_of(cfg["model.action"])
-        # TWO lines, not one: the draw does not wrap, and at one line the broadside sheet (the
-        # flop preset's, 1250 px) cut the shadow-east figure -- the one number the bounce is for.
+        # TWO lines: the draw does not wrap, and at one line the broadside sheet (the flop
+        # preset's, 1250 px) cut the shadow-east figure, the one number the bounce is for.
         lines.append(
             "POSE %s%s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  ground_contact=%s"
             % (cfg["model.action"], " (%s)" % clip.action if clip else "",
                cfg["model.frame"], cfg["model.pose_gain"], cfg["model.phase_lock"],
                cfg["model.reparent_head"], cfg["model.ground_contact"]))
+        # Its own line for the same reason: the bone list alone runs 27 characters.
+        if bedding_note(cfg):
+            lines.append("BED" + bedding_note(cfg))
         lines.append(
             "BOUNCE %.2f tiles peak (phase %.2f, g %.1f -> %.1f of %d frames airborne)  this "
             "frame lifted %.3f tiles = %.1f px up-screen, %.1f px of shadow east"
@@ -784,18 +779,30 @@ def footer_lines(cfg, label, passes=()):
     return lines
 
 
+def bedding_note(cfg) -> str:
+    """C.5.6's four knobs as a suffix for the pose lines, or "" while all sit at default --
+    the standing shark's lines stay exactly as they were."""
+    if not (ac.bedded_in(cfg) or cfg["model.fin_fold"] or cfg["model.spine_sag"]):
+        return ""
+    return "  ignore=%s sink %.3f fin_fold %.0f%s spine_sag %.1f" % (
+        "/".join(cfg["model.ground_ignore"]) or "-", cfg["model.ground_sink"],
+        cfg["model.fin_fold"], " (floor)" if cfg["model.fin_floor"] else "",
+        cfg["model.spine_sag"])
+
+
 def pose_log_line(cfg, d) -> str:
     """The one-line pose summary main() prints, or "" for a standing, grounded config. A
-    function so the format string is tested: a placeholder count that drifts from its
-    arguments is a TypeError that only fires on POSED renders, which is the worst place."""
+    function so the format string is tested: a placeholder count drifting from its
+    arguments is a TypeError that only fires on POSED renders."""
     if cfg["model.action"] == pose.REST and not cfg["bounce.height"]:
         return ""
     return ("  pose %s frame %d gain %.2f phase_lock %.2f  reparent_head=%s  "
-            "ground_contact=%s  bounce peak %.2f tiles (phase %.2f) -> this frame +%.3f tiles "
+            "ground_contact=%s%s  bounce peak %.2f tiles (phase %.2f) -> this frame +%.3f tiles "
             "= %.1f px up-screen, %.1f px shadow east"
             % (cfg["model.action"], cfg["model.frame"], cfg["model.pose_gain"],
                cfg["model.phase_lock"], cfg["model.reparent_head"],
-               cfg["model.ground_contact"], cfg["bounce.height"], cfg["bounce.phase"],
+               cfg["model.ground_contact"], bedding_note(cfg), cfg["bounce.height"],
+               cfg["bounce.phase"],
                d["bounce_lift_tiles"],
                d["bounce_lift_up_screen_tiles"] * d["body_px_per_tile"],
                d["bounce_lift_tiles"] * d["light_run_east"] * d["shadow_px_per_tile"]))
@@ -828,9 +835,10 @@ def build_parser():
                    help="jamaltron beside the stock spidertron at matched rotations, "
                         "with shadow and leg mounts. The one to look at")
     m.add_argument("--sequence", action="store_true",
-                   help="the config's [sequence] (C.21): every unique frame through body, mask "
-                        "and shadow at its one direction, then an animated GIF of the whole "
-                        "cycle at 24 fps. Add --preview for preview samples")
+                   help="the config's [sequence] (C.21): every unique frame through the passes "
+                        "it ships (body, mask, shadow unless [sequence] passes says less) at "
+                        "its one direction, then an animated GIF of the whole cycle at 24 "
+                        "fps. Add --preview for preview samples")
     m.add_argument("--show", action="store_true", help="print the resolved config and exit")
 
     k = p.add_argument_group("knobs")
@@ -850,8 +858,8 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    # A typo'd knob is a user error, not a crash. A traceback buries the one line that
-    # says which knob and what to type instead, and this tool is driven by typing knobs.
+    # A typo'd knob is a user error, not a crash: a traceback buries the one line saying
+    # which knob and what to type instead.
     try:
         cfg = ac.load(args.config, ac.parse_set(args.sets))
     except ac.ConfigError as exc:
@@ -911,8 +919,8 @@ def main(argv=None):
                                   [("body", cfg["render.engine"], cfg["render.samples"])]))
 
     if args.mask:
-        # Same samples rule as the body pass, because it IS the body pass with a different
-        # material: --mask alone previews, --mask --full is the sheet.
+        # Same samples rule as the body pass (it IS the body pass with a different
+        # material): --mask alone previews, --mask --full is the sheet.
         frames = explicit or ac.frame_indices(cfg, None if args.full
                                               else cfg["rotations.preview"])
         samples = cfg["render.samples"] if args.full else cfg["render.preview_samples"]

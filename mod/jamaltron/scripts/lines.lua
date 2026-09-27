@@ -17,7 +17,7 @@
 --   count     pass the entity's leg-break count as the string's one parameter
 -- Per pool: event is the catalog heading, swap marks an event that swaps entities
 -- (a pending chain on that entity is cancelled by it).
--- 259 rows, 16 pools, 9 chains.
+-- 271 rows, 17 pools, 10 chains.
 
 return {
   locale_section = "jamaltron-line",
@@ -389,7 +389,8 @@ return {
       event = "jump refused",
       split = "gated",
       dimension = "reason",
-      values = {"water", "blocked", "platform", "cooldown", "autopilot", "no_driver"},
+      values = {"water", "lava", "ammoniacal-solution", "void", "blocked", "platform", "cooldown", "autopilot",
+        "no_driver"},
       swap = false,
       rows = {
         {id = "jump_refused.01", grp = "jump_refused.01", ch = "speech", w = 8, tier = "quiet", sub = "any"},
@@ -413,6 +414,28 @@ return {
         {id = "jump_refused.19", grp = "jump_refused.19", ch = "speech", w = 3, tier = "unbearable", sub = "any"},
         {id = "jump_refused.20", grp = "jump_refused.20", ch = "speech", w = 2, tier = "quiet", sub = "any",
          gate = "once_per_save"},
+      },
+    },
+    shore = {
+      event = "shore",
+      split = "gated",
+      dimension = "ground",
+      values = {"water", "lava", "ammoniacal-solution", "void"},
+      swap = false,
+      rows = {
+        {id = "shore.01", grp = "shore.01", ch = "narration", w = 6, tier = "quiet", sub = "any"},
+        {id = "shore.02", grp = "jump_refused.12", ch = "speech", w = 5, tier = "quiet", sub = "any"},
+        {id = "shore.03", grp = "shore.03", ch = "speech", w = 5, tier = "quiet", sub = "any"},
+        {id = "shore.04", grp = "jump_refused.08", ch = "speech", w = 10, tier = "quiet", sub = "water"},
+        {id = "shore.05", grp = "shore.05", ch = "speech", w = 2, tier = "quiet", sub = "water", gate = "once_per_save",
+         follow = "shore.06", delay = 120},
+        {id = "shore.06", grp = "shore.06", ch = "speech", w = 1, tier = "quiet", sub = "water", tail_only = true},
+        {id = "shore.07", grp = "idle.13", ch = "speech", w = 4, tier = "normal", sub = "water"},
+        {id = "shore.08", grp = "shore.08", ch = "narration", w = 4, tier = "normal", sub = "water"},
+        {id = "shore.09", grp = "shore.09", ch = "speech", w = 5, tier = "normal", sub = "water"},
+        {id = "shore.10", grp = "idle.05", ch = "speech", w = 8, tier = "quiet", sub = "lava"},
+        {id = "shore.11", grp = "shore.11", ch = "speech", w = 5, tier = "normal", sub = "lava"},
+        {id = "shore.12", grp = "idle.17", ch = "speech", w = 8, tier = "quiet", sub = "ammoniacal-solution"},
       },
     },
   },
