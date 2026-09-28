@@ -1,8 +1,8 @@
 # tools/
 
-Python side of the mod: Blender render driver, sprite packer, line-catalog codegen. A `uv`
-project, not a package - nothing here is published, so `pyproject.toml` sets
-`package = false` and carries no build backend.
+Python side of the mod: Blender render driver, sprite packer, line-catalog codegen and the
+gameplay-video pipeline ([The video](#the-video)). A `uv` project, not a package - nothing
+here is published, so `pyproject.toml` sets `package = false` and carries no build backend.
 
 Python is pinned to 3.11 (`.python-version`) to match the 3.11.11 CPython Blender 4.4.3
 bundles. `uv.lock` is committed; `uv sync --frozen` rebuilds the exact venv.
@@ -740,6 +740,9 @@ The packer (C.7) and everything else, also from the repo root:
 | `python3 tools/lint_sprites.py --strict render-out/review/icons/*/icons.json` | C.15: the icon gate over the candidates. Each manifest resolves against its own `mod_roots` |
 | `tools/play.sh --new` | playtest: the real game on its own profile in `.playtest/` (gitignored) - its own saves, mod list and settings, jamaltron symlinked from the working tree, a fresh map loaded straight in. Your real Factorio profile is never read or written (measured: zero files changed in it across a run). In game: `/jamaltron-kit` (row ids to the log; `/jamaltron-ids` for chat), `/jamaltron-say <pool> [cond]`, `/jamaltron-row <id>`, `/jamaltron-state`. Plain `tools/play.sh` reopens the profile at the main menu; `--base-only` drops Space Age; `--reset` starts it clean |
 | `tools/shot.sh --scene both --zoom 2` | C.30: screenshots out of the REAL renderer, no play session. See [Screenshots](#screenshots-toolsshotsh) |
+| `tools/video.sh [--take main\|loop]` | G.4: film a take of the gameplay video - a headless dry run of the director, then `--benchmark-graphics` with one stamped jpg a tick, then every frame's stamp decoded (0 mismatches or it fails) - into `render-out/video/takes/`. Its own profile in `.videotest/`; `--dry-run`, `--skip-dry`, `--fresh`, `--out`, `--quality`. See [The video](#the-video) |
+| `uv run --directory tools python -m video.build --take ../render-out/video/takes/main-<stamp> --cut video/main.toml` | G.5-G.8: a verified take + a cut -> the master mp4, the stills (and `--cut video/loop.toml`: the portal loop mp4 + the README GIF) in `render-out/video/out/`. `--dry-run`, `--unverified`, `--allow-silent-audio`, `--allow-caption-mismatch` |
+| `uv run --directory tools python -m video.stamp verify <take>` | re-run a take's stamp check; writes its `verify.json` |
 | `tools/smoke.sh --harness tools/harness/jamaltron-harness` | D.5.4: the smoke test plus a scripted in-engine run (3800 ticks) of the speech rules - chains, windows, R3/R4/R5, the fork and {N}, transfer, idle, moving, command_done - E.2.4's shore lanes (`shore.lua`) and F.3's bubble cap (`cap.lua`: 8 real breaks flopping under `jamaltron-max-bubbles` 3, the engine's bubble count checked against speech.lua's registry every tick, an event at the cap still speaking). Fails on any `HARNESS FAIL` line |
 | `tools/smoke.sh --harness tools/harness/jamaltron-fire-harness --ticks 2300` | D.7: the flamethrower - four guns on the vehicle and airborne, four disarmed twins on beached (D.7.3: he fires nothing beached, by himself or for a seated driver, against a standing control whose driver does; the ammo across a real break and repair is `jamaltron-jump-harness --ticks 4500`'s AM lane), the stream leaving ONE point under his belly, (0, -1.36), at 8 aims and 8 facings (D.7.4), range (fires at 6/9/10 tiles, never 11/12), one `attacking` line per burst, attacking.03's window, friendly fire confirmed and not (a first burst rolls under it, the next fight does not inherit it), his own splash and a squad-mate's kept out of `damaged`, 0 HP of self-burn at a behemoth 6 tiles out on 16 bearings (D.7.5 (b): all 24 legs fire-proof, pinned on the prototypes too), the damage filter's fire half registered only while he fires, his research requiring flamethrower, 20 Jamaltrons in a fight profiled. Its header has the graphics re-run that shows the source; the LOOK (flame under his legs and body, W1's layers) is `tools/shot.sh`'s |
 | `uv run --directory tools python gen_lines.py --check` | B.5: validate `character/lines.md` against its own contract (and against the gitignored book extracts when they are on this machine) and report whether the generated `scripts/lines.lua` + `locale/en/jamaltron-lines.cfg` are current. Writes nothing |
@@ -869,6 +872,259 @@ hundred bytes of PNG.
 `gpu.platform.backend_type_get()` raises `SystemError` in background mode. Do not probe the
 `gpu` module headless - rendering is fine, that one call is not.
 
+## The video
+
+PLAN Phase G. The gameplay video is SCRIPTED: `tools/video.sh` films a take out of the real
+renderer under `--benchmark-graphics`, no hands, one stamped jpg a tick; `python -m
+video.build` cuts it, draws the captions and cards, rebuilds the sound from the game's own
+files and encodes the deliverables. This section is the interface between the pieces (the
+"contract" the code's comments cite). The director (`harness/jamaltron-video`) writes the
+take; `video/timeline.py`, `video/pump.py`, `video/captions.py` and `video/mix.py` read it.
+Change a format here and in the code together.
+
+```sh
+tools/video.sh --take main          # dry run (headless, 4 s), then the take: 88 s wall at 60 UPS
+tools/video.sh --take loop          # the creek hop the GIF and the portal loop come from (26 s)
+uv run --directory tools python -m video.build \
+    --take ../render-out/video/takes/main-<stamp> --cut video/main.toml    # 39 s
+uv run --directory tools python -m video.build \
+    --take ../render-out/video/takes/loop-<stamp> --cut video/loop.toml    # 1.2 s
+```
+
+Always in that order: a build reads a take, it never films one. A cut edit is a rebuild off the
+same take; re-film only when the director, the set or the mod changed. The times are MEASURED
+on main-20260927-221640 + loop-20260927-221740 with the machine to itself (the build times
+from build.json's `seconds`).
+
+Deliverables land in `render-out/video/out/<cut>/` (gitignored, like the takes). NEVER in git:
+Wube's policy allows their sounds IN a video, never as files (`data/eula.txt`), and nothing
+from the install - .ogg, Titillium Web - is ever copied into the repo; both are read from
+`/Applications/factorio.app/Contents/data` (or `$FACTORIO_DATA`) at build time.
+
+### The take
+
+`render-out/video/takes/<take>-<stamp>/`, written by `video.sh` and nothing else:
+
+| file | what |
+| --- | --- |
+| `frames/f<tick:07d>.jpg` | one per captured tick, 1920x1104 q90 (~0.85 MB each on grass + live water, ~3.1 GB a main take - MEASURED G.4): the 1080 rows the video keeps plus a 24-px band carrying the TICK STAMP |
+| `events.jsonl`, `track.jsonl` | the director's two logs (below) |
+| `run.log`, `dry-run.log` | the game's logs; `jamaltron speech <unit> <row>` lines are the captions' cross-check (the director turns the mod's debug on) |
+| `take.lua` | the director's config for that run (below) |
+| `stills/<name>.png` | gallery PNGs, 1920x1080, no band, centred on him |
+| `verify.json` | the stamp verdict: `ok`, `frames`, mismatches, duplicates, gaps. `video.build` refuses a take without an ok one (`--unverified` overrides and says so in build.json) |
+
+THE STAMP: 20 bits of `game.tick` as 16-px squares on a 24-px pitch from x=16, least
+significant first, then a white and a black sentinel, drawn as world rectangles in the same
+on_tick that requests the shot. `video/stamp.py` reads it off EVERY frame: 0 mismatches, 0
+duplicates, 0 gaps or the take fails. A file count proves nothing (G.1: at game speed 4
+without `force_render`, all 361 files landed and 67 showed the wrong tick).
+
+`take.lua` is Lua source video.sh writes from validated values (a syntax error in it SIGSEGVs
+the game on load, MEASURED G.1): `return {take = "main"|"loop", capture = bool, resolution =
+{1920, 1104}, band = 24, quality = 90, dir = "video/<take>", stills = bool}`. `capture =
+false` is the headless dry run: every beat plays, both logs are written, nothing is shot.
+
+### The take's logs
+
+`events.jsonl`, one object a line in TICK ORDER. `tick` is when it HAPPENED: what the director
+only sees a tick later (on_tick T reads what update T-1 did - his speed, the ammo, the
+roboport's robots, his health) is dated back to T-1. Ordinals count an `ev` in tick order
+(`takeoff#3` is the third takeoff).
+
+| ev | fields | when |
+| --- | --- | --- |
+| `capture_start` / `capture_end` | | the first / last captured tick |
+| `beat` | `name` | a beat begins. Main: establish board hop1 hop2 wave report lake_jump beached apology repair stand encore wrap. Loop: loop_pre loop wrap |
+| `takeoff` | `x y distance land_tick peak` | the director's press, off the arc the mod built |
+| `apex` | `x y` | takeoff + round((land_tick - takeoff) / 2) |
+| `landing` / `break` | `x y` | `on_spidertron_replaced` reason landing (clean) / break (beached) |
+| `thud` | `x y` | the landing thud, the same tick as its landing or break |
+| `repair` | `x y` | the stand-up swap (jamaltron's 60-tick poll) |
+| `line` | `row channel forced x y n` | a SPEECH row on screen from this tick (forced, or the mod's roll left standing); `n` = his break count, the `__1__` some rows carry |
+| `said` | `row channel x y` + `replaced_by` (speech) or `hidden: true` (narration) | a row the mod said that is on screen for NO frame: a speech roll a forced row replaced on its own tick, or narration world text the director hides |
+| `footfall` | `x y` | the director's script trigger on jamaltron's legs |
+| `walk_start` / `walk_stop` | `x y` | his speed crosses 0.01 tiles/tick |
+| `fire_start` / `fire_stop` | `x y` | a firing run (the fired event + the ammo diff); stop = 10 quiet ticks after the last round |
+| `biter_spawn` / `biter_attack` / `biter_died` | `x y name` | spawned / first damage to him / died |
+| `wave_clear` | | the last spawned biter died |
+| `repair_cue` | | repair packs into the roboport |
+| `bot_out` | `x y` | a construction robot leaves the roboport |
+| `repair_start` / `repair_full` / `repairing` | | his health first rises / reaches max / every 30 ticks while it rises |
+| `still` | `name` | a gallery PNG was taken |
+| `liberty` | `what` | anything a player would not see happen: a setting write, a heal, peaceful mode, a cancelled chain. Forcing a row is the method, not a liberty |
+
+`track.jsonl`, one line per captured tick: `{"tick", "cam": [x, y], "zoom", "body":
+"jamaltron|jamaltron-airborne|jamaltron-beached", "pos": [x, y], "lift": [dx, dy],
+"sprite": [x, y]}` - `lift` is where his DRAWN torso sits off `pos` (standing 0,-1.5; beached
+0,0; in the air the arc's own offset), `sprite` the arc sheet's raw offset (in the air only).
+
+WHICH LINE A FRAME SHOWS, MEASURED on main-20260927-204942 (the first contract said "frame T
+anchors on line T+1", which holds on the ground only). Line T is written at the end of the
+director's on_tick T: after jamaltron's on_tick (it moves him through an arc and lands him)
+and the director's own press, before the entity update (walking) and every on_nth_tick (the
+stand-up). So:
+* `cam`, `zoom`: line T is frame T's camera, always
+* `pos`, `body`, `lift`: frame T shows line T+1 on the ground and on the stand-up tick (line
+  3480 still says beached, lift 0; frame 3480 shows him up), line T in an arc and on its
+  takeoff and landing ticks (line 232 already holds tick 232's arc step, line 261 the landed
+  body)
+
+`captions.Anchorer` implements it; `journal.lua` (the writer) carries the same note.
+
+### The cut
+
+A cut file (`video/main.toml`, `video/loop.toml`) is written in EVENTS, never ticks - the
+director is event-driven, and headless and graphics runs drift by up to a 60-tick poll - so a
+cut re-resolves against every new take with no edits.
+
+```toml
+fps = 60                          # must be 60: one frame per tick at 60 UPS
+deliver = "master"                # master | loop (no captions, no audio track)
+crop = [340, 240, 1280, 720]      # loop only: [x, y, w, h] of the kept 1920x1080, 16:9
+[[segment]]                       # a span
+from = "takeoff#1"                # <ev>[#n] or beat:<name>, then +N / -N ticks
+to = "landing#1"                  # HALF-OPEN [from, to): shared anchors show no tick twice
+speed = 0.3333333333              # source ticks per output frame: 1/3 = each frame x3, 5 = every 5th
+tag = "5x"                        # a corner marker while it plays (<= 8 chars)
+audio = "live"                    # live | mute
+caption = "below"                 # lines SAID in this range are captioned under his feet
+[[segment]]                       # a freeze: one source frame held
+at = "apex#4"
+hold = 4.5                        # seconds
+audio = "mute"
+[[overlay]]                       # a card over the live picture, in output seconds
+card = "title"
+from_out = 0.0
+to_out = 3.0
+[[card]]                          # a full-frame card after the segments, over the last frame dimmed
+card = "end"
+seconds = 7.0
+```
+
+A bare `<ev>` needs exactly one in the take; a missing or ambiguous anchor is a hard error
+naming it. Speeds are exact fractions (0.3333 means 1/3, so a long span never drifts), frame
+REPETITION not interpolation. The resolver writes `frames.json`, which the pump and the mixer
+both read: `{"fps", "deliver", "captions", "crop", "frames": [{"src": T|null, "seg": i}],
+"segments": [{"index", "kind": "span|freeze|card", "speed", "from", "to", "tag", "audio",
+"out": [f0, f1], "card", "caption"}], "overlays": [{"card", "from_out", "to_out", "out"}]}`.
+
+### Liberties
+
+A liberty is anything the video does that a player would not see the game do. Every one is
+TAGGED where somebody checking the video can find it, in the take's logs or on screen:
+
+* in the engine, a `liberty` event (`what` says what and WHY, e.g. `setting
+  jamaltron-leg-break-percent 100: the break is the beat`), echoed to run.log as `VIDEO liberty
+  ...`. `grep '"liberty"' <take>/events.jsonl` lists them. main-20260927-221640 carries 14: the
+  three pins at tick 0 (speech cooldown 300 s, break chance 0, distance 8), the lake jump's
+  distance 20 + break 100 and their resets, the encore's distance 20, peaceful mode off and on
+  round the wave, one cancelled chain (hop1's own roll was land.11, a chain head; forcing
+  land.03 over it would still have delivered its punchline land.04 later) and a heal after
+  each clean landing. The loop's 7 are the pins and 4 heals. The heals hide a MOD bug, not a
+  look: the thud's health bar rides the next arc along the ground (G.12)
+* on screen, the edit: the time-lapse draws its `tag` (`5x`) for as long as it plays and the
+  freeze is muted. Slow-mo carries NO tag (storyboard A tags only the time-lapse) and neither
+  does the 0.5 s poster hold at the top, which plays live sound under a still frame
+* in the sound, the two readability calls under [Sound](#sound), both constants in mix.py
+
+NOT liberties: forcing a row (the method - every row shown is a catalog row from the pool the
+mod speaks from at that moment; where the mod rolled its own on the same tick, `said ...
+replaced_by` records it), staging whose result is ordinary play (the engineer walking in and
+boarding, a biter wave sent at him, the repair packs put in the roboport) and the post
+captions standing in for his GUI bubble. The mod's narration world text is hidden every tick
+and each hidden row logged `said ... hidden: true`, so the cross-check accounts for it. Two
+honest gaps: the apology TIMING is the director's (break+270 / +570, which the mod only gets
+near at speech-cooldown <= 5 s, apology-interval <= 10 s and unbearable - storyboard A's
+reading of breakage.lua) and no event says so, and build.json names the take, not its
+liberties - follow its `take` to the events.
+
+### Captions
+
+Post captions, drawn in Pillow from the mod's OWN locale string by row id
+(`locale/en/jamaltron-lines.cfg`, `__1__` = the line event's `n`), because his speech bubble is
+GUI and never reaches a `show_gui=false` frame (G.1). Styled after the compilatron bubble:
+Titillium Web SemiBold 44 px at 1080p, text {255, 246, 113}, a dark translucent slanted box.
+* timing is the game's fade-out: up 300 ticks from the tick said, fading 29 (speech.lua's
+  SHOW/FADE_TICKS), replaced on the spot by the next line - mid-fade included, at the alpha
+  its own fade had reached. In SOURCE ticks: a 1/3 span shows a caption three times as long.
+  The pop-in is a choice (the game very likely fades in too; unmeasured - see captions.py)
+* none during a time-lapse, none in a loop cut
+* anchored on his drawn torso (the rule above), clear of his legs by body (standing 2.6
+  tiles, beached 2.2, airborne 1.0 - MEASURED knee and broken-leg heights); in an arc it
+  RATCHETS - holds the pre-takeoff height until he rises to it, rides up to the peak, holds
+  there to the landing - so it never bobs; `caption = "below"` hangs it 4.8 tiles under the
+  torso (the feet reach 4.3-4.6). Clamped inside the frame
+* THE CROSS-CHECK, before anything encodes: every `jamaltron speech <unit> <row>` in run.log
+  is a caption in this cut, or the take PROVES it never reached the screen (a `said` that
+  checks out: a speech row's `replaced_by` is a line on the same tick, a narration row is
+  `hidden`; or a `line` the cut drops or time-lapses). Anything else fails the build
+  (`--allow-caption-mismatch` builds anyway and records it)
+
+### Sound
+
+Rebuilt from the events (Factorio cannot export its audio): each event becomes the sound the
+game plays for it, read from the install at mix time, at the prototype's own volume, with two
+readability calls - the legs lifted to 0.28 and the wind bed ducked 7.5 dB under the thud and
+the flame - and no invented takeoff, break or flop sound. An event at source tick s plays on
+the first frame of each LIVE segment whose [from, to) holds it with `src >= s`; a segment that
+continues the flow does not re-trigger; a time-lapse's tail past its last sample plays where
+the flow resumes. Pitch never shifts. The engine's aggregation is emulated in source time; a
+time-lapse plays every round(speed)-th instance of each sound. Two-pass LINEAR normalisation to
+-16 LUFS under -1.5 dBTP, measured with one meter (ebur128) both ways. mix.py's docstring has
+every MEASURED number; `build.json`'s `mix` has the whole report of a build (loudness, cues,
+drops, anything on no live frame).
+
+### Encode
+
+* master: rgb24 rawvideo from the pump -> `libx264 -preset slow -crf 20 -profile:v high -level
+  4.2`, `scale=out_color_matrix=bt709:out_range=tv,format=yuv420p` + `setparams` (the
+  `-color_*` flags alone do NOT reach the stream on ffmpeg 9.0.2, MEASURED), tagged bt709. An
+  IDR on every segment start and a GOP longer than the longest hold: x264's 250 put one 1.1 s
+  into the freeze and the still re-grained (MEASURED). Sound: AAC-LC 160k 48 kHz, muxed `-c:v
+  copy`. A master with no sound FAILS (`--allow-silent-audio` to build one anyway)
+* loop: one pass -> the portal mp4 (960x540 60 fps, NO audio track, < 1 MB) and the README GIF
+  (every source frame at 2 cs = 50 fps, 720 wide, palette per diff, Bayer dither; 60 is
+  unrepresentable and 25/30 judder)
+* every output is ffprobed before the build calls itself done; everything is built into
+  `<out>/.building-<pid>/` and moved in only when every check passed, so a late failure never
+  leaves new media beside an old build.json. `--dry-run` writes to `<out>/dry-run/`
+
+`tests/test_video_*.py` cover all of it without Factorio: fake takes (`tests/video_fake.py`,
+each frame's colour encoding its tick), a fake factorio for video.sh, and real ffmpeg when it
+is installed.
+
+### Known limits
+
+v0 as built from main-20260927-221640 (MEASURED unless it says otherwise). The look and the
+mix are G.9's, chotchki's eye; what follows is what the pipeline itself does not do yet.
+
+* the master is 78.2 MB (crf 20, 10.1 Mbit/s of grass and live water) against GitHub's 10 MB
+  free-plan cap on a README video, so publishing needs a web encode (G.10). The master is the
+  source, not the upload
+* a take films at 60 UPS only with the machine to itself: with another Factorio running the
+  main take filmed at 28.9 UPS (217 s wall) and the master built in 347 s, not 39. Every stamp
+  still verified - load costs time, never frames
+* 3.1 GB a main take (0.83 MB a frame), 0.3 GB a loop, and nothing deletes old ones. Keep the
+  takes a build.json names
+* Mac defaults: the game at `/Applications/factorio.app` (`FACTORIO_BIN`, `FACTORIO_DATA`
+  otherwise), ffmpeg from Homebrew's keg (`FFMPEG` / `FFPROBE`, else PATH). A Steam or Linux
+  install is covered by a unit test with a fake PATH ffmpeg, never run end to end
+* captions keep the game's own 300 + 29 ticks, so some outlive their moment: land.03 over
+  hop2, attacking.01 on the walk to the lake, repaired.07 through the encore's pull-out.
+  `below`'s 4.8 tiles is measured on the standing body only
+* the first 4.85 s is wind only (the engineer's footsteps are real game sounds with no event
+  to hang them on), and the mix spans 28 LU (-16.1 LUFS, -1.9 dBTP). Nobody has listened to
+  it critically yet
+* the mod, on camera (G.12): the shadow's tail draws a thin line ~3 tiles right of a standing
+  body (it crosses the creek in every loop frame), the d=20 apex shadow lands ~10 tiles right
+  and 7 down of him on the grass while he is over water. The health-bar bug is hidden by the
+  heals (see Liberties), not fixed
+* the GIF plays 3.03 s of game in 3.64 s: 50 fps is the closest GIF delay to 60, and 25/30
+  judder. 720 wide because 960 came out 4.88 MB against the ~3 MB target (`build.GIF_W`)
+* `tools/lint.sh` gates the director's Lua; the other five harness mods under `harness/` are
+  still outside it (26 luacheck warnings)
+
 ## Layout
 
 ```
@@ -981,9 +1237,39 @@ tests/
   lua/test_wreck.lua        D.1.3: his broken legs - every leg one piece (checked off the drawn
                             sprites), bent, inside ~6 tiles, off his face, rarely across another,
                             varied, 46 objects, redrawn when an update re-cuts the sprites
+  video_fake.py             G.5-G.8: a FAKE take (frames whose colour encodes their tick, both
+                            logs, run.log, verify.json) at any size, and the storyA/loop events
+  test_video_timeline.py    the take's logs, the anchor grammar, every cut-file refusal, the
+                            resolver and the shipped cut files against storyA-shaped takes
+  test_video_stamp.py       the tick stamp: geometry pinned to camera.lua, JPEG round trips, a
+                            shifted, duplicated, missing or unreadable frame failing verify
+  test_video_captions.py    the text by row id, the game's timing (mid-fade replacement), the
+                            anchor (T/T+1, the arc ratchet, below), the cross-check, the bubble
+  test_video_pump.py        the band crop, play order, every compositing layer, the loop crop,
+                            the encode and keyframe command lines
+  test_video_mix.py         the soundtrack: onsets through every segment kind, aggregation,
+                            the time-lapse thinning, loops, the gate, and real renders
+  test_video_build.py       end to end on a fake take: the master and the loop through real
+                            ffmpeg, the verify gate, staging, the audio refusal, the CLI
+  test_video_sh.py          video.sh against a fake factorio: every argument, the profile and
+                            --out refusals, the plumbing, the stamp verify
+video/                G.5-G.8 (PLAN Phase G): a verified take + a cut file -> the deliverables.
+                      The formats between these files are "The video" above
+  timeline.py         the take's logs, the anchor grammar, the cut resolver -> frames.json
+  stamp.py            the tick stamp: decode + verify every frame of a take (video.sh calls it)
+  captions.py         the caption text, timing, anchor and bubble; the speech-log cross-check
+  cards.py            the title and end cards (Titillium Web from the install)
+  pump.py             frames -> crop, captions, tag, cards -> rgb24 -> ONE ffmpeg process
+  mix.py              events + frames.json -> the mastered AAC, from the install's .oggs
+  build.py            the CLI: take + cut -> checked, staged deliverables + build.json
+  main.toml           the main take's cut (storyboard A)
+  loop.toml           the loop take's cut (the README GIF + the portal loop)
 harness/jamaltron-harness/  test-only mod smoke.sh --harness loads (D.5.4; grows into F.1)
 harness/jamaltron-fire-harness/  D.7's flamethrower in the engine (--ticks 2300)
+harness/jamaltron-video/  G.2-G.3: the video's DIRECTOR - the set, the event-driven beat
+                      machine, the camera, the stamped capture and the two logs video.sh reads
 playtest/jamaltron-playtest/  the /jamaltron-* console commands tools/play.sh loads
 play.sh             the isolated playtest profile launcher
+video.sh            G.4: the video's capture driver, its own profile in .videotest/
 smoke.sh, build.sh  shell, not part of the uv project (PLAN A.2)
 ```

@@ -32,11 +32,15 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Isolated Factorio profiles (tools/smoke.sh throwaway; play.sh, shot.sh kept between runs),
-# build output (build.sh), logs
+# Isolated Factorio profiles (tools/smoke.sh throwaway; play.sh, shot.sh, video.sh kept between
+# runs), build output (build.sh), logs
 .smoketest/
 .playtest/
 .shottest/
+.videotest*/
+# The video director's per-run config: tools/video.sh writes it into its profile's copy (and a
+# manual run may drop one beside the committed director); never source.
+tools/harness/jamaltron-video/take.lua
 dist/
 jamaltron_*.zip
 factorio-current.log

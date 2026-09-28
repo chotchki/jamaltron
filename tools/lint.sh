@@ -23,6 +23,12 @@
 # missing FAILS instead of skipping. CI calls this (PLAN C.14), one job per gate, so
 # each reports on its own and neither passes on a runner that lost its binary.
 #
+# WHAT IS GATED: mod/, and the video's director (tools/harness/jamaltron-video, PLAN G.3) -
+# its Lua runs in the real game mid-take, where a slip is an Error or a SIGSEGV a minute into
+# a capture. .luacheckrc gives its modules the control std; .luarc.json resolves its requires
+# (its own dir, and __jamaltron__/ via mod/?.lua). The other harness mods and tests/lua are NOT
+# gated yet (26 luacheck warnings in the harnesses when the director was added).
+#
 # Not covered: tools/*.sh. shellcheck is not installed locally or in CI, so no shell
 # script here has ever been linted.
 #
@@ -44,7 +50,7 @@ ONLY=''
 QUIET=0
 VERBOSE=0
 
-usage() { sed -n '2,34p' "${BASH_SOURCE[0]}"; }
+usage() { sed -n '2,40p' "${BASH_SOURCE[0]}"; }
 die() { echo "lint: $*" >&2; exit 2; }
 say() { [ "$QUIET" -eq 1 ] || echo "lint: $*"; }
 
@@ -101,7 +107,8 @@ if ! wanted luacheck; then
 elif command -v "$LUACHECK_BIN" >/dev/null 2>&1; then
   ran=1
   rc=0
-  ( cd "$REPO_ROOT" && "$LUACHECK_BIN" --no-color mod/ ) >"$TMPWORK/luacheck.txt" 2>&1 || rc=$?
+  ( cd "$REPO_ROOT" && "$LUACHECK_BIN" --no-color mod/ tools/harness/jamaltron-video/ ) \
+    >"$TMPWORK/luacheck.txt" 2>&1 || rc=$?
   total="$(grep -E '^Total: ' "$TMPWORK/luacheck.txt" | tail -1 || true)"
   if [ "$rc" -eq 0 ]; then
     say "ok   luacheck  ${total:-clean}"

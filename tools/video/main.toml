@@ -1,0 +1,90 @@
+# The main take's cut: storyboard A (chronological, punchline last), in EVENTS. Resolved by
+# video/timeline.py against the take's own events.jsonl, so it survives a re-shoot as-is.
+# Anchors: <ev>[#n] or beat:<name>, then +N/-N ticks. Source ranges are half-open [from, to).
+# Takeoffs in this take: #1 hop1 (creek), #2 hop2, #3 the lake, #4 the encore back over it.
+
+fps = 60
+deliver = "master"
+
+# The poster: frame 0 held half a second under the title (overlay below) before anything moves,
+# so the first press lands at 3.35 s, after the title has gone - storyboard A's 3.3 s. The
+# director boards at +126 and presses at +171 ticks (2.85 s), which at 1x from frame 0 put the
+# takeoff inside the title's fade. Live audio: the wind bed runs under it.
+[[segment]]
+at = "capture_start"
+hold = 0.5
+
+# Establish + board, live, up to the press: the engineer walks in from off-frame left.
+[[segment]]
+from = "capture_start"
+to = "takeoff#1"
+
+# Hop1's arc over the creek at 1/3 speed, storyboard A's: the default arc is 30 ticks, 0.5 s -
+# too quick to read the legless torso and its shadow at 1x; at 1/3 it is 1.5 s on screen and
+# jump.01 (17 ch) reads in it. Out ON the landing, which plays at 1x (the thud is real time).
+[[segment]]
+from = "takeoff#1"
+to = "landing#1"
+speed = 0.3333333333
+
+# Real time from the touchdown through hop2 ("The legs held!"), the biter wave, the report to
+# the engineer, and the lake jump's approach - as three spans only so the WAVE's line can sit
+# under him: over his head, attacking.01 covered the flame stream and the biters in melee
+# (MEASURED, o0784 of the first master). Same speed, half-open, so the joins are invisible.
+[[segment]]
+from = "landing#1"
+to = "fire_start#1"
+
+[[segment]]
+from = "fire_start#1"
+to = "wave_clear"
+caption = "below"
+
+[[segment]]
+from = "wave_clear"
+to = "takeoff#3"
+
+# The lake: the 20-tile, 47-tick arc at 1/4, storyboard A's step-printed slow-mo (each frame
+# x4, 3.1 s): a legless shark over open water with "Only a little hop" up the whole way.
+[[segment]]
+from = "takeoff#3"
+to = "break#1"
+speed = 0.25
+
+# Touchdown at 1x: the beached body's first frame and the thud are this segment's first frame
+# (the sync check's anchor). Real time through both apologies, until flopping.02's caption has
+# faded out: the director forces it at break+570 and loads the packs at break+840, so its
+# 300 + 29-tick life ends at repair_cue+59. At +30 the time-lapse (no captions) cut it off at
+# full opacity on the same frame as the cut and the 5x tag (MEASURED, out 2366 -> 2367).
+[[segment]]
+from = "break#1"
+to = "repair_cue+59"
+
+# The REAL repair, time-lapsed and saying so: ~21 s of one bot at ~2 HP/tick becomes ~4 s.
+# No caption while it plays (the pump suppresses them on any speed > 1).
+[[segment]]
+from = "repair_cue+59"
+to = "repair_full-30"
+speed = 5.0
+tag = "5x"
+
+# Back to real time half a second before full health, so the stand-up plays live, then the
+# encore takeoff up to the top of its arc.
+[[segment]]
+from = "repair_full-30"
+to = "apex#4"
+
+# The stinger: freeze on the encore's apex, jump.13 up, all sound cut.
+[[segment]]
+at = "apex#4"
+hold = 4.5
+audio = "mute"
+
+[[overlay]]
+card = "title"
+from_out = 0.0
+to_out = 3.0
+
+[[card]]
+card = "end"
+seconds = 7.0
