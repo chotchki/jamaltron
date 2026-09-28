@@ -2,6 +2,10 @@
 
 Jamal is so very sorry to offer up a Jamaltron to you the loyal Factorio-playing, Dungeon Crawler Carl fan. Jamal knows you would much rather have a spidertron but Jamal must jump!
 
+[![Jamal jumping back and forth over a creek](https://hotchkiss.io/media/file/1268681234f528723f5b90d948306548e0eaf5b2b817680493c282efb1b537ec)](https://hotchkiss.io/media/file/4c015df2c4bbe851fc7a041407a0c2e7cbc61e24fd6c07dc8b005ecad05be5ec)
+
+Jamal has made a [film of his jumping](https://hotchkiss.io/media/file/4c015df2c4bbe851fc7a041407a0c2e7cbc61e24fd6c07dc8b005ecad05be5ec), Mr. Engineer! Jamal is so sorry it also shows the part where his legs break.
+
 ## Status
 
 Jamal is playtesting it but it still needs the following work:
