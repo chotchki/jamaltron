@@ -1,0 +1,25 @@
+# The loop take's cut: the README GIF and the portal's muted loop mp4, from ONE span.
+# The director (tools/harness/jamaltron-video, story.lua) hops A -> B -> A over the creek twice
+# on a fixed camera with the water pinned: the lead-in `loop_pre`, then the `loop` beat, which
+# starts ON a landing at A (facing west) and hands over to `wrap` on the next landing at A - the
+# same picture. So the loop IS [beat:loop, beat:wrap): 182 ticks, 3.03 s. The seam is the
+# landing because a fresh body's legs spawn in one fixed pose - MEASURED by the director, the
+# two landing frames differ by 0.075 mean abs (0-255), under a settled tick's own motion, while
+# at +60 the two re-lays have drifted 0.60 apart (a leg twitch at the seam). Anchored on the
+# beats, not landing#2 -> landing#4, so a change to the lead-in's hop count cannot silently
+# turn it into a B -> A -> B loop. Half-open: the span ends one tick BEFORE the state it wraps
+# round to, so the seam shows no frame twice.
+
+fps = 60
+deliver = "loop"      # the loop mp4 + GIF, no captions, no audio track
+
+# Storyboard A's GIF: "zoom 1.5, cropped to 1280x720". The whole 1920x1080 frame left ~60% of
+# the width empty grass: across every loop frame Jamal, the arc and the shadows stay inside
+# x 600-1360, y 400-800 (MEASURED, gif-sheet of the first build), so this 1280x720 is centred
+# on (980, 600) with 260/160 px to spare. Scaled to 960x540 he comes out 1.5x larger at the
+# same output size; the seam is untouched (a fixed crop of a fixed camera).
+crop = [340, 240, 1280, 720]
+
+[[segment]]
+from = "beat:loop"
+to = "beat:wrap"

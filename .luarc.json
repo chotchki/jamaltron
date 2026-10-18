@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
 
   "runtime.version": "Lua 5.2",
-  "runtime.path": ["?.lua", "mod/jamaltron/?.lua"],
+  "runtime.path": ["?.lua", "mod/jamaltron/?.lua", "mod/?.lua", "tools/harness/jamaltron-video/?.lua"],
   "runtime.pathStrict": true,
   "runtime.plugin": ".ls-defs/factorio/plugin.lua",
   "runtime.builtin": {
@@ -18,7 +18,7 @@
     ".ls-defs/factorio/library",
     ".ls-defs/supplement"
   ],
-  "workspace.ignoreDir": [".ls-defs", "tools", "assets", "character", ".venv", ".claude", ".playtest", ".smoketest", "dist", "render-out"],
+  "workspace.ignoreDir": [".ls-defs", "tools/tests", "tools/playtest", "tools/harness/jamaltron-harness", "tools/harness/jamaltron-fire-harness", "tools/harness/jamaltron-jump-harness", "tools/harness/jamaltron-shot", "tools/harness/jamaltron-swap-harness", "assets", "character", ".venv", ".claude", ".playtest", ".smoketest", "dist", "render-out"],
   "workspace.checkThirdParty": false,
 
   "diagnostics.globals": ["__DebugAdapter", "__Profiler"],

@@ -1,0 +1,9 @@
+{
+  "name": "jamaltron-video",
+  "version": "0.1.0",
+  "title": "Jamaltron video director",
+  "author": "chotchki",
+  "description": "Stages and films the gameplay video for tools/video.sh (PLAN G.2-G.3): the set, an event-driven beat machine, the camera, one stamped jpg a tick and the event and track logs. Never shipped: video.sh copies it into a throwaway profile beside the take.lua it writes.",
+  "factorio_version": "2.1",
+  "dependencies": ["jamaltron"]
+}

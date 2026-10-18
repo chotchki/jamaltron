@@ -166,9 +166,25 @@ files["**/control.lua"]              = { std = "+factorio_control" }
 files["**/scripts/**/*.lua"]         = { std = "+factorio_control" }
 files["**/migrations/**/*.lua"]      = { std = "+factorio_control" }
 
+-- The video's director (PLAN G.3) is gated like the mod: its modules are control-stage code
+-- the generic patterns above do not name. MEASURED clean when first gated (0/0 in 6 files).
+files["tools/harness/jamaltron-video/story.lua"]   = { std = "+factorio_control" }
+files["tools/harness/jamaltron-video/camera.lua"]  = { std = "+factorio_control" }
+files["tools/harness/jamaltron-video/journal.lua"] = { std = "+factorio_control" }
+files["tools/harness/jamaltron-video/set.lua"]     = { std = "+factorio_control" }
+
+-- The rest of tools/ is not gated YET: the older harness mods carried 26 warnings when the
+-- director was gated (12 in jamaltron-swap-harness, MEASURED by the G review), and tests/lua is
+-- plain Lua under its own runner. Listed one by one, so a NEW harness is gated by default.
 exclude_files = {
   ".luacheckrc",
-  "tools/**",
+  "tools/tests/**",
+  "tools/playtest/**",
+  "tools/harness/jamaltron-harness/**",
+  "tools/harness/jamaltron-fire-harness/**",
+  "tools/harness/jamaltron-jump-harness/**",
+  "tools/harness/jamaltron-shot/**",
+  "tools/harness/jamaltron-swap-harness/**",
   "assets/source/**",
   ".ls-defs/**",
   "**/.venv/**",

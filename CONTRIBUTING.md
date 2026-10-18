@@ -88,7 +88,7 @@ character/extracts/  raw book passages. gitignored, never committed
 assets/source/       the bought 3D model. gitignored, never committed
 .ls-defs/factorio/   generated Lua type defs. gitignored (supplement/ beside it is hand-written and committed)
 dist/                build.sh output. gitignored
-render-out/          art.py output. gitignored
+render-out/          art.py, shot.sh and video output (takes + deliverables). gitignored
 ```
 
 ## The catalog is the source, `scripts/lines.lua` is generated
